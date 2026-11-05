@@ -1,0 +1,27 @@
+# Build çıktıları
+build/
+build-*/
+DerivedData/
+spike/build/
+*.xcresult
+
+# Xcode kullanıcıya özel dosyalar
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# xcodegen ile üretilir (project.yml kaynak)
+Adalmon.xcodeproj/
+spike/AdalmonSpike.xcodeproj/
+
+# İmza / gizli dosyalar
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.cer
+*.pem
+*.key
+.env
+.env.*
+
+.DS_Store

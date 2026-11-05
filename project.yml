@@ -1,0 +1,93 @@
+name: Adalmon
+options:
+  bundleIdPrefix: com.yusufayik
+  deploymentTarget:
+    macOS: "26.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: BC62U5TGCQ
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_HARDENED_RUNTIME: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+targets:
+  Adalmon:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/App
+      - Sources/Shared
+    info:
+      path: Sources/App/Info.plist
+      properties:
+        CFBundleDisplayName: Adalmon
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: "26.0"
+        LSUIElement: true
+        NSSystemExtensionUsageDescription: Uygulama bazlı ağ kullanımını ölçmek için.
+    entitlements:
+      path: Sources/App/Adalmon.entitlements
+      properties:
+        com.apple.developer.system-extension.install: true
+        com.apple.developer.networking.networkextension: [content-filter-provider, app-proxy-provider]
+        com.apple.security.application-groups: [BC62U5TGCQ.com.yusufayik.adalmon]
+    attributes:
+      SystemCapabilities:
+        com.apple.NetworkExtensions: {enabled: 1}
+        com.apple.SystemExtensions: {enabled: 1}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yusufayik.adalmon
+        OTHER_LDFLAGS: -lsqlite3
+    dependencies:
+      - target: AdalmonFilter
+        embed: true
+  AdalmonFilter:
+    type: system-extension
+    platform: macOS
+    sources:
+      - Sources/Filter
+      - Sources/Shared
+    info:
+      path: Sources/Filter/Info.plist
+      properties:
+        CFBundleDisplayName: AdalmonFilter
+        CFBundlePackageType: SYSX
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSSystemExtensionUsageDescription: Ağ akışlarını sayar.
+        NetworkExtension:
+          NEMachServiceName: BC62U5TGCQ.com.yusufayik.adalmon.filter
+          NEProviderClasses:
+            com.apple.networkextension.filter-data: $(PRODUCT_MODULE_NAME).FilterDataProvider
+            com.apple.networkextension.app-proxy: $(PRODUCT_MODULE_NAME).TransparentProxyProvider
+    entitlements:
+      path: Sources/Filter/AdalmonFilter.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.application-groups: [BC62U5TGCQ.com.yusufayik.adalmon]
+        com.apple.developer.networking.networkextension: [content-filter-provider, app-proxy-provider]
+    attributes:
+      SystemCapabilities:
+        com.apple.NetworkExtensions: {enabled: 1}
+        com.apple.Sandbox: {enabled: 1}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yusufayik.adalmon.filter
+        PRODUCT_NAME: com.yusufayik.adalmon.filter
+        PRODUCT_MODULE_NAME: AdalmonFilter
+  AdalmonTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+    dependencies:
+      - target: Adalmon
+    settings:
+      base:
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Adalmon.app/Contents/MacOS/Adalmon
+        BUNDLE_LOADER: $(TEST_HOST)
