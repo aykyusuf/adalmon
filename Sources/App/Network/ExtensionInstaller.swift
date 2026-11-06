@@ -8,6 +8,8 @@ final class ExtensionInstaller: NSObject, @preconcurrency OSSystemExtensionReque
     enum State: Equatable { case unknown, notInstalled, needsApproval, installing, active, failed(String) }
 
     private(set) var state: State = .unknown
+    /// Filtre her açıldığında çağrılır (otomatik emniyet testi başlatmak için).
+    @ObservationIgnored var onFilterEnabled: (() -> Void)?
 
     /// Hız sınırı için saydam proxy açık mı (en az bir sınır varken ve filtre kuruluyken).
     private(set) var proxyActive = false
@@ -20,7 +22,21 @@ final class ExtensionInstaller: NSObject, @preconcurrency OSSystemExtensionReque
     func refresh() async {
         let m = NEFilterManager.shared()
         try? await m.loadFromPreferences()
-        state = (m.providerConfiguration != nil && m.isEnabled) ? .active : .notInstalled
+        let enabled = m.providerConfiguration != nil && m.isEnabled
+        if enabled { state = .active }
+        else if case .failed = state { /* emniyet kapatması vb.: sebebi göstermeye devam et */ }
+        else if state != .installing && state != .needsApproval { state = .notInstalled }
+    }
+
+    @ObservationIgnored private var configObserver: (any NSObjectProtocol)?
+
+    /// Filtre dışarıdan (Sistem Ayarları, kaldırma, emniyet) değişince durumu hemen güncelle.
+    func observeSystemChanges() {
+        guard configObserver == nil else { return }
+        configObserver = NotificationCenter.default.addObserver(forName: .NEFilterConfigurationDidChange,
+                                                                object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.refresh() }
+        }
     }
 
     /// Filtre zaten kuruluysa, uygulamanın içindeki (daha yeni) extension sürümüyle sessizce değiştirir.
@@ -37,6 +53,17 @@ final class ExtensionInstaller: NSObject, @preconcurrency OSSystemExtensionReque
         let r = OSSystemExtensionRequest.activationRequest(forExtensionWithIdentifier: IPC.filterBundleID, queue: .main)
         r.delegate = self
         OSSystemExtensionManager.shared.submitRequest(r)
+    }
+
+    /// Emniyet: filtre interneti kesiyorsa hemen devre dışı bırak (ayar silinmez, sonra tekrar açılabilir).
+    func safetyDisable(reason: String) async {
+        let m = NEFilterManager.shared()
+        try? await m.loadFromPreferences()
+        m.isEnabled = false
+        try? await m.saveToPreferences()
+        proxyWanted = false
+        await applyProxy(enabled: false)
+        state = .failed(reason)
     }
 
     func uninstall() {
@@ -65,6 +92,7 @@ final class ExtensionInstaller: NSObject, @preconcurrency OSSystemExtensionReque
             try await m.saveToPreferences()
             state = .active
             syncProxy()
+            onFilterEnabled?()
         } catch {
             state = .failed(error.localizedDescription)
         }

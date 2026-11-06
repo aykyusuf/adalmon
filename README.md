@@ -1,3 +1,5 @@
+<img src="docs/icon-1024.png" width="128">
+
 # Adalmon
 
 macOS 26+ için menü çubuğu sistem monitörü: CPU, GPU, RAM, disk, sıcaklıklar ve **uygulama / site bazlı ağ kullanımı**.

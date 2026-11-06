@@ -42,6 +42,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yusufayik.adalmon
         OTHER_LDFLAGS: -lsqlite3
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - target: AdalmonFilter
         embed: true

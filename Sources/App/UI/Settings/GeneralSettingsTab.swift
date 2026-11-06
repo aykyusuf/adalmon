@@ -18,6 +18,10 @@ struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
                 Toggle("Girişte başlat", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, v in prefs.launchAtLogin = v }
+                Toggle("Dock'ta göster (ana pencere)", isOn: $prefs.showInDock)
+                Text("Açıkken Adalmon Dock'ta görünür ve ana pencereyi açar. Kapalıyken yalnızca menü çubuğunda çalışır.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

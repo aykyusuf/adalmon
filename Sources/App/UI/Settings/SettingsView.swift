@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// macOS 26 Sistem Ayarları tarzı pencere: Liquid Glass kenar çubuğu + gruplanmış form içerik.
 struct SettingsView: View {
     let model: AppModel
-    @State private var selection: SettingsSection? = .menuBar
+    let router: SettingsRouter
+    @State private var selection: SettingsSection?
 
-    init(model: AppModel) {
+    init(model: AppModel, router: SettingsRouter) {
         self.model = model
+        self.router = router
+        _selection = State(initialValue: router.selectedSettingsSection)
     }
 
     var body: some View {
@@ -22,21 +24,16 @@ struct SettingsView: View {
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
         } detail: {
-            detail(for: selection ?? .menuBar)
-                .navigationTitle((selection ?? .menuBar).title)
+            let section = selection ?? router.selectedSettingsSection
+            SettingsDetailView(section: section, model: model)
+                .navigationTitle(section.title)
         }
         .frame(minWidth: 760, minHeight: 560)
-    }
-
-    @ViewBuilder
-    private func detail(for section: SettingsSection) -> some View {
-        switch section {
-        case .menuBar: MenuBarCardsTab(model: model)
-        case .panel: PanelSettingsPane(model: model)
-        case .throttle: ThrottleSettingsPane(model: model)
-        case .mobileData: MobileDataSettingsTab(model: model)
-        case .filter: FilterSettingsTab(model: model)
-        case .general: GeneralSettingsTab(prefs: model.prefs)
+        .onChange(of: selection) {
+            if let selection { router.selectedSettingsSection = selection }
+        }
+        .onChange(of: router.selectedSettingsSection) {
+            selection = router.selectedSettingsSection
         }
     }
 }

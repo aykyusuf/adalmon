@@ -4,6 +4,7 @@ import SwiftUI
 struct ToastBanner: View {
     let toast: AppModel.Toast?
     let onUndo: () -> Void
+    let onAction: (AppModel.Toast.Action) -> Void
 
     var body: some View {
         if let toast {
@@ -17,6 +18,11 @@ struct ToastBanner: View {
                 Spacer(minLength: 4)
                 if toast.undoApp != nil {
                     Button("Geri al", action: onUndo)
+                        .buttonStyle(.link)
+                        .font(.caption.weight(.semibold))
+                }
+                if let action = toast.action {
+                    Button("Yeniden başlat") { onAction(action) }
                         .buttonStyle(.link)
                         .font(.caption.weight(.semibold))
                 }

@@ -9,6 +9,8 @@ struct AppUsageRow: View {
     let isMobile: Bool
     let expandable: Bool
     let setBlocked: @MainActor (String, Bool) -> Void
+    let resetConnections: @MainActor (String) -> Void
+    let restartApp: @MainActor (String) -> Void
     @Environment(\.panelDensity) private var density
     @State private var expanded = false
     @State private var confirming = false
@@ -138,6 +140,11 @@ struct AppUsageRow: View {
             Button(expanded ? "Alan adlarını gizle" : "Alan adlarını göster") {
                 withAnimation(.snappy) { expanded.toggle() }
             }
+        }
+        Divider()
+        Button("Bağlantıları yenile", systemImage: "arrow.triangle.2.circlepath") { resetConnections(usage.app) }
+        if usage.app.hasSuffix(".app") {
+            Button("Uygulamayı yeniden başlat", systemImage: "arrow.clockwise") { restartApp(usage.app) }
         }
     }
 

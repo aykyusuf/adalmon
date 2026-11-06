@@ -12,6 +12,8 @@ final class Preferences {
     /// Panel kapalıyken güncelleme aralığı (sn). Daha seyrek = daha az pil.
     var updateInterval: Int { didSet { d.set(updateInterval, forKey: "updateInterval") } }
     var forceMobile: Bool { didSet { d.set(forceMobile, forKey: "forceMobile") } }
+    /// Dock'ta simge ve ana pencere göster (kapalıysa yalnızca menü çubuğu uygulaması).
+    var showInDock: Bool { didSet { d.set(showInDock, forKey: "showInDock") } }
     var blockedOnMobile: [String] { didSet { d.set(blockedOnMobile, forKey: "blockedOnMobile") } }
     /// Uygulama anahtarı → hız sınırı (JSON olarak saklanır).
     var appLimits: [String: AppLimit] { didSet { d.set(try? JSONEncoder().encode(appLimits), forKey: "appLimits") } }
@@ -41,6 +43,7 @@ final class Preferences {
         dailyCapGB = d.double(forKey: "dailyCapGB")
         burstThresholdMB = d.double(forKey: "burstThresholdMB")
         forceMobile = d.bool(forKey: "forceMobile")
+        showInDock = d.bool(forKey: "showInDock")
         updateInterval = d.integer(forKey: "updateInterval")
         blockedOnMobile = d.stringArray(forKey: "blockedOnMobile") ?? []
         appLimits = d.data(forKey: "appLimits").flatMap { try? JSONDecoder().decode([String: AppLimit].self, from: $0) } ?? [:]

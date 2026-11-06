@@ -23,6 +23,14 @@ final class AlertCenter: NSObject, UNUserNotificationCenterDelegate {
         center.requestAuthorization(options: [.alert, .sound]) { @Sendable _, _ in }
     }
 
+    func notify(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        center.add(UNNotificationRequest(identifier: "info-\(title)", content: content, trigger: nil))
+    }
+
     /// Bildirimden engelleme yapılınca sonucu teyit eder.
     func notifyBlocked(name: String) {
         let content = UNMutableNotificationContent()
