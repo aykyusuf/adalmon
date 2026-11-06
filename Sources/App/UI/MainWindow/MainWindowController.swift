@@ -9,6 +9,24 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     private let router: SettingsRouter
     private let window: NSWindow
 
+    private static let frameName = "AdalmonMainWindow"
+    /// Büyük varsayılan boyut bir kez uygulandı mı? (Önceden kaydedilmiş küçük çerçeve bir kez ezilir, sonra kullanıcıya bırakılır.)
+    static let sizedKey = "mainWindow.sizedV2"
+    static let minContentSize = NSSize(width: 940, height: 600)
+
+    /// Ekranın görünür alanının ~%85'i (en çok 1600x1050, en az `minContent`; görünür alanı aşmaz), ortalanmış.
+    static func defaultFrame(visible: NSRect, minContent: NSSize = minContentSize) -> NSRect {
+        let width = min(visible.width, max(minContent.width, min(visible.width * 0.85, 1_600)))
+        let height = min(visible.height, max(minContent.height, min(visible.height * 0.85, 1_050)))
+        return NSRect(x: (visible.midX - width / 2).rounded(), y: (visible.midY - height / 2).rounded(),
+                      width: width.rounded(), height: height.rounded())
+    }
+
+    /// Büyük varsayılan çerçeve uygulanmalı mı: kayıtlı çerçeve yoksa ya da V2 geçişi henüz yapılmadıysa.
+    static func needsDefaultFrame(restored: Bool, defaults: UserDefaults = .standard) -> Bool {
+        !restored || !defaults.bool(forKey: sizedKey)
+    }
+
     init(model: AppModel, router: SettingsRouter) {
         self.model = model
         self.router = router
@@ -18,11 +36,23 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         super.init()
         window.title = "Adalmon"
         window.toolbarStyle = .unified
-        window.contentMinSize = NSSize(width: 940, height: 600)
+        window.contentMinSize = Self.minContentSize
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.setFrameAutosaveName("AdalmonMainWindow")
-        if !window.setFrameUsingName("AdalmonMainWindow") { window.center() }
+        window.setFrameAutosaveName(Self.frameName)
+        let restored = window.setFrameUsingName(Self.frameName)
+        // Kayıtlı çerçeve yoksa ya da büyük varsayılan henüz uygulanmadıysa ekranı büyük ölçüde dolduran boyutla aç.
+        // Bayrak sonrasında kullanıcının yeniden boyutlandırmasına dokunmaz.
+        // Testler uygulamayı host olarak başlatır; gerçek kullanıcı ayarlarına/çerçevesine dokunulmaz.
+        if !AppEnvironment.isRunningTests, Self.needsDefaultFrame(restored: restored) {
+            if let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
+                window.setFrame(Self.defaultFrame(visible: visible), display: false)
+                window.saveFrame(usingName: Self.frameName)
+            } else if !restored {
+                window.center()
+            }
+            UserDefaults.standard.set(true, forKey: Self.sizedKey)
+        }
     }
 
     func show() {

@@ -26,6 +26,7 @@ struct OverviewPage: View {
                     OverviewBudgetCard(budget: model.budget(now: now), router: router)
                 }
                 OverviewTopAppsCard(rows: TopAppRow.top(data.today), showsFilterCallout: data.showsFilterCallout, router: router)
+                OverviewResourceCard(store: model.store, router: router)
                 OverviewLiveSection(data: data)
             }
             .padding(24)

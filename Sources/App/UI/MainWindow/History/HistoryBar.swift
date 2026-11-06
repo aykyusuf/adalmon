@@ -7,6 +7,8 @@ struct HistoryBar: Identifiable, Equatable, Sendable {
         case hour(Int)
         /// `yyyy-MM-dd` gün anahtarı.
         case day(String)
+        /// `yyyy-MM-dd` aralığı (ikisi dahil); yalnızca rapor kartındaki uygulama satırları için.
+        case days(from: String, to: String)
     }
 
     let id: String

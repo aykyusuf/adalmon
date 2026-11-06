@@ -43,6 +43,8 @@ final class AppModel {
     var unattributedMobile: UInt64 { mobileToday > usage.attributedMobileToday ? mobileToday - usage.attributedMobileToday : 0 }
 
     @ObservationIgnored let store = UsageStore()
+    /// Faz 3: süreç/kaynak geçmişi ve saatlik klasör taraması (dakikada bir arka plan örnekleyici).
+    @ObservationIgnored private(set) lazy var resources = ResourceService(store: store)
     @ObservationIgnored private let sampler = MetricsSampler()
     @ObservationIgnored private let samplerQueue = DispatchQueue(label: "adalmon.metrics", qos: .utility)
     @ObservationIgnored private let filter = FilterClient()
@@ -89,6 +91,7 @@ final class AppModel {
         refreshProxy()
         scheduleTimer()
         observeInterval()
+        resources.start()
     }
 
     /// Güncelleme aralığı ayarı değişince zamanlayıcıyı hemen yeniden kur ve bir ölçüm al.

@@ -1,11 +1,11 @@
 import SwiftUI
 
 enum MainSection: Hashable, Identifiable {
-    case overview, network, history, mobile, rules
+    case overview, network, history, mobile, rules, processes
     case settings(SettingsSection)
 
-    /// Kenar çubuğundaki sayfalar (sıra aynı zamanda ⌘1…⌘5 sırasıdır).
-    static let pages: [MainSection] = [.overview, .network, .history, .mobile, .rules]
+    /// Kenar çubuğundaki sayfalar (sıra aynı zamanda ⌘1…⌘6 sırasıdır).
+    static let pages: [MainSection] = [.overview, .network, .history, .mobile, .rules, .processes]
 
     static var allCases: [MainSection] { pages + SettingsSection.allCases.map(MainSection.settings) }
 
@@ -21,6 +21,7 @@ enum MainSection: Hashable, Identifiable {
         case .history: "history"
         case .mobile: "mobile"
         case .rules: "rules"
+        case .processes: "processes"
         case .settings(let section): "settings.\(section.rawValue)"
         }
     }
@@ -32,6 +33,7 @@ enum MainSection: Hashable, Identifiable {
         case .history: "Geçmiş"
         case .mobile: "Mobil veri"
         case .rules: "Kurallar"
+        case .processes: "Süreçler"
         case .settings(let section): section.title
         }
     }
@@ -43,6 +45,7 @@ enum MainSection: Hashable, Identifiable {
         case .history: "chart.bar.xaxis"
         case .mobile: "antenna.radiowaves.left.and.right"
         case .rules: "shield.lefthalf.filled"
+        case .processes: "waveform.path.ecg.rectangle"
         case .settings(let section): section.symbol
         }
     }
@@ -54,6 +57,7 @@ enum MainSection: Hashable, Identifiable {
         case .history: .purple
         case .mobile: .green
         case .rules: .pink
+        case .processes: .orange
         case .settings(let section): section.tint
         }
     }
@@ -67,7 +71,7 @@ enum MainSection: Hashable, Identifiable {
         if case .settings(.mobileData) = self { .mobile } else { self }
     }
 
-    /// ⌘ ile birlikte kullanılan rakam ("1"…"5"); ayar bölümlerinin kısayolu yoktur.
+    /// ⌘ ile birlikte kullanılan rakam ("1"…"6"); ayar bölümlerinin kısayolu yoktur.
     var shortcutKey: String? {
         Self.pages.firstIndex(of: self).map { String($0 + 1) }
     }

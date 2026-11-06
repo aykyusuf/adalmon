@@ -61,7 +61,8 @@ actor UsageStore {
         return c
     }
 
-    private var db: OpaquePointer?
+    /// `UsageStore+Resources` ile paylaşılır (aynı dosya, aynı bağlantı).
+    var db: OpaquePointer?
 
     /// - Parameter path: Veritabanı dosyası. Varsayılan: Application Support (testlerde geçici dizin).
     init(path: String? = nil) {
@@ -89,7 +90,7 @@ actor UsageStore {
                   bytes_in INTEGER NOT NULL DEFAULT 0, bytes_out INTEGER NOT NULL DEFAULT 0,
                   PRIMARY KEY(hour, app, domain, mobile))
                 """,
-            ] { sqlite3_exec(handle, sql, nil, nil, nil) }
+            ] + Self.resourceSchema { sqlite3_exec(handle, sql, nil, nil, nil) }
         }
     }
 
@@ -238,6 +239,38 @@ actor UsageStore {
                                           name: \.name, bytes: \.bytes)
     }
 
+    /// `fromDay`...`toDay` aralığında en çok kullanan uygulamalar (günlük `usage` tablosundan; mobil payıyla).
+    /// Eski günler için de çalışır (saatlik kayıt gerekmez).
+    func topApps(fromDay: String, toDay: String, limit: Int = 10) -> [AppHourBytes] {
+        var out: [AppHourBytes] = []
+        run("""
+            SELECT app, SUM(bytes_in + bytes_out), SUM(CASE WHEN mobile != 0 THEN bytes_in + bytes_out ELSE 0 END)
+            FROM usage WHERE day BETWEEN ? AND ? GROUP BY app ORDER BY 2 DESC, app LIMIT ?
+            """, [.text(fromDay), .text(toDay), .int(max(0, limit))]) { s in
+            out.append(AppHourBytes(app: Self.text(s, 0), bytes: Self.u64(s, 1), mobileBytes: Self.u64(s, 2)))
+        }
+        return out
+    }
+
+    /// `fromDay`...`toDay` aralığında tüm uygulamalarda en çok kullanılan alan adı grupları (`DomainGrouper` ile gruplanır).
+    func topDomains(fromDay: String, toDay: String, limit: Int = 10) -> [DomainBytes] {
+        var raw: [String: UInt64] = [:]
+        run("SELECT host, SUM(bytes_in + bytes_out) FROM usage WHERE day BETWEEN ? AND ? GROUP BY host",
+            [.text(fromDay), .text(toDay)]) { s in
+            raw[DomainGrouper.group(Self.text(s, 0)), default: 0] += Self.u64(s, 1)
+        }
+        return DomainGrouper.displayOrder(raw.map { DomainBytes(name: $0.key, bytes: $0.value) }, limit: limit,
+                                          name: \.name, bytes: \.bytes)
+    }
+
+    /// `fromDay`...`toDay` aralığında uygulamalara atfedilen toplam bayt (`usage` tablosu; arayüz toplamından düşük olabilir).
+    func attributedBytes(fromDay: String, toDay: String) -> UInt64 {
+        var result: UInt64 = 0
+        run("SELECT COALESCE(SUM(bytes_in + bytes_out), 0) FROM usage WHERE day BETWEEN ? AND ?",
+            [.text(fromDay), .text(toDay)]) { s in result = Self.u64(s, 0) }
+        return result
+    }
+
     // MARK: Okuma (saatlik)
 
     /// `[from, to)` saat başı epoch aralığında fiziksel arayüz saatlik toplamı (günlük limitle aynı kaynak).
@@ -314,7 +347,7 @@ actor UsageStore {
 
     // MARK: Yardımcılar
 
-    private enum Bind { case text(String), int(Int) }
+    enum Bind { case text(String), int(Int) }
 
     private func hourly(_ sql: String, _ binds: [Bind]) -> [HourPoint] {
         var byHour: [Int: HourPoint] = [:]
@@ -328,7 +361,7 @@ actor UsageStore {
     }
 
     @discardableResult
-    private func run(_ sql: String, _ binds: [Bind], row: (OpaquePointer?) -> Void) -> Bool {
+    func run(_ sql: String, _ binds: [Bind], row: (OpaquePointer?) -> Void) -> Bool {
         guard let db else { return false }
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
@@ -345,13 +378,13 @@ actor UsageStore {
         }
     }
 
-    private static func text(_ s: OpaquePointer?, _ col: Int32) -> String {
+    static func text(_ s: OpaquePointer?, _ col: Int32) -> String {
         sqlite3_column_text(s, col).map { String(cString: $0) } ?? ""
     }
 
-    private static func u64(_ s: OpaquePointer?, _ col: Int32) -> UInt64 {
+    static func u64(_ s: OpaquePointer?, _ col: Int32) -> UInt64 {
         UInt64(max(0, sqlite3_column_int64(s, col)))
     }
 }
 
-private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
