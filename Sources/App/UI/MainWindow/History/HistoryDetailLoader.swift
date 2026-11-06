@@ -18,6 +18,8 @@ struct HistoryDetailLoader: Sendable {
             }
             return byApp.sorted { $0.value.bytes != $1.value.bytes ? $0.value.bytes > $1.value.bytes : $0.key < $1.key }
                 .prefix(limit).map { HistoryAppBytes(app: $0.key, bytes: $0.value.bytes, mobile: $0.value.mobile) }
+        case .days(let from, let to):
+            return await store.topApps(fromDay: from, toDay: to, limit: limit).map { HistoryAppBytes(app: $0.app, bytes: $0.bytes, mobile: $0.mobileBytes) }
         }
     }
 
@@ -28,6 +30,8 @@ struct HistoryDetailLoader: Sendable {
             return rows.prefix(limit).map { HistoryDomainBytes(name: $0.domain ?? "Diğer", bytes: $0.bytes) }
         case .day(let day):
             return await store.topDomains(app: app, fromDay: day, toDay: day, limit: limit).map { HistoryDomainBytes(name: $0.name, bytes: $0.bytes) }
+        case .days(let from, let to):
+            return await store.topDomains(app: app, fromDay: from, toDay: to, limit: limit).map { HistoryDomainBytes(name: $0.name, bytes: $0.bytes) }
         }
     }
 }

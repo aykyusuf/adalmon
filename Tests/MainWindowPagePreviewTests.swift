@@ -21,6 +21,11 @@ final class MainWindowPagePreviewTests: XCTestCase {
         await seed(store)
 
         try await render(HistoryPage(store: store), name: "history", dir: dir, size: NSSize(width: 800, height: 760))
+        // Rapor: geniş pencerede yan yana (Dün kısayolu) ve çok günlük (Hafta).
+        try await render(HistoryPage(store: store, initialRange: .day, initialOffset: 1), name: "history-report", dir: dir,
+                         size: NSSize(width: 1400, height: 900))
+        try await render(HistoryPage(store: store, initialRange: .week, initialOffset: 0), name: "history-report-week", dir: dir,
+                         size: NSSize(width: 1400, height: 900))
 
         let suite = "adalmon.preview.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -74,6 +79,20 @@ final class MainWindowPagePreviewTests: XCTestCase {
         }
         await store.addInterfaceHourly(items)
         await store.add(day: "", rows: [], hourly: rows)
+        // Günlük uygulama tablosu (rapor): son 10 gün, dünün özellikle zengin olması için.
+        let apps = ["/Applications/Safari.app", "/System/Applications/Music.app", "/System/Applications/Mail.app", "/Applications/Xcode.app"]
+        let hosts = ["rr1.googlevideo.com", "i.ytimg.com", "audio-ssl.itunes.apple.com", "imap.example.org", "developer.apple.com", "cdn.example.net"]
+        for i in 0..<10 {
+            let key = UsageStore.dayKey(Date.now.addingTimeInterval(-Double(i) * 86_400))
+            var rows: [UsageStore.Row] = []
+            for (a, app) in apps.enumerated() {
+                for (h, host) in hosts.enumerated() where (a + h) % 2 == 0 {
+                    rows.append(UsageStore.Row(app: app, host: host, mobile: (a + h + i) % 5 == 0,
+                                               bytesIn: UInt64(40 + (a + 1) * (h + 2) * (12 - i)) * 9_000_000, bytesOut: 2_000_000))
+                }
+            }
+            await store.add(day: key, rows: rows)
+        }
         for i in 0..<30 {
             let key = UsageStore.dayKey(Date.now.addingTimeInterval(-Double(i) * 86_400))
             await store.addInterfaceBytes(day: key, mobile: true, bytes: UInt64(200 + i * 13 % 700) * 1_000_000)
