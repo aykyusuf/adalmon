@@ -18,9 +18,9 @@ struct FilterInstallCallout: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(state == .installing)
         }
-        .padding(8)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.accentColor.opacity(0.1), in: .rect(cornerRadius: 10))
+        .background(Color.accentColor.opacity(0.1), in: .rect(cornerRadius: PanelMetricCard.cornerRadius, style: .continuous))
     }
 
     private var message: String {

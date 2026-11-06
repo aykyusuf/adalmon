@@ -6,14 +6,15 @@ struct BlockedAppsSection: View {
     @Binding var config: PanelConfig
     let actions: PanelActions
     @Environment(\.panelDensity) private var density
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let apps = data.blockedApps
         if !apps.isEmpty {
             let collapsed = config.isCollapsed(.blockedApps)
             VStack(alignment: .leading, spacing: 2) {
-                PanelSectionHeader(title: "Mobilde engellenenler", isCollapsed: collapsed, tint: .red) {
-                    withAnimation(.snappy) { config.toggleCollapsed(.blockedApps) }
+                PanelSectionHeader(title: "Engellenenler", isCollapsed: collapsed, tint: .red) {
+                    withAnimation(.panel(reduceMotion: reduceMotion)) { config.toggleCollapsed(.blockedApps) }
                 } accessory: {
                     Text(data.isMobile ? "\(apps.count) engelli" : "\(apps.count) · Wi-Fi'de serbest")
                 }
@@ -37,9 +38,9 @@ struct BlockedAppsSection: View {
                     }
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color.red.opacity(0.06), in: .rect(cornerRadius: 10))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.red.opacity(0.08), in: .rect(cornerRadius: PanelMetricCard.cornerRadius, style: .continuous))
         }
     }
 }

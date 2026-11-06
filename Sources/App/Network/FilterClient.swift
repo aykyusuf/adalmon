@@ -28,13 +28,19 @@ final class FilterClient {
 
     func drain() async -> [UsageBucket] {
         guard let p = proxy() else { return [] }
-        let data: Data = await withCheckedContinuation { cont in
+        // JSON çözümü XPC cevap kuyruğunda yapılır (ana iş parçacığını meşgul etmez); nil = bağlantı yok/boş cevap.
+        let buckets: [UsageBucket]? = await withCheckedContinuation { cont in
             let once = OnceFlag()
-            p.drainUsage { @Sendable data in if once.claim() { cont.resume(returning: data) } }
-            // XPC hata işleyicisi cevap çağırmazsa takılmayalım.
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { @Sendable in if once.claim() { cont.resume(returning: Data()) } }
+            // Zaman aşımı cevap gelince iptal edilir: her adımda boşa uyanan 2 sn'lik bir zamanlayıcı kalmaz (pil).
+            nonisolated(unsafe) let timeout = DispatchWorkItem { @Sendable in if once.claim() { cont.resume(returning: nil) } }
+            p.drainUsage { @Sendable data in
+                guard once.claim() else { return }
+                timeout.cancel()
+                cont.resume(returning: data.isEmpty ? nil : try? JSONDecoder().decode([UsageBucket].self, from: data))
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2, execute: timeout)
         }
-        guard !data.isEmpty, let buckets = try? JSONDecoder().decode([UsageBucket].self, from: data) else {
+        guard let buckets else {
             isConnected = false
             return []
         }

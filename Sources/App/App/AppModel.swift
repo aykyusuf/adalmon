@@ -11,6 +11,10 @@ final class AppModel {
     let installer = ExtensionInstaller()
     let usage: UsageEngine
     @ObservationIgnored let alerts = AlertCenter()
+    /// Kural motoru + kademeli limit (Faz A). Çıktısı `pushConfig` içinde elle ayarlarla birleştirilir.
+    let rules = RuleEngine()
+    /// Fiziksel arayüz deltaları: son dakikaların mobil hızı ve saatlik arayüz toplamları.
+    @ObservationIgnored let traffic = TrafficTracker()
 
     private(set) var snapshot: SystemSnapshot?
     private(set) var cpuHistory: [Double] = []
@@ -31,12 +35,14 @@ final class AppModel {
     private(set) var filterConnected = false
     private(set) var proxy = ProxyDetector.Result(ports: [], ownerPaths: [])
     private(set) var lastUpdate: Date?
+    /// Dönem başından dünün sonuna kadar mobil toplam (`iface_daily`; açılışta, gün/dönem değişince bir kez okunur).
+    private(set) var cycleUsedBeforeToday: UInt64 = 0
 
     var isMobile: Bool { path.isMobile(force: prefs.forceMobile) }
     /// Mobil toplamın uygulamalara yazılamayan kısmı (sistem, VPN, ölçüm farkı).
     var unattributedMobile: UInt64 { mobileToday > usage.attributedMobileToday ? mobileToday - usage.attributedMobileToday : 0 }
 
-    @ObservationIgnored private let store = UsageStore()
+    @ObservationIgnored let store = UsageStore()
     @ObservationIgnored private let sampler = MetricsSampler()
     @ObservationIgnored private let samplerQueue = DispatchQueue(label: "adalmon.metrics", qos: .utility)
     @ObservationIgnored private let filter = FilterClient()
@@ -48,6 +54,13 @@ final class AppModel {
     @ObservationIgnored private var lastConfig: FilterConfig?
     @ObservationIgnored private var dayKey = UsageStore.dayKey()
     @ObservationIgnored private var pendingIface: (mobile: UInt64, wifi: UInt64) = (0, 0)
+    @ObservationIgnored private var cycleKey = ""
+    @ObservationIgnored private var lastRuleOutput = RuleOutput()
+    @ObservationIgnored private var lastPushedMobile = false
+    @ObservationIgnored private var lastEffective: EffectiveConfig?
+    /// Açılış durumu (bugünkü toplamlar, dönem tabanı, kural durumu) yüklenene kadar filtreye yapılandırma itilmez:
+    /// uygulama yeniden başlarken filtre eski yapılandırmasını korur, sınırlar gevşemez ve sahte sıfırlama olmaz.
+    @ObservationIgnored private var rulesReady = false
 
     init() {
         usage = UsageEngine(store: store)
@@ -58,11 +71,18 @@ final class AppModel {
     func start() {
         Task {
             await usage.loadToday()
+            rules.seed(today: usage.today, dayKey: dayKey)
+            await store.pruneHourly()
             mobileToday = await store.interfaceBytes(day: dayKey, mobile: true)
             wifiToday = await store.interfaceBytes(day: dayKey, mobile: false)
+            await refreshCycleBase()
+            cycleKey = "\(prefs.billingCycleStartDay)|\(dayKey)"
+            rulesReady = true
+            evaluateRules([], now: .now)
+            pushConfig(force: true) // ilk itme kıyas noktasıdır (sıfırlama yok)
             await installer.refresh()
             installer.observeSystemChanges()
-            installer.setProxyWanted(!prefs.appLimits.isEmpty)
+            updateProxyWanted()
             installer.updateIfInstalled()
             if installer.state == .active { startFilterWatchdog() }
         }
@@ -88,7 +108,8 @@ final class AppModel {
     /// Zamanlayıcı doğrudan gereken aralıkta çalışır: panel açıkken 1 sn, kapalıyken ayar (varsayılan 2 sn).
     /// Boşa uyanma yok (pil).
     private func scheduleTimer() {
-        let interval = TimeInterval(panelVisible || mainWindowVisible ? 1 : max(1, prefs.updateInterval))
+        // Yalnızca menü çubuğu paneli açıkken 1 sn; Dock ana penceresi görünürken de kullanıcının aralığı (pil).
+        let interval = TimeInterval(panelVisible ? 1 : max(1, prefs.updateInterval))
         if let timer, timer.isValid, timer.timeInterval == interval { return }
         timer?.invalidate()
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
@@ -207,7 +228,7 @@ final class AppModel {
         guard new != old else { return }
         prefs.appLimits[app] = new
         pushConfig(force: true)
-        installer.setProxyWanted(!prefs.appLimits.isEmpty)
+        updateProxyWanted()
         let name = AppCatalog.shared.name(for: app)
         let message: String
         if let new {
@@ -242,14 +263,14 @@ final class AppModel {
     /// uygulamanın yeniden bağlanmasını ve yeni kurala takılmasını sağlar.
     @ObservationIgnored private var resetTasks: [String: Task<Void, Never>] = [:]
 
-    private func scheduleReset(_ app: String, reason: ResetReason) {
+    private func scheduleReset(_ app: String, reason: ResetReason, quiet: Bool = false) {
         guard installer.state == .active else { return }
         resetTasks[app]?.cancel()
         resetTasks[app] = Task { [weak self] in
             // Yeni yapılandırmanın uzantıya ulaşması için kısa bekleme.
             try? await Task.sleep(for: .milliseconds(800))
             guard !Task.isCancelled else { return }
-            await self?.performReset(app, reason: reason)
+            await self?.performReset(app, reason: reason, quiet: quiet)
         }
     }
 
@@ -259,9 +280,9 @@ final class AppModel {
         resetTasks[app] = Task { [weak self] in await self?.performReset(app, reason: .manual) }
     }
 
-    private func performReset(_ app: String, reason: ResetReason) async {
+    private func performReset(_ app: String, reason: ResetReason, quiet: Bool = false) async {
         let result = await Task.detached(priority: .utility) { ConnectionResetter.resetConnections(forApp: app) }.value
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !quiet else { return }
         let name = AppCatalog.shared.name(for: app)
         if !result.isRunning {
             if reason == .manual { showToast(Toast(message: "\(name) çalışmıyor", undoApp: nil, undoBlocked: false)) }
@@ -303,6 +324,146 @@ final class AppModel {
             return mb == mb.rounded() ? "\(Int(mb)) MB/s" : String(format: "%.1f MB/s", mb)
         }
         return "\(Int(kb.rounded())) KB/s"
+    }
+
+    // MARK: Kurallar, kademeli limit, bütçe (Faz A)
+
+    /// Etkin hız sınırı proxy'si: yapılandırmaya göre (elle sınır, açık hız sınırı kuralı ya da kademeli limit varsa).
+    /// Etkin duruma göre DEĞİL: kural tetiklenince proxy'yi ilk kez kurmak (onay istemi) ve açıp kapatmak yerine
+    /// önceden hazır tutulur.
+    private func updateProxyWanted() {
+        let ladder = prefs.tierLadder
+        let wanted = !prefs.appLimits.isEmpty
+            || (ladder.enabled && ladder.slowLimit != nil)
+            || prefs.usageRules.contains { $0.enabled && $0.action.isThrottle && $0.hasEffect }
+        installer.setProxyWanted(wanted)
+    }
+
+    /// Her adımda: kural listesini eşitle, kovaları besle, değerlendir, olayları göster.
+    private func evaluateRules(_ buckets: [UsageBucket], now: Date) {
+        guard rulesReady else { return }
+        let key = "\(prefs.billingCycleStartDay)|\(dayKey)"
+        if key != cycleKey {
+            cycleKey = key
+            Task { await refreshCycleBase() }
+        }
+        rules.setRules(prefs.usageRules)
+        rules.ingest(buckets, now: now)
+        let monthly = prefs.monthlyCapBytes
+        let input = RuleEngine.LadderInput(dayKey: dayKey, dailyUsed: mobileToday, dailyCap: prefs.dailyCapBytes,
+                                           cycleUsed: monthly == nil ? nil : cycleUsedBeforeToday + mobileToday, monthlyCap: monthly)
+        let events = rules.evaluate(now: now, tier: prefs.tierLadder, ladderInput: input,
+                                    context: .init(ownAppKey: Bundle.main.bundlePath, proxyOwnerPaths: proxy.ownerPaths))
+        if !events.isEmpty { handleRuleEvents(events) }
+    }
+
+    private func handleRuleEvents(_ events: [RuleEngine.Event]) {
+        for event in events {
+            switch event {
+            case .ruleFired(let id, let app):
+                guard let rule = prefs.usageRules.first(where: { $0.id == id }) else { continue }
+                let title = rule.name.isEmpty ? AppCatalog.shared.name(for: app) : rule.name
+                let what: String
+                switch rule.action {
+                case .block: what = "mobil veride engellendi"
+                case .throttle:
+                    let parts = [rule.action.limit(scope: rule.scope)?.downBytesPerSec.map { "↓ \(Self.rateText($0))" },
+                                 rule.action.limit(scope: rule.scope)?.upBytesPerSec.map { "↑ \(Self.rateText($0))" }]
+                        .compactMap { $0 }.joined(separator: " ")
+                    what = "hız sınırı: \(parts)"
+                }
+                let name = AppCatalog.shared.name(for: app)
+                showToast(Toast(message: "Kural devrede: \(name) \(what)", undoApp: nil, undoBlocked: false))
+                alerts.notify(title: "Kural devrede: \(title)", body: "\(name) \(what).")
+            case .ruleLifted(let id, let app):
+                guard let rule = prefs.usageRules.first(where: { $0.id == id }) else { continue }
+                showToast(Toast(message: "Kural kalktı: \(AppCatalog.shared.name(for: app)) (\(rule.name.isEmpty ? "kural" : rule.name))",
+                                undoApp: nil, undoBlocked: false))
+            case .ladderReached(let level):
+                let pct = rules.ladderStatus.percent
+                switch level {
+                case .none: break
+                case .warn:
+                    alerts.notify(title: "Mobil veri uyarısı: %\(pct)",
+                                  body: "Günlük mobil verinin %\(pct)'ine ulaştın (\(Format.bytes(mobileToday)) / \(Format.bytes(prefs.dailyCapBytes))).")
+                case .slow:
+                    alerts.notify(title: "Mobil veri yavaşlatıldı",
+                                  body: "%\(pct) kullanıldı; diğer uygulamalar yavaşlatıldı.")
+                case .cut:
+                    let n = rules.ladderStatus.blockedApps.count
+                    alerts.notify(title: "Mobil veri kesildi",
+                                  body: "%\(pct) kullanıldı; en çok kullanan \(n) uygulama engellendi.")
+                }
+            }
+        }
+    }
+
+    /// Etkin yapılandırma önceki adımdan daha kısıtlayıcıysa (kural/merdiven devreye girdi, ağ değişti) ilgili
+    /// uygulamaların açık bağlantılarını yeniler. Birden çoğu ise tek özet toast (sessiz sıfırlama).
+    private func resetForEffectiveChange(_ eff: EffectiveConfig) {
+        let prev = lastEffective
+        lastEffective = eff
+        guard let prev, installer.state == .active else { return }
+        let onMobile = isMobile
+        var targets: [(String, ResetReason)] = []
+        for (app, l) in eff.limits.sorted(by: { $0.key < $1.key })
+        where EffectiveConfigBuilder.isStricter(l, than: prev.limits[app]) && (!l.onlyOnMobile || onMobile) {
+            targets.append((app, .limit))
+        }
+        if onMobile {
+            for app in eff.blocked where !prev.blocked.contains(app) { targets.append((app, .block)) }
+        }
+        // Her ağda engellenenler (Wi-Fi dahil): yeni eklenenin açık bağlantıları da yenilenir.
+        for app in eff.blockedAlways.sorted() where !prev.blockedAlways.contains(app) && !targets.contains(where: { $0.0 == app && $0.1 == .block }) {
+            targets.append((app, .block))
+        }
+        guard !targets.isEmpty else { return }
+        let quiet = targets.count > 1
+        for (app, reason) in targets { scheduleReset(app, reason: reason, quiet: quiet) }
+        if quiet {
+            showToast(Toast(message: "\(targets.count) uygulamanın açık bağlantıları yenileniyor (kural/limit)", undoApp: nil, undoBlocked: false))
+        }
+    }
+
+    private func refreshCycleBase() async {
+        let cal = UsageStore.keyCalendar
+        let now = Date.now
+        let start = BudgetCalculator.cycleStart(containing: now, startDay: prefs.billingCycleStartDay, calendar: cal)
+        let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now)) ?? now
+        cycleUsedBeforeToday = await store.interfaceBytes(fromDay: BudgetCalculator.dayKey(start, calendar: cal),
+                                                          toDay: BudgetCalculator.dayKey(yesterday, calendar: cal), mobile: true)
+    }
+
+    /// Fatura dönemi bütçesi ve limit dolma tahmini (sorgu yok; bellek içi).
+    func budget(now: Date = .now) -> BudgetSnapshot {
+        BudgetCalculator.snapshot(now: now, startDay: prefs.billingCycleStartDay, monthlyCapBytes: prefs.monthlyCapBytes,
+                                  dailyCapBytes: prefs.dailyCapBytes, cycleUsedBeforeToday: cycleUsedBeforeToday,
+                                  todayUsed: mobileToday, recentRate: traffic.recentMobileRate(now: now),
+                                  calendar: UsageStore.keyCalendar)
+    }
+
+    /// Bugünün kümülatif mobil kullanım serisi (grafik). Saatlik arayüz toplamlarından; en fazla ~10 sn gecikmeli.
+    func todayMobileCumulativeSeries(now: Date = .now) async -> [CumulativePoint] {
+        let cal = UsageStore.keyCalendar
+        let start = cal.startOfDay(for: now)
+        // Yerel gün sınırları (DST'de 23/25 saat olabilir); +86400 değil takvimle.
+        let end = cal.date(byAdding: .day, value: 1, to: start) ?? start.addingTimeInterval(86_400)
+        let dayStart = Int(start.timeIntervalSince1970)
+        let pts = await store.interfaceHourly(from: dayStart, to: Int(end.timeIntervalSince1970))
+        var hourly: [Int: UInt64] = [:]
+        for p in pts { hourly[p.hour] = p.mobileBytes }
+        return BudgetCalculator.cumulativeSeries(hourly: hourly, now: now, calendar: cal)
+    }
+
+    /// Kural durumları (UI): sayaçlar, pencere sonuna kalan süre, uygulanıyor mu.
+    func ruleStatuses(now: Date = .now) -> [RuleStatus] {
+        rules.statuses(now: now, onMobile: isMobile)
+    }
+
+    /// Kural listesi UI'dan değişince hemen uygula (yoksa bir sonraki ölçümde uygulanır).
+    func rulesDidChange() {
+        evaluateRules([], now: .now)
+        pushConfig(force: false)
     }
 
     // MARK: Loop
@@ -352,17 +513,21 @@ final class AppModel {
 
         let buckets = await filter.drain()
         // Uzantı süreci reboot'a kadar çalışabilir; "aktif" için filtre ayarının da açık olması gerekir.
-        filterConnected = filter.isConnected && installer.state == .active
+        let connected = filter.isConnected && installer.state == .active
+        if connected != filterConnected { filterConnected = connected }
         usage.ingest(buckets, seconds: elapsed)
         alerts.checkBursts(usage.last60, threshold: prefs.burstThresholdBytes, isMobile: isMobile)
-        alerts.checkCap(used: mobileToday, cap: prefs.dailyCapBytes)
+        // Kademeli limit açıkken uyarı bildirimlerini merdiven yönetir (çift bildirim olmasın).
+        if !prefs.tierLadder.enabled { alerts.checkCap(used: mobileToday, cap: prefs.dailyCapBytes) }
+        evaluateRules(buckets, now: .now)
 
         if due(15) {
             // Ucuz kontrol; süreç taraması sadece port değişince ya da 5 dk'da bir.
             let ports = ProxyDetector.localProxyPorts()
-            if ports != proxy.ports || (due(300) && !ports.isEmpty) { refreshProxy() }
+            // Sahip henüz bulunamadıysa (SpoofDPI geç açıldı / yol değişti) dakikada bir yeniden dene.
+            if ports != proxy.ports || (!ports.isEmpty && ((proxy.ownerPaths.isEmpty && due(60)) || due(300))) { refreshProxy() }
         }
-        if due(5) { pushConfig(force: false) }
+        if due(5) || rules.output != lastRuleOutput || isMobile != lastPushedMobile { pushConfig(force: false) }
         if due(10) { await persist() }
         lastUpdate = .now
         onStep?()
@@ -378,7 +543,7 @@ final class AppModel {
 
         // Fiziksel arayüz deltası → bugünkü mobil / Wi-Fi toplamı.
         let today = UsageStore.dayKey()
-        if today != dayKey { dayKey = today; mobileToday = 0; wifiToday = 0; downToday = 0; upToday = 0 }
+        if today != dayKey { dayKey = today; cycleUsedBeforeToday += mobileToday; mobileToday = 0; wifiToday = 0; downToday = 0; upToday = 0 }
         var dIn: UInt64 = 0, dOut: UInt64 = 0
         for (name, inB) in s.network.cumulativeIn {
             let outB = s.network.cumulativeOut[name] ?? 0
@@ -397,6 +562,7 @@ final class AppModel {
         downLast60 = windowSamples.reduce(0) { $0 + $1.down }
         upLast60 = windowSamples.reduce(0) { $0 + $1.up }
         if isMobile { mobileToday += delta; pendingIface.mobile += delta } else { wifiToday += delta; pendingIface.wifi += delta }
+        traffic.add(bytes: delta, mobile: isMobile, at: s.timestamp)
     }
 
     private func persist() async {
@@ -405,6 +571,8 @@ final class AppModel {
         pendingIface = (0, 0)
         await store.addInterfaceBytes(day: dayKey, mobile: true, bytes: p.mobile)
         await store.addInterfaceBytes(day: dayKey, mobile: false, bytes: p.wifi)
+        await store.addInterfaceHourly(traffic.drainHourly())
+        rules.persistIfNeeded()
     }
 
     private func refreshProxy() {
@@ -412,16 +580,27 @@ final class AppModel {
             let r = ProxyDetector.detect()
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                self.proxy = r
+                if r != self.proxy { self.proxy = r }
                 self.pushConfig(force: false)
             }
         }
     }
 
     private func pushConfig(force: Bool) {
+        guard rulesReady else { return }
+        // Elle ayarlar + kural/merdiven çıktısı; prefs'e yazılmaz, en kısıtlayıcı kazanır.
+        let eff = EffectiveConfigBuilder.build(manualLimits: prefs.appLimits, manualBlocked: prefs.blockedOnMobile,
+                                               output: rules.output, onMobile: isMobile)
+        lastRuleOutput = rules.output
+        lastPushedMobile = isMobile
+        updateProxyWanted()
+        resetForEffectiveChange(eff)
         let cfg = FilterConfig(proxyPorts: proxy.ports, proxyOwnerPaths: proxy.ownerPaths,
-                               blockedOnMobile: prefs.blockedOnMobile, forceMobile: prefs.forceMobile,
-                               limits: prefs.appLimits)
+                               blockedOnMobile: eff.blocked, forceMobile: prefs.forceMobile,
+                               limits: eff.limits, blockedAlways: eff.blockedAlways,
+                               // Proxy sahibi bilinmeden Veri Tasarrufu açılmaz: SpoofDPI'ın kendi akışı engellenebilir.
+                               dataSaverActive: prefs.dataSaver.enabled && (proxy.ports.isEmpty || !proxy.ownerPaths.isEmpty),
+                               dataSaverAllow: Set(prefs.dataSaver.allowlist))
         // Bağlantı yeniden kurulmuş olabilir; değişmese de arada bir tekrar gönder.
         guard force || cfg != lastConfig || due(30) else { return }
         lastConfig = cfg

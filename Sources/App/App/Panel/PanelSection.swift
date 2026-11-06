@@ -2,8 +2,8 @@ import Foundation
 
 /// Menü çubuğu panelinde sıralanabilen ve gizlenebilen bölümler.
 enum PanelSection: String, Codable, CaseIterable, Sendable, Identifiable {
+    /// Kart ızgarası (CPU, GPU, RAM, Sıcaklık, ↓, ↑ …); hangi kartların görüneceği `PanelConfig.cards`.
     case system
-    case networkChart
     case mobileCap
     case blockedApps
     case last60
@@ -13,8 +13,7 @@ enum PanelSection: String, Codable, CaseIterable, Sendable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .system: "Sistem"
-        case .networkChart: "Ağ grafiği"
+        case .system: "Sistem kartları"
         case .mobileCap: "Mobil kota"
         case .blockedApps: "Engellenenler"
         case .last60: "Son 60 sn"
@@ -24,8 +23,7 @@ enum PanelSection: String, Codable, CaseIterable, Sendable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .system: "cpu"
-        case .networkChart: "chart.xyaxis.line"
+        case .system: "square.grid.3x2"
         case .mobileCap: "antenna.radiowaves.left.and.right"
         case .blockedApps: "hand.raised"
         case .last60: "clock"

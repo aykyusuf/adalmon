@@ -1,41 +1,41 @@
 import SwiftUI
 
-/// Tek bir sistem metriği için büyük kart: değer, ayrıntı ve eksenli geçmiş grafiği (diskte doluluk çubuğu).
+/// Kompakt canlı metrik kartı: başlık + büyük değer + ince geçmiş çizgisi.
 struct OverviewMetricCard: View {
     let metric: SystemMetric
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             Label(metric.title, systemImage: metric.systemImage)
-                .font(.headline)
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(metric.value)
-                    .font(.system(.largeTitle, design: .rounded, weight: .semibold))
+                    .font(.system(.title, design: .rounded, weight: .semibold))
                     .monospacedDigit()
                     .contentTransition(.numericText())
                 Text(metric.secondary)
-                    .font(.callout)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Text(metric.detail.isEmpty ? metric.summary : metric.detail)
-                .font(.caption)
+            Text(metric.summary)
+                .font(.caption2)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
-                .lineLimit(2)
-                .frame(minHeight: 28, alignment: .topLeading)
+                .lineLimit(1)
             if let history = metric.history {
                 HistoryChart(values: history, tint: metric.tint)
-                    .frame(height: 120)
+                    .frame(height: 44)
             } else {
-                UsageBar(fraction: metric.fraction, tint: metric.tint, height: 10)
-                    .frame(height: 120, alignment: .center)
+                UsageBar(fraction: metric.fraction, tint: metric.tint, height: 8)
+                    .frame(height: 44, alignment: .center)
             }
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 16))
-        .help(metric.help)
+        .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 14))
+        .help(metric.detail.isEmpty ? metric.help : metric.detail)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(metric.accessibilityLabel)
     }

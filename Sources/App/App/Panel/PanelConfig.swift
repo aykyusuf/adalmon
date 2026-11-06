@@ -6,60 +6,65 @@ struct PanelConfig: Codable, Equatable, Sendable {
 
     /// Sıralı bölümler; her bölüm tam bir kez bulunur.
     var sections: [PanelSectionItem] { didSet { sections = Self.normalized(sections) } }
+    /// Sistem kartları ızgarasındaki sıralı kartlar; her kart tam bir kez bulunur.
+    var cards: [PanelCardItem] { didSet { cards = Self.normalized(cards) } }
     /// Başlığından daraltılmış bölümler.
     var collapsed: Set<PanelSection>
     var density: PanelDensity
     var last60Rows: Int { didSet { last60Rows = Self.clamp(last60Rows) } }
     var todayRows: Int { didSet { todayRows = Self.clamp(todayRows) } }
-    var tileStyle: SystemTileStyle
-    var showTemperatures: Bool
-    var chartHeight: ChartHeight
 
     static let defaultSections: [PanelSectionItem] = PanelSection.allCases.map { PanelSectionItem(section: $0, isVisible: true) }
+    static let defaultCards: [PanelCardItem] = [.cpu, .gpu, .memory, .temperature, .download, .upload, .disk]
+        .map { PanelCardItem(kind: $0, isVisible: $0.isVisibleByDefault) }
 
     init(sections: [PanelSectionItem] = PanelConfig.defaultSections,
+         cards: [PanelCardItem] = PanelConfig.defaultCards,
          collapsed: Set<PanelSection> = [],
          density: PanelDensity = .compact,
          last60Rows: Int = 3,
-         todayRows: Int = 5,
-         tileStyle: SystemTileStyle = .compactTiles,
-         showTemperatures: Bool = true,
-         chartHeight: ChartHeight = .small) {
+         todayRows: Int = 5) {
         self.sections = Self.normalized(sections)
+        self.cards = Self.normalized(cards)
         self.collapsed = collapsed
         self.density = density
         self.last60Rows = Self.clamp(last60Rows)
         self.todayRows = Self.clamp(todayRows)
-        self.tileStyle = tileStyle
-        self.showTemperatures = showTemperatures
-        self.chartHeight = chartHeight
     }
 
     private enum CodingKeys: String, CodingKey {
-        case sections, collapsed, density, last60Rows, todayRows, tileStyle, showTemperatures, chartHeight
+        case sections, cards, collapsed, density, last60Rows, todayRows
     }
 
     /// Eksik ya da bilinmeyen alanlar varsayılana düşer; böylece eski kayıtlar yeni sürümde de açılır.
+    /// Bilinmeyen bölüm/kart değerleri (ör. kaldırılan "networkChart") tek tek atılır, kalan sıra korunur.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = PanelConfig()
+        let sections = (try? c.decodeIfPresent([Lossy<PanelSectionItem>].self, forKey: .sections))?.compactMap(\.value)
+        let cards = (try? c.decodeIfPresent([Lossy<PanelCardItem>].self, forKey: .cards))?.compactMap(\.value)
+        let collapsed = (try? c.decodeIfPresent([Lossy<PanelSection>].self, forKey: .collapsed))?.compactMap(\.value)
         self.init(
-            sections: (try? c.decodeIfPresent([PanelSectionItem].self, forKey: .sections)) ?? d.sections,
-            collapsed: (try? c.decodeIfPresent(Set<PanelSection>.self, forKey: .collapsed)) ?? d.collapsed,
+            sections: sections ?? d.sections,
+            cards: cards ?? d.cards,
+            collapsed: collapsed.map(Set.init) ?? d.collapsed,
             density: (try? c.decodeIfPresent(PanelDensity.self, forKey: .density)) ?? d.density,
             last60Rows: (try? c.decodeIfPresent(Int.self, forKey: .last60Rows)) ?? d.last60Rows,
-            todayRows: (try? c.decodeIfPresent(Int.self, forKey: .todayRows)) ?? d.todayRows,
-            tileStyle: (try? c.decodeIfPresent(SystemTileStyle.self, forKey: .tileStyle)) ?? d.tileStyle,
-            showTemperatures: (try? c.decodeIfPresent(Bool.self, forKey: .showTemperatures)) ?? d.showTemperatures,
-            chartHeight: (try? c.decodeIfPresent(ChartHeight.self, forKey: .chartHeight)) ?? d.chartHeight
+            todayRows: (try? c.decodeIfPresent(Int.self, forKey: .todayRows)) ?? d.todayRows
         )
     }
 
     /// Görünür bölümler, sırasıyla.
     var visibleSections: [PanelSection] { sections.filter(\.isVisible).map(\.section) }
+    /// Görünür kartlar, sırasıyla.
+    var visibleCards: [PanelCardKind] { cards.filter(\.isVisible).map(\.kind) }
 
     func isVisible(_ section: PanelSection) -> Bool {
         sections.first { $0.section == section }?.isVisible ?? false
+    }
+
+    func isVisible(_ card: PanelCardKind) -> Bool {
+        cards.first { $0.kind == card }?.isVisible ?? false
     }
 
     func isCollapsed(_ section: PanelSection) -> Bool { collapsed.contains(section) }
@@ -67,6 +72,11 @@ struct PanelConfig: Codable, Equatable, Sendable {
     mutating func setVisible(_ section: PanelSection, _ visible: Bool) {
         guard let i = sections.firstIndex(where: { $0.section == section }) else { return }
         sections[i].isVisible = visible
+    }
+
+    mutating func setVisible(_ card: PanelCardKind, _ visible: Bool) {
+        guard let i = cards.firstIndex(where: { $0.kind == card }) else { return }
+        cards[i].isVisible = visible
     }
 
     mutating func toggleCollapsed(_ section: PanelSection) {
@@ -81,6 +91,14 @@ struct PanelConfig: Codable, Equatable, Sendable {
         sections.swapAt(i, j)
     }
 
+    /// Kartı bir sıra yukarı (-1) ya da aşağı (+1) taşır.
+    mutating func move(_ card: PanelCardKind, by delta: Int) {
+        guard let i = cards.firstIndex(where: { $0.kind == card }) else { return }
+        let j = i + delta
+        guard cards.indices.contains(j) else { return }
+        cards.swapAt(i, j)
+    }
+
     static func clamp(_ rows: Int) -> Int { min(max(rows, rowCountRange.lowerBound), rowCountRange.upperBound) }
 
     /// Yinelenenleri atar, eksik bölümleri sona (görünür olarak) ekler.
@@ -91,5 +109,24 @@ struct PanelConfig: Codable, Equatable, Sendable {
             result.append(PanelSectionItem(section: section, isVisible: true))
         }
         return result
+    }
+
+    /// Yinelenenleri atar, eksik kartları sona ekler (yalnızca varsayılan olarak görünenler görünür).
+    static func normalized(_ items: [PanelCardItem]) -> [PanelCardItem] {
+        var seen = Set<PanelCardKind>()
+        var result = items.filter { seen.insert($0.kind).inserted }
+        for kind in PanelCardKind.allCases where !seen.contains(kind) {
+            result.append(PanelCardItem(kind: kind, isVisible: kind.isVisibleByDefault))
+        }
+        return result
+    }
+}
+
+/// Bilinmeyen değeri hata vermek yerine nil olarak çözen sarmalayıcı.
+private struct Lossy<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
     }
 }

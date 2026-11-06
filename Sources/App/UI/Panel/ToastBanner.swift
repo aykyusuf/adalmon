@@ -28,7 +28,7 @@ struct ToastBanner: View {
                 }
             }
             .padding(8)
-            .background(.thinMaterial, in: .rect(cornerRadius: 10))
+            .background(.quaternary, in: .rect(cornerRadius: 10, style: .continuous))
             .transition(.move(edge: .top).combined(with: .opacity))
             .accessibilityElement(children: .combine)
         }

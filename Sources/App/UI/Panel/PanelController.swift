@@ -10,12 +10,14 @@ final class PanelController {
     private let panel: NSPanel
     private let glass = NSGlassEffectView()
     private let model: AppModel
+    private let openApp: () -> Void
     private let openSettings: () -> Void
     private var outsideMonitor: Any?
     private var localMonitor: Any?
 
-    init(model: AppModel, openSettings: @escaping () -> Void) {
+    init(model: AppModel, openApp: @escaping () -> Void, openSettings: @escaping () -> Void) {
         self.model = model
+        self.openApp = openApp
         self.openSettings = openSettings
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 372, height: 600),
                         styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
@@ -38,7 +40,10 @@ final class PanelController {
 
     private func show(relativeTo button: NSStatusBarButton) {
         guard let buttonWindow = button.window else { return }
-        let host = NSHostingView(rootView: PanelView(model: model, openSettings: { [weak self] in
+        let host = NSHostingView(rootView: PanelView(model: model, openApp: { [weak self] in
+            self?.close()
+            self?.openApp()
+        }, openSettings: { [weak self] in
             self?.close()
             self?.openSettings()
         }, onSizeChange: { [weak self] size in self?.resize(to: size) }))

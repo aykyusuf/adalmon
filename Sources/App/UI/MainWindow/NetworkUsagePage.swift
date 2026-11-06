@@ -1,14 +1,22 @@
 import SwiftUI
 
-/// "Ağ kullanımı": bugünün uygulama tablosu (sıralanabilir, aranabilir).
-struct NetworkUsagePage: View {
+struct NetworkUsagePage: View, Equatable {
     let data: PanelData
     let limits: [String: AppLimit]
     let actions: PanelActions
+    let model: AppModel
+    let router: SettingsRouter
+
+    /// Yalnızca sayfanın gösterdiği veri; eylem kapanışları/model/router kimlik olarak sabittir. `.equatable()` ile
+    /// ölçüm adımı bu veriyi değiştirmediyse gövde (ve tablo) yeniden çalışmaz.
+    nonisolated static func == (lhs: NetworkUsagePage, rhs: NetworkUsagePage) -> Bool {
+        lhs.data == rhs.data && lhs.limits == rhs.limits
+    }
 
     @State private var query = ""
     @State private var sortOrder = [KeyPathComparator(\AppUsageTableRow.total, order: .reverse)]
-    @State private var selection = Set<String>()
+    @State private var selectedID: String?
+    @State private var showInspector = false
     @State private var pendingBlock: AppUsageTableRow?
 
     var body: some View {
@@ -26,11 +34,29 @@ struct NetworkUsagePage: View {
                     .padding(.horizontal, 24)
                 Spacer()
             } else {
-                table(rows)
+                NetworkUsageTable(rows: rows, isSearching: !query.isEmpty, selection: $selectedID, sortOrder: $sortOrder,
+                                  onShowDetails: select, onToggleBlock: toggleBlock, onClose: closeInspector)
             }
         }
         .padding(.top, 24)
         .searchable(text: $query, prompt: "Uygulama veya alan adı ara")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Uygulama ayrıntıları", systemImage: "sidebar.trailing", action: toggleInspector)
+                    .keyboardShortcut("i", modifiers: [.command, .option])
+                    .help(showInspector ? "Ayrıntı panelini gizle (⌥⌘I)" : "Ayrıntı panelini göster (⌥⌘I)")
+            }
+        }
+        .inspector(isPresented: $showInspector) {
+            NetworkInspectorPanel(selectedID: selectedID, data: data, model: model, actions: actions,
+                                  onToggleBlock: toggleBlock(id:), onClose: closeInspector)
+                .inspectorColumnWidth(min: 300, ideal: 320, max: 380)
+        }
+        .onAppear(perform: consumeDeepLink)
+        .onChange(of: router.selectedAppID) { consumeDeepLink() }
+        // Seçim ve panel birlikte hareket eder: seçim → açılır, seçim kalkarsa → kapanır, panel kapanırsa → seçim kalkar.
+        .onChange(of: selectedID) { showInspector = selectedID != nil }
+        .onChange(of: showInspector) { if !showInspector { selectedID = nil } }
         .confirmationDialog(
             pendingBlock.map { "\($0.name) mobil veride engellensin mi?" } ?? "",
             isPresented: Binding(get: { pendingBlock != nil }, set: { if !$0 { pendingBlock = nil } }),
@@ -50,51 +76,43 @@ struct NetworkUsagePage: View {
             .sorted(using: sortOrder)
     }
 
-    private func table(_ rows: [AppUsageTableRow]) -> some View {
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("Uygulama", value: \.name) { row in
-                AppNameCell(row: row)
-            }
-            .width(min: 160, ideal: 220)
-            TableColumn("Alan adları", value: \.domainText) { row in
-                Text(row.domainText)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .width(min: 140, ideal: 220)
-            TableColumn("Toplam", value: \.total) { row in
-                Text(Format.bytes(row.total)).monospacedDigit()
-            }
-            .width(min: 70, ideal: 90)
-            TableColumn("Mobil", value: \.mobile) { row in
-                Text(row.mobile > 0 ? Format.bytes(row.mobile) : "–")
-                    .monospacedDigit()
-                    .foregroundStyle(row.mobile > 0 ? .orange : .secondary)
-            }
-            .width(min: 70, ideal: 90)
-            TableColumn("Durum", value: \.statusRank) { row in
-                AppStatusCell(row: row) { toggleBlock(row) }
-            }
-            .width(min: 190, ideal: 260)
-        }
-        .contextMenu(forSelectionType: String.self) { ids in
-            if let row = rows.first(where: { ids.contains($0.id) }) {
-                Button(row.isBlocked ? "Engeli kaldır" : "Mobilde engelle",
-                       systemImage: row.isBlocked ? "hand.raised.slash" : "hand.raised") { toggleBlock(row) }
-            }
-        }
-        .overlay {
-            if rows.isEmpty {
-                if query.isEmpty {
-                    ContentUnavailableView("Henüz kayıt yok", systemImage: "chart.bar", description: Text("Bugün ağ kullanan uygulamalar burada listelenir."))
-                } else {
-                    ContentUnavailableView.search(text: query)
-                }
-            }
-        }
+    private func select(_ id: String) {
+        selectedID = id
+        showInspector = true
+    }
+
+    /// Araç çubuğu düğmesi (⌥⌘I): açıkken kapatır, kapalıyken açar (seçim yoksa "seçilmedi" durumu görünür).
+    private func toggleInspector() {
+        if showInspector { closeInspector() } else { showInspector = true }
+    }
+
+    private func closeInspector() {
+        showInspector = false
+        selectedID = nil
+    }
+
+    /// Genel bakıştan gelen derin bağlantı: satırı seç, ayrıntı panelini aç (bir kez).
+    private func consumeDeepLink() {
+        guard let id = router.selectedAppID else { return }
+        query = ""
+        select(id)
+        router.selectedAppID = nil
     }
 
     private func toggleBlock(_ row: AppUsageTableRow) {
-        if row.isBlocked { actions.setBlocked(row.id, false) } else { pendingBlock = row }
+        toggleBlock(id: row.id, name: row.name, isBlocked: row.isBlocked)
+    }
+
+    private func toggleBlock(id: String) {
+        toggleBlock(id: id, name: AppCatalog.shared.name(for: id), isBlocked: data.isBlocked(id))
+    }
+
+    private func toggleBlock(id: String, name: String, isBlocked: Bool) {
+        if isBlocked {
+            actions.setBlocked(id, false)
+        } else {
+            pendingBlock = data.today.first { $0.app == id }.map { AppUsageTableRow(usage: $0, blocked: data.blockedApps, limits: limits) }
+                ?? AppUsageTableRow(id: id, name: name, domains: [], total: 0, mobile: 0, isBlocked: false, limit: nil)
+        }
     }
 }

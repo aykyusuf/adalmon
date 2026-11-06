@@ -49,7 +49,7 @@ final class XPCServer: NSObject, NSXPCListenerDelegate, FilterControl, @unchecke
     func updateConfig(_ json: Data, reply: @escaping (Bool) -> Void) {
         guard let cfg = try? JSONDecoder().decode(FilterConfig.self, from: json) else { reply(false); return }
         lock.withLock { _config = cfg }
-        log.notice("config: proxyPorts=\(cfg.proxyPorts, privacy: .public) owners=\(cfg.proxyOwnerPaths.count, privacy: .public) blocked=\(cfg.blockedOnMobile.count, privacy: .public) limits=\(cfg.limits.count, privacy: .public)")
+        log.notice("config: proxyPorts=\(cfg.proxyPorts, privacy: .public) owners=\(cfg.proxyOwnerPaths.count, privacy: .public) blocked=\(cfg.blockedOnMobile.count, privacy: .public) limits=\(cfg.limits.count, privacy: .public) blockedAlways=\(cfg.blockedAlways.count, privacy: .public) dataSaver=\(cfg.dataSaverActive, privacy: .public)/\(cfg.dataSaverAllow.count, privacy: .public)")
         reply(true)
     }
 

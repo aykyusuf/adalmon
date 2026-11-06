@@ -19,7 +19,7 @@ final class MainWindowPreviewTests: XCTestCase {
         for section in MainSection.allCases {
             let router = SettingsRouter(isDockModeOn: { true })
             router.selectedMainSection = section
-            let view = MainWindowView(data: .sample, limits: limits, actions: .inert, router: router) { settings in
+            let view = MainWindowView(model: model, source: .fixed(.sample, limits: limits), actions: .inert, router: router) { settings in
                 SettingsDetailView(section: settings, model: model)
             }
             let host = NSHostingView(rootView: view)

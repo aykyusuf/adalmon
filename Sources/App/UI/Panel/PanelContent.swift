@@ -1,23 +1,23 @@
 import SwiftUI
 
-/// Panelin saf görünümü: veri, ayar ve eylemleri dışarıdan alır (canlı panel, ayar önizlemesi ve test aynı görünümü çizer).
 struct PanelContent: View {
     static let width: CGFloat = 372
 
     let data: PanelData
     @Binding var config: PanelConfig
     let actions: PanelActions
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let density = config.density
         VStack(alignment: .leading, spacing: density.sectionSpacing) {
-            PanelHeader(data: data, config: $config, openSettings: actions.openSettings)
+            PanelHeader(data: data, config: $config, openApp: actions.openApp, openSettings: actions.openSettings)
             ToastBanner(toast: data.toast, onUndo: actions.undoToast) { action in
                 switch action {
                 case .restart(let app): actions.restartApp(app)
                 }
             }
-                .animation(.snappy, value: data.toast)
+            .animation(.panel(reduceMotion: reduceMotion), value: data.toast)
             ForEach(sectionsToShow) { section in
                 sectionView(section)
             }
@@ -29,7 +29,6 @@ struct PanelContent: View {
         .environment(\.panelDensity, density)
     }
 
-    /// Görünür bölümler. Filtre yoksa iki liste yerine tek bir kurulum çağrısı (ilk listenin yerinde) gösterilir.
     private var sectionsToShow: [PanelSection] {
         var result = config.visibleSections
         if data.showsFilterCallout, let keep = result.first(where: { $0 == .last60 || $0 == .today }) {
@@ -42,11 +41,11 @@ struct PanelContent: View {
     private func sectionView(_ section: PanelSection) -> some View {
         switch section {
         case .system:
-            SystemSection(data: data, config: $config)
-        case .networkChart:
-            NetworkSection(data: data, config: $config)
+            if !config.visibleCards.isEmpty {
+                PanelCardGrid(data: data, cards: config.visibleCards, onOpen: actions.openApp)
+            }
         case .mobileCap:
-            MobileCapView(data: data, config: $config)
+            MobileQuotaRow(data: data)
         case .blockedApps:
             BlockedAppsSection(data: data, config: $config, actions: actions)
         case .last60, .today:
@@ -64,7 +63,7 @@ struct PanelContent: View {
                         apps: data.today, limit: config.todayRows,
                         emptyText: "Henüz kayıt yok",
                         data: data, config: $config, actions: actions,
-                        expandable: true, allowsShowMore: true)
+                        allowsShowMore: true)
             }
         }
     }

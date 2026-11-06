@@ -47,16 +47,31 @@ extension PanelData {
             memHistory: wave.map { 0.55 + $0 * 0.1 },
             downHistory: wave.map { $0 * 2_000_000 },
             upHistory: wave.map { $0 * 150_000 },
+            temperatureHistory: wave.map { 46 + $0 * 12 },
             last60: last60,
             today: today,
             downLast60: 52_000_000, upLast60: 3_700_000,
             downToday: 2_640_000_000, upToday: 204_000_000,
             mobileToday: 1_220_000_000, wifiToday: 1_620_000_000, unattributedMobile: 40_000_000,
             dailyCapBytes: 3_000_000_000,
+            budget: .sample,
             blockedApps: ["/System/Applications/News.app"],
             isMobile: false, medium: .wifi, interfaceName: "en0",
             filterConnected: true, installerState: .active,
             proxyPorts: [], proxyOwnerPaths: [], toast: nil
         )
+    }
+}
+
+extension BudgetSnapshot {
+    /// Bugün 1,22 / 3 GB; son hızla ~21:40'ta dolar.
+    static var sample: BudgetSnapshot {
+        let now = Date.now
+        return BudgetSnapshot(
+            cycleStart: now, nextCycleStart: now, cycleUsedBytes: 1_220_000_000, todayUsedBytes: 1_220_000_000,
+            monthlyCapBytes: nil, remainingBytes: nil, daysLeft: 12, dynamicDailyBudgetBytes: nil,
+            effectiveDailyCapBytes: 3_000_000_000, todayRemainingBytes: 1_780_000_000,
+            etaRecentRate: .at(now.addingTimeInterval(3 * 3600)), etaAverageRate: .notToday,
+            etaBudgetRecentRate: nil, etaBudgetAverageRate: nil, projectedCycleBytes: nil)
     }
 }

@@ -1,20 +1,23 @@
 import SwiftUI
 
-/// Tek uygulama satırı: ikon, ad › alan adı, sağa yaslı byte, üzerine gelince engelle düğmesi.
+/// Tek uygulama satırı: ikon, ad › alan adı, byte, engelle düğmesi ve açılır ▸ (en çok kullanılan alan adları).
 /// Engelle eylemi VoiceOver (accessibilityAction) ve sağ tık menüsünden her zaman erişilebilir.
 struct AppUsageRow: View {
     let usage: AppUsage
     let maxBytes: UInt64
     let isBlocked: Bool
     let isMobile: Bool
-    let expandable: Bool
     let setBlocked: @MainActor (String, Bool) -> Void
     let resetConnections: @MainActor (String) -> Void
     let restartApp: @MainActor (String) -> Void
     @Environment(\.panelDensity) private var density
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = false
     @State private var confirming = false
     @State private var hovering = false
+
+    private var expandable: Bool { !usage.domains.isEmpty }
+    private var animation: Animation? { .panel(reduceMotion: reduceMotion) }
 
     var body: some View {
         let name = AppCatalog.shared.name(for: usage.app)
@@ -22,29 +25,36 @@ struct AppUsageRow: View {
             line(name: name)
             if confirming {
                 BlockConfirmation(name: name, isMobile: isMobile) {
-                    withAnimation(.snappy) { confirming = false }
+                    withAnimation(animation) { confirming = false }
                 } onConfirm: {
                     setBlocked(usage.app, true)
-                    withAnimation(.snappy) { confirming = false }
+                    withAnimation(animation) { confirming = false }
                 }
                 .padding(.bottom, 4)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
             if expanded {
-                ForEach(usage.domains, id: \.name) { d in
-                    HStack {
-                        Text(d.name).lineLimit(1)
-                        Spacer()
-                        Text(Format.bytes(d.bytes)).monospacedDigit()
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, density.iconSize + 6)
-                    .padding(.trailing, 22)
-                }
-                .transition(.opacity)
+                domainList
+                    .transition(.opacity)
             }
         }
+    }
+
+    private var domainList: some View {
+        VStack(spacing: 2) {
+            ForEach(usage.domains, id: \.name) { d in
+                HStack(spacing: 6) {
+                    Text(d.name).lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    Text(Format.bytes(d.bytes)).monospacedDigit()
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.leading, density.iconSize + 6)
+        .padding(.trailing, 20)
+        .padding(.bottom, 4)
     }
 
     private var fraction: Double { Double(usage.bytes) / Double(max(1, maxBytes)) }
@@ -52,6 +62,11 @@ struct AppUsageRow: View {
     private var topDomain: String? {
         guard let top = usage.domains.first?.name, top != AppCatalog.shared.name(for: usage.app) else { return nil }
         return top
+    }
+
+    private func toggleExpanded() {
+        guard expandable else { return }
+        withAnimation(animation) { expanded.toggle() }
     }
 
     private func line(name: String) -> some View {
@@ -83,27 +98,37 @@ struct AppUsageRow: View {
                 .font(.callout.weight(.medium))
                 .monospacedDigit()
                 .lineLimit(1)
-                .frame(minWidth: 58, alignment: .trailing)
+                .frame(minWidth: 56, alignment: .trailing)
             blockButton
+            chevron
         }
         .frame(height: density.rowHeight)
         .background(alignment: .bottomLeading) { usageBar }
         .contentShape(.rect)
         .onHover { hovering = $0 }
-        .onTapGesture { if expandable { withAnimation(.snappy) { expanded.toggle() } } }
+        .onTapGesture { toggleExpanded() }
         .contextMenu { menuItems }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText(name: name))
+        .accessibilityValue(expandable ? (expanded ? "Açık" : "Kapalı") : "")
         .accessibilityAddTraits(expandable ? .isButton : [])
         .accessibilityHint(expandable ? "Alan adı dökümünü aç veya kapat" : "")
-        .accessibilityAction {
-            if expandable { withAnimation(.snappy) { expanded.toggle() } }
-        }
+        .accessibilityAction { toggleExpanded() }
         .accessibilityAction(named: isBlocked ? "Engeli kaldır" : "Mobilde engelle") { blockTapped() }
         .help(topDomain.map { "\(name) › \($0)" } ?? name)
     }
 
-    /// Satırın altında, en çok harcayana göre oranlı ince çubuk.
+    private var chevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.tertiary)
+            .rotationEffect(.degrees(expanded ? 90 : 0))
+            .animation(animation, value: expanded)
+            .frame(width: 10)
+            .opacity(expandable ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+
     private var usageBar: some View {
         GeometryReader { geo in
             Capsule()
@@ -136,10 +161,8 @@ struct AppUsageRow: View {
         } else {
             Button("Mobilde engelle", systemImage: "hand.raised") { blockTapped() }
         }
-        if expandable && !usage.domains.isEmpty {
-            Button(expanded ? "Alan adlarını gizle" : "Alan adlarını göster") {
-                withAnimation(.snappy) { expanded.toggle() }
-            }
+        if expandable {
+            Button(expanded ? "Alan adlarını gizle" : "Alan adlarını göster") { toggleExpanded() }
         }
         Divider()
         Button("Bağlantıları yenile", systemImage: "arrow.triangle.2.circlepath") { resetConnections(usage.app) }
@@ -150,7 +173,7 @@ struct AppUsageRow: View {
 
     private func blockTapped() {
         if isBlocked { setBlocked(usage.app, false) }
-        else { withAnimation(.snappy) { confirming.toggle() } }
+        else { withAnimation(animation) { confirming.toggle() } }
     }
 
     private func accessibilityText(name: String) -> String {

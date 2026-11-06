@@ -8,6 +8,10 @@ final class UsageAccumulator: @unchecked Sendable {
         var signingID: String
         var host: String
         var kind: FlowKind
+        /// Akış açılışındaki kimlik/port: açık akışı sonradan engelleme kararı (`FlowPolicy`) için.
+        var executablePath: String = ""
+        var remotePort: Int = 0
+        var isOutbound: Bool = true
         var lastIn: UInt64 = 0
         var lastOut: UInt64 = 0
         var lastSeen: Date = .now

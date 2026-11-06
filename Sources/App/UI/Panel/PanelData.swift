@@ -1,13 +1,15 @@
 import Foundation
 
 /// Panelin bir anlık görüntüsü. Görünümler `AppModel` yerine bunu okur; böylece testte sahte veriyle de çizilebilir.
-struct PanelData {
+struct PanelData: Equatable {
     var snapshot: SystemSnapshot?
     var cpuHistory: [Double] = []
     var gpuHistory: [Double] = []
     var memHistory: [Double] = []
     var downHistory: [Double] = []
     var upHistory: [Double] = []
+    /// CPU ortalama sıcaklık geçmişi (°C); `TemperatureHistory` zaten menü çubuğu adımında doldurur.
+    var temperatureHistory: [Double] = []
 
     var last60: [AppUsage] = []
     var today: [AppUsage] = []
@@ -20,6 +22,8 @@ struct PanelData {
     var wifiToday: UInt64 = 0
     var unattributedMobile: UInt64 = 0
     var dailyCapBytes: UInt64 = 3_000_000_000
+    /// Fatura dönemi bütçesi ve dolma tahmini; nil ise yalnız `dailyCapBytes` kullanılır.
+    var budget: BudgetSnapshot?
 
     var blockedApps: [String] = []
     var isMobile = false
@@ -32,6 +36,9 @@ struct PanelData {
     var proxyOwnerPaths: [String] = []
     var toast: AppModel.Toast?
 
+    /// Dişli çark Dock modunda ana pencereyi (true), değilse Ayarlar penceresini açar; yalnızca ipucu metnini belirler.
+    var opensMainWindow = false
+
     /// Uygulama bazlı ölçüm yoksa listeler yerine kurulum çağrısı gösterilir.
     var showsFilterCallout: Bool { installerState != .active && !filterConnected }
 
@@ -39,15 +46,18 @@ struct PanelData {
 }
 
 extension PanelData {
+    /// `live == false`: anlık metrik/geçmiş alanları okunmaz (boş kalır). Ağ/Mobil sayfaları bunları göstermez; böylece
+    /// gövdeleri her ölçüm adımında değil, yalnızca gösterdikleri veri değişince yeniden çalışır (gözlem daralır).
     @MainActor
-    init(model: AppModel) {
+    init(model: AppModel, live: Bool = true) {
         self.init(
-            snapshot: model.snapshot,
-            cpuHistory: model.cpuHistory,
-            gpuHistory: model.gpuHistory,
-            memHistory: model.memHistory,
-            downHistory: model.downHistory,
-            upHistory: model.upHistory,
+            snapshot: live ? model.snapshot : nil,
+            cpuHistory: live ? model.cpuHistory : [],
+            gpuHistory: live ? model.gpuHistory : [],
+            memHistory: live ? model.memHistory : [],
+            downHistory: live ? model.downHistory : [],
+            upHistory: live ? model.upHistory : [],
+            temperatureHistory: live ? TemperatureHistory.shared.record(model.snapshot)[.cpu] ?? [] : [],
             last60: model.usage.last60,
             today: model.usage.today,
             downLast60: model.downLast60,
@@ -58,6 +68,7 @@ extension PanelData {
             wifiToday: model.wifiToday,
             unattributedMobile: model.unattributedMobile,
             dailyCapBytes: model.prefs.dailyCapBytes,
+            budget: model.budget(),
             blockedApps: model.prefs.blockedOnMobile,
             isMobile: model.isMobile,
             medium: model.path.medium,
@@ -66,7 +77,8 @@ extension PanelData {
             installerState: model.installer.state,
             proxyPorts: model.proxy.ports,
             proxyOwnerPaths: model.proxy.ownerPaths,
-            toast: model.toast
+            toast: model.toast,
+            opensMainWindow: model.prefs.showInDock
         )
     }
 }

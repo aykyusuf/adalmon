@@ -17,13 +17,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = SettingsWindowController(model: model, router: router)
         let mainWindow = MainWindowController(model: model, router: router)
         router.attach(showMainWindow: { mainWindow.show() }, showSettingsWindow: { settings.show() })
-        let panel = PanelController(model: model, openSettings: { router.open() })
+        let panel = PanelController(
+            model: model,
+            openApp: { prefs.showInDock ? mainWindow.show() : router.open() },
+            openSettings: { router.open() }
+        )
         let dockMode = DockModeController(
             prefs: prefs,
             makeMenu: { [unowned self] in MainMenuBuilder.make(target: self) },
             closeMainWindow: {
                 // Dock modu kapanırken ana pencerede Ayarlar açıksa, ayrı Ayarlar penceresine geç.
-                let showingSettings = model.mainWindowVisible && router.mainSectionIsSettings
+                let showingSettings = mainWindow.isOpen && router.mainSectionIsSettings
                 mainWindow.close()
                 if showingSettings { settings.show() }
             },

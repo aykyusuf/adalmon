@@ -1,96 +1,64 @@
 import SwiftUI
 
-/// "Mobil veri": bugünkü mobil kullanım / kota göstergesi, Wi-Fi toplamı ve mobil veriyi en çok kullanan uygulamalar.
-struct MobileDataPage: View {
+struct MobileDataPage: View, Equatable {
     let data: PanelData
+    let actions: PanelActions
+    let model: AppModel
+
+    /// Yalnızca sayfanın gösterdiği veri (`.equatable()`); modelden doğrudan okunanlar sayfayı kendi gözlemiyle yeniler.
+    nonisolated static func == (lhs: MobileDataPage, rhs: MobileDataPage) -> Bool { lhs.data == rhs.data }
+
+    @State private var series: [CumulativePoint] = []
+    @State private var seriesLoaded = false
 
     var body: some View {
-        let used = data.mobileToday
-        let cap = data.dailyCapBytes
-        let fraction = cap == 0 ? 0 : min(1, Double(used) / Double(cap))
-        let tint: Color = fraction >= 1 ? .red : (fraction >= 0.8 ? .orange : .green)
+        let budget = model.budget()
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 PageHeader(title: MainSection.mobile.title) {
                     ConnectionBadge(medium: data.medium, isMobile: data.isMobile, interfaceName: data.interfaceName)
                 }
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Bugün mobil").font(.headline).foregroundStyle(.secondary)
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(Format.bytes(used))
-                            .font(.system(size: 44, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(fraction >= 0.8 ? tint : .primary)
-                            .contentTransition(.numericText())
-                        Text("/ \(Format.bytes(cap)) günlük kota · \(Format.percent(fraction))")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
-                    }
-                    Gauge(value: fraction) {
-                        Text("Günlük mobil kota")
-                    }
-                    .gaugeStyle(.linearCapacity)
-                    .labelsHidden()
-                    .tint(tint)
-                    .accessibilityValue("Mobil veri \(Format.bytes(used)) / \(Format.bytes(cap)), yüzde \(Int(fraction * 100))")
-                    Text("Kotayı Ayarlar › Mobil veri bölümünden değiştirebilirsin.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 16))
-
+                MobileTodayCard(budget: budget, ladder: model.rules.ladderStatus, dailyCapBytes: data.dailyCapBytes,
+                                isMobile: data.isMobile, forceMobile: model.prefs.forceMobile)
+                MobileCumulativeChart(points: series, loaded: seriesLoaded, budgetBytes: budget.effectiveDailyCapBytes,
+                                      dailyCapBytes: data.dailyCapBytes)
+                MobileCycleCard(budget: budget)
                 HStack(spacing: 16) {
                     statCard("Wi-Fi bugün", value: Format.bytes(data.wifiToday), systemImage: "wifi")
                     statCard("Sistem/diğer mobil", value: Format.bytes(data.unattributedMobile), systemImage: "gearshape.2",
                              help: "Arayüz sayacı ile uygulamalara yazılan trafik arasındaki fark (DNS, sistem, VPN vb.)")
                 }
-
-                topMobileApps
+                if data.showsFilterCallout {
+                    FilterInstallCallout(state: data.installerState, onInstall: actions.installFilter)
+                } else {
+                    MobileTopApps(apps: topMobileApps)
+                }
+                MobileSettingsGroup(model: model, blocked: model.prefs.blockedOnMobile)
+                    .padding(.top, 8)
             }
             .padding(24)
         }
+        .task {
+            // Sayfa görünürken ~15 sn'de bir; görünüm kapanınca görev iptal olur.
+            while !Task.isCancelled {
+                series = await model.todayMobileCumulativeSeries()
+                seriesLoaded = true
+                try? await Task.sleep(for: .seconds(15))
+            }
+        }
+    }
+
+    private var topMobileApps: [AppUsage] {
+        Array(data.today.filter { $0.mobileBytes > 0 }.sorted { $0.mobileBytes > $1.mobileBytes }.prefix(8))
     }
 
     private func statCard(_ title: String, value: String, systemImage: String, help: String = "") -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label(title, systemImage: systemImage)
-                .font(.headline)
-                .foregroundStyle(.secondary)
+        MobileCard(title, systemImage: systemImage) {
             Text(value)
                 .font(.title.weight(.semibold))
                 .monospacedDigit()
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 16))
         .help(help)
         .accessibilityElement(children: .combine)
-    }
-
-    @ViewBuilder
-    private var topMobileApps: some View {
-        let apps = data.today.filter { $0.mobileBytes > 0 }.sorted { $0.mobileBytes > $1.mobileBytes }.prefix(8)
-        if !apps.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Mobil veriyi en çok kullananlar").font(.headline).foregroundStyle(.secondary)
-                ForEach(apps) { usage in
-                    HStack(spacing: 8) {
-                        Image(nsImage: AppCatalog.shared.icon(for: usage.app))
-                            .resizable()
-                            .frame(width: 22, height: 22)
-                            .accessibilityHidden(true)
-                        Text(AppCatalog.shared.name(for: usage.app)).lineLimit(1)
-                        Spacer()
-                        Text(Format.bytes(usage.mobileBytes)).monospacedDigit().foregroundStyle(.orange)
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 16))
-        }
     }
 }

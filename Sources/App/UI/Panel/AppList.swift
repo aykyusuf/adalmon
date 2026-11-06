@@ -12,10 +12,10 @@ struct AppList: View {
     @Binding var config: PanelConfig
     let actions: PanelActions
     /// Satıra dokununca alan adı dökümü açılsın mı.
-    var expandable = false
     /// Sınırın ötesindeki satırlar "+N daha" ile açılabilsin mi.
     var allowsShowMore = false
     @State private var showAll = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let expandedLimit = 30
 
@@ -25,7 +25,7 @@ struct AppList: View {
         let shown = Array(apps.prefix(visibleCount))
         VStack(alignment: .leading, spacing: 0) {
             PanelSectionHeader(title: title, isCollapsed: collapsed) {
-                withAnimation(.snappy) { config.toggleCollapsed(section) }
+                withAnimation(.panel(reduceMotion: reduceMotion)) { config.toggleCollapsed(section) }
             } accessory: {
                 Text(summary)
             }
@@ -40,7 +40,7 @@ struct AppList: View {
                     let maxBytes = apps.first?.bytes ?? 1
                     ForEach(shown) { usage in
                         AppUsageRow(usage: usage, maxBytes: maxBytes, isBlocked: data.isBlocked(usage.app),
-                                    isMobile: data.isMobile, expandable: expandable, setBlocked: actions.setBlocked,
+                                    isMobile: data.isMobile, setBlocked: actions.setBlocked,
                                     resetConnections: actions.resetConnections, restartApp: actions.restartApp)
                     }
                     moreButton(hidden: apps.count - shown.count)
@@ -53,7 +53,7 @@ struct AppList: View {
     private func moreButton(hidden: Int) -> some View {
         if allowsShowMore, hidden > 0 || showAll, apps.count > limit {
             Button(showAll ? "Daha az" : "+\(hidden) daha") {
-                withAnimation(.snappy) { showAll.toggle() }
+                withAnimation(.panel(reduceMotion: reduceMotion)) { showAll.toggle() }
             }
             .buttonStyle(.link)
             .font(.caption)

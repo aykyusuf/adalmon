@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Ayarlar › Panel: bölüm sırası/görünürlüğü, yoğunluk, satır sayıları, sistem görünümü, grafik yüksekliği
+/// Ayarlar › Panel: bölüm ve kart sırası/görünürlüğü, yoğunluk, satır sayıları
 /// ve panelin canlı, küçültülmüş önizlemesi.
 struct PanelSettingsPane: View {
     let model: AppModel
@@ -18,21 +18,27 @@ struct PanelSettingsPane: View {
             Form {
                 Section("Bölümler") {
                     ForEach(Array(store.config.sections.enumerated()), id: \.element.id) { index, item in
-                        sectionRow(item, index: index, count: store.config.sections.count)
+                        PanelReorderRow(title: item.section.displayName, systemImage: item.section.systemImage,
+                                        isVisible: sectionVisibility(item.section),
+                                        canMoveUp: index > 0, canMoveDown: index < store.config.sections.count - 1) {
+                            store.config.move(item.section, by: $0)
+                        }
+                    }
+                }
+
+                Section("Sistem kartları") {
+                    ForEach(Array(store.config.cards.enumerated()), id: \.element.id) { index, item in
+                        PanelReorderRow(title: item.kind.displayName, systemImage: item.kind.systemImage,
+                                        isVisible: cardVisibility(item.kind),
+                                        canMoveUp: index > 0, canMoveDown: index < store.config.cards.count - 1) {
+                            store.config.move(item.kind, by: $0)
+                        }
                     }
                 }
 
                 Section("Görünüm") {
                     Picker("Yoğunluk", selection: $store.config.density) {
                         ForEach(PanelDensity.allCases) { Text($0.displayName).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    Picker("Sistem görünümü", selection: $store.config.tileStyle) {
-                        ForEach(SystemTileStyle.allCases) { Text($0.displayName).tag($0) }
-                    }
-                    Toggle("Karolarda sıcaklığı göster", isOn: $store.config.showTemperatures)
-                    Picker("Ağ grafiği", selection: $store.config.chartHeight) {
-                        ForEach(ChartHeight.allCases) { Text($0.displayName).tag($0) }
                     }
                     .pickerStyle(.segmented)
                 }
@@ -57,25 +63,14 @@ struct PanelSettingsPane: View {
         }
     }
 
-    private func sectionRow(_ item: PanelSectionItem, index: Int, count: Int) -> some View {
+    private func sectionVisibility(_ section: PanelSection) -> Binding<Bool> {
         let store = model.prefs.panel
-        return HStack(spacing: 8) {
-            Toggle(isOn: Binding {
-                store.config.isVisible(item.section)
-            } set: {
-                store.config.setVisible(item.section, $0)
-            }) {
-                Label(item.section.displayName, systemImage: item.section.systemImage)
-            }
-            Spacer()
-            Button("Yukarı taşı", systemImage: "chevron.up") { store.config.move(item.section, by: -1) }
-                .disabled(index == 0)
-            Button("Aşağı taşı", systemImage: "chevron.down") { store.config.move(item.section, by: 1) }
-                .disabled(index == count - 1)
-        }
-        .labelStyle(.titleAndIcon)
-        .buttonStyle(.borderless)
-        .accessibilityElement(children: .contain)
+        return Binding { store.config.isVisible(section) } set: { store.config.setVisible(section, $0) }
+    }
+
+    private func cardVisibility(_ card: PanelCardKind) -> Binding<Bool> {
+        let store = model.prefs.panel
+        return Binding { store.config.isVisible(card) } set: { store.config.setVisible(card, $0) }
     }
 
     /// Paneli 0,6 ölçekte çizer. `scaleEffect` yerleşim boyutunu değiştirmediği için çerçeve ölçülen yüksekliğe göre ayarlanır.
@@ -87,7 +82,7 @@ struct PanelSettingsPane: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             ScrollView {
-                PanelView(model: model, openSettings: {})
+                PanelView(model: model, openApp: {}, openSettings: {})
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { previewHeight = $0 }
                     .background(.regularMaterial, in: .rect(cornerRadius: 18))
                     .scaleEffect(scale, anchor: .topLeading)
