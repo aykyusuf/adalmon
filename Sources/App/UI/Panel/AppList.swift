@@ -40,7 +40,8 @@ struct AppList: View {
                     let maxBytes = apps.first?.bytes ?? 1
                     ForEach(shown) { usage in
                         AppUsageRow(usage: usage, maxBytes: maxBytes, isBlocked: data.isBlocked(usage.app),
-                                    isMobile: data.isMobile, expandable: expandable, setBlocked: actions.setBlocked)
+                                    isMobile: data.isMobile, expandable: expandable, setBlocked: actions.setBlocked,
+                                    resetConnections: actions.resetConnections, restartApp: actions.restartApp)
                     }
                     moreButton(hidden: apps.count - shown.count)
                 }

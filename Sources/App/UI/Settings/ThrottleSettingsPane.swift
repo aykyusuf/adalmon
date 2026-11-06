@@ -96,6 +96,9 @@ private struct ThrottleAppRow: View {
             HStack {
                 ThrottleAppLabel(app: app)
                 Spacer()
+                Button("Bağlantıları şimdi yenile", systemImage: "arrow.triangle.2.circlepath") { model.resetConnections(for: app) }
+                    .controlSize(.small)
+                    .help("Açık bağlantıları keser; uygulama yeniden bağlanır ve sınır hemen geçerli olur")
                 Button("Kaldır", role: .destructive) { model.setLimit(app, nil) }
             }
             HStack(spacing: 16) {

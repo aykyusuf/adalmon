@@ -12,7 +12,11 @@ struct PanelContent: View {
         let density = config.density
         VStack(alignment: .leading, spacing: density.sectionSpacing) {
             PanelHeader(data: data, config: $config, openSettings: actions.openSettings)
-            ToastBanner(toast: data.toast, onUndo: actions.undoToast)
+            ToastBanner(toast: data.toast, onUndo: actions.undoToast) { action in
+                switch action {
+                case .restart(let app): actions.restartApp(app)
+                }
+            }
                 .animation(.snappy, value: data.toast)
             ForEach(sectionsToShow) { section in
                 sectionView(section)

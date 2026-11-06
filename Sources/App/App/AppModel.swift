@@ -52,6 +52,7 @@ final class AppModel {
     init() {
         usage = UsageEngine(store: store)
         alerts.onBlock = { [weak self] app in self?.setBlocked(app, true, fromNotification: true) }
+        installer.onFilterEnabled = { [weak self] in self?.startFilterWatchdog() }
     }
 
     func start() {
@@ -60,8 +61,10 @@ final class AppModel {
             mobileToday = await store.interfaceBytes(day: dayKey, mobile: true)
             wifiToday = await store.interfaceBytes(day: dayKey, mobile: false)
             await installer.refresh()
+            installer.observeSystemChanges()
             installer.setProxyWanted(!prefs.appLimits.isEmpty)
             installer.updateIfInstalled()
+            if installer.state == .active { startFilterWatchdog() }
         }
         refreshProxy()
         scheduleTimer()
@@ -85,7 +88,7 @@ final class AppModel {
     /// Zamanlayıcı doğrudan gereken aralıkta çalışır: panel açıkken 1 sn, kapalıyken ayar (varsayılan 2 sn).
     /// Boşa uyanma yok (pil).
     private func scheduleTimer() {
-        let interval = TimeInterval(panelVisible ? 1 : max(1, prefs.updateInterval))
+        let interval = TimeInterval(panelVisible || mainWindowVisible ? 1 : max(1, prefs.updateInterval))
         if let timer, timer.isValid, timer.timeInterval == interval { return }
         timer?.invalidate()
         let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
@@ -97,7 +100,15 @@ final class AppModel {
     }
 
     /// Panelde kısa süre görünen geri bildirim (engelleme vb.).
-    struct Toast: Equatable { var message: String; var undoApp: String?; var undoBlocked: Bool }
+    struct Toast: Equatable {
+        var message: String
+        var undoApp: String?
+        var undoBlocked: Bool
+        var action: Action?
+
+        /// Toast'ta "Geri al"ın yanında gösterilebilen isteğe bağlı eylem.
+        enum Action: Equatable { case restart(app: String) }
+    }
     private(set) var toast: Toast?
     @ObservationIgnored private var toastTask: Task<Void, Never>?
 
@@ -112,11 +123,57 @@ final class AppModel {
             : "\(name) engeli kaldırıldı"
         showToast(Toast(message: message, undoApp: app, undoBlocked: !blocked))
         if fromNotification { alerts.notifyBlocked(name: name) }
+        if blocked && isMobile { scheduleReset(app, reason: .block) }
     }
 
     func undoToast() {
         guard let t = toast, let app = t.undoApp else { return }
         setBlocked(app, t.undoBlocked)
+    }
+
+    // MARK: Filtre emniyeti
+
+    @ObservationIgnored private var watchdogTask: Task<Void, Never>?
+
+    /// Filtre açıldıktan sonra 60 sn boyunca 3 sn'de bir internet testi. İki başarısız test üst üste
+    /// (ve ağ bağlıyken) → filtre otomatik kapatılır. Böylece hatalı bir filtre interneti uzun süre kesemez.
+    func startFilterWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [weak self] in
+            var failures = 0
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .seconds(3))
+                guard let self, !Task.isCancelled else { return }
+                guard self.path.medium != .offline else { failures = 0; continue }
+                let ok = await AppModel.probeInternet()
+                failures = ok ? 0 : failures + 1
+                if failures >= 2 {
+                    NSLog("Adalmon watchdog: internet testi başarısız, filtre kapatılıyor")
+                    await self.installer.safetyDisable(reason: "İnternet kesildiği için filtre otomatik kapatıldı")
+                    self.showToast(Toast(message: "Filtre interneti kesti, otomatik kapatıldı", undoApp: nil, undoBlocked: false))
+                    self.alerts.notify(title: "Ağ filtresi kapatıldı",
+                                       body: "Filtre açıldıktan sonra internet testi başarısız oldu; güvenlik için filtre kapatıldı.")
+                    return
+                }
+            }
+        }
+    }
+
+    /// Sistem proxy ayarlarına uyan (SpoofDPI dahil) küçük bir HTTPS isteği.
+    nonisolated static func probeInternet() async -> Bool {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 4
+        cfg.timeoutIntervalForResource = 4
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(configuration: cfg)
+        defer { session.invalidateAndCancel() }
+        guard let url = URL(string: "https://www.apple.com/library/test/success.html") else { return true }
+        do {
+            let (_, response) = try await session.data(from: url)
+            return ((response as? HTTPURLResponse)?.statusCode ?? 0) < 500
+        } catch {
+            return false
+        }
     }
 
     private func showToast(_ t: Toast) {
@@ -164,6 +221,78 @@ final class AppModel {
             message = "\(name) hız sınırı kaldırıldı"
         }
         showToast(Toast(message: message, undoApp: nil, undoBlocked: false))
+        if let new, Self.isStricter(new, than: old), !new.onlyOnMobile || isMobile { scheduleReset(app, reason: .limit) }
+    }
+
+    /// Yeni sınır eskisinden daha kısıtlayıcı mı (yeni eklendi, düştü ya da "sadece mobilde" kalktı).
+    /// Gevşetmek açık bağlantıları kesmeyi gerektirmez.
+    private static func isStricter(_ new: AppLimit, than old: AppLimit?) -> Bool {
+        guard let old else { return true }
+        func cap(_ v: Int?) -> Int { v.flatMap { $0 > 0 ? $0 : nil } ?? .max }
+        return cap(new.downBytesPerSec) < cap(old.downBytesPerSec)
+            || cap(new.upBytesPerSec) < cap(old.upBytesPerSec)
+            || (old.onlyOnMobile && !new.onlyOnMobile)
+    }
+
+    // MARK: Açık bağlantıları yenileme
+
+    private enum ResetReason { case limit, block, manual }
+
+    /// Filtre yalnızca yeni bağlantıları etkiler; uzun ömürlü bağlantıları (HTTP/2, QUIC, WebSocket) keserek
+    /// uygulamanın yeniden bağlanmasını ve yeni kurala takılmasını sağlar.
+    @ObservationIgnored private var resetTasks: [String: Task<Void, Never>] = [:]
+
+    private func scheduleReset(_ app: String, reason: ResetReason) {
+        guard installer.state == .active else { return }
+        resetTasks[app]?.cancel()
+        resetTasks[app] = Task { [weak self] in
+            // Yeni yapılandırmanın uzantıya ulaşması için kısa bekleme.
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            await self?.performReset(app, reason: reason)
+        }
+    }
+
+    /// Uygulamanın açık bağlantılarını hemen kes (bağlam menüsü / ayarlar).
+    func resetConnections(for app: String) {
+        resetTasks[app]?.cancel()
+        resetTasks[app] = Task { [weak self] in await self?.performReset(app, reason: .manual) }
+    }
+
+    private func performReset(_ app: String, reason: ResetReason) async {
+        let result = await Task.detached(priority: .utility) { ConnectionResetter.resetConnections(forApp: app) }.value
+        guard !Task.isCancelled else { return }
+        let name = AppCatalog.shared.name(for: app)
+        if !result.isRunning {
+            if reason == .manual { showToast(Toast(message: "\(name) çalışmıyor", undoApp: nil, undoBlocked: false)) }
+            return
+        }
+        if result.needsRestart {
+            let canRestart = app.hasSuffix(".app")
+            showToast(Toast(message: "\(name) açık bağlantılarını yenilemeye izin vermedi" + (canRestart ? "; yeniden başlatmak gerekiyor" : ""),
+                            undoApp: nil, undoBlocked: false, action: canRestart ? .restart(app: app) : nil))
+            return
+        }
+        let message: String
+        switch reason {
+        case .limit: message = "\(name) uygulamasının açık bağlantıları yenilendi, sınır hemen geçerli"
+        case .block: message = "\(name) uygulamasının açık bağlantıları yenilendi, engel hemen geçerli"
+        case .manual: message = "\(name) uygulamasının açık bağlantıları yenilendi"
+        }
+        // Engellemede "Geri al" düğmesi kaybolmasın.
+        let undo = reason == .block ? Toast(message: message, undoApp: app, undoBlocked: false) : Toast(message: message, undoApp: nil, undoBlocked: false)
+        showToast(undo)
+    }
+
+    /// Uygulamayı kapatıp yeniden aç (bağlantı sıfırlama yetmediğinde).
+    func restartApp(_ app: String) {
+        let name = AppCatalog.shared.name(for: app)
+        showToast(Toast(message: "\(name) yeniden başlatılıyor…", undoApp: nil, undoBlocked: false))
+        Task { [weak self] in
+            let ok = await AppRestarter.restart(appKey: app)
+            self?.showToast(Toast(message: ok ? "\(name) yeniden başlatıldı" : "\(name) yeniden başlatılamadı",
+                                  undoApp: nil, undoBlocked: false))
+        }
     }
 
     /// 512_000 → "500 KB/s", 1_048_576 → "1 MB/s" (1024 tabanlı).
@@ -181,6 +310,14 @@ final class AppModel {
     /// Panel açıkken 1 sn, kapalıyken `prefs.updateInterval` sn'de bir örnekle (pil).
     /// Her ölçüm adımının sonunda çağrılır (menü çubuğu çizimi).
     @ObservationIgnored var onStep: (() -> Void)?
+
+    /// Ana pencere (Dock modu) açıkken de saniyede bir örnekle.
+    @ObservationIgnored var mainWindowVisible = false {
+        didSet {
+            scheduleTimer()
+            if mainWindowVisible && !oldValue { Task { await step() } }
+        }
+    }
 
     @ObservationIgnored var panelVisible = false {
         didSet {
@@ -214,7 +351,8 @@ final class AppModel {
         apply(snap)
 
         let buckets = await filter.drain()
-        filterConnected = filter.isConnected
+        // Uzantı süreci reboot'a kadar çalışabilir; "aktif" için filtre ayarının da açık olması gerekir.
+        filterConnected = filter.isConnected && installer.state == .active
         usage.ingest(buckets, seconds: elapsed)
         alerts.checkBursts(usage.last60, threshold: prefs.burstThresholdBytes, isMobile: isMobile)
         alerts.checkCap(used: mobileToday, cap: prefs.dailyCapBytes)
