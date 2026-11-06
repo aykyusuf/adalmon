@@ -8,6 +8,7 @@ enum MainMenuBuilder {
         let main = NSMenu()
         main.addItem(submenuItem(appMenu(target: target)))
         main.addItem(submenuItem(editMenu()))
+        main.addItem(submenuItem(viewMenu()))
         let window = windowMenu(target: target)
         main.addItem(submenuItem(window))
         NSApp.windowsMenu = window
@@ -53,6 +54,24 @@ enum MainMenuBuilder {
         menu.addItem(item("Kopyala", #selector(NSText.copy(_:)), "c"))
         menu.addItem(item("Yapıştır", #selector(NSText.paste(_:)), "v"))
         menu.addItem(item("Tümünü Seç", #selector(NSText.selectAll(_:)), "a"))
+        menu.addItem(.separator())
+        menu.addItem(item("Ara", #selector(MainWindowCommands.focusSearch(_:)), "f", target: MainWindowCommands.shared))
+        return menu
+    }
+
+    /// "Görünüm": ⌘1…⌘5 ile sayfalar, kenar çubuğu ve tam ekran.
+    private static func viewMenu() -> NSMenu {
+        let menu = NSMenu(title: "Görünüm")
+        for section in MainSection.pages {
+            let entry = item(section.title, #selector(MainWindowCommands.selectSection(_:)), section.shortcutKey ?? "",
+                             target: MainWindowCommands.shared)
+            entry.representedObject = section.id
+            menu.addItem(entry)
+        }
+        menu.addItem(.separator())
+        menu.addItem(item("Kenar Çubuğunu Gizle/Göster", #selector(NSSplitViewController.toggleSidebar(_:)), "s",
+                          modifiers: [.command, .control]))
+        menu.addItem(item("Tam Ekran", #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control]))
         return menu
     }
 

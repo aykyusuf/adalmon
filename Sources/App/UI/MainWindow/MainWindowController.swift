@@ -18,7 +18,7 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         super.init()
         window.title = "Adalmon"
         window.toolbarStyle = .unified
-        window.contentMinSize = NSSize(width: 900, height: 600)
+        window.contentMinSize = NSSize(width: 940, height: 600)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.setFrameAutosaveName("AdalmonMainWindow")
@@ -40,9 +40,21 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.close()
     }
 
+    /// Pencere açık mı (küçültülmüş veya örtülü olsa bile)? Yalnızca kapatılınca içerik bırakıldığı için içeriğe bakılır.
+    var isOpen: Bool { window.contentViewController != nil }
+
     func windowWillClose(_ notification: Notification) {
         // İçeriği hemen bırak; pencere nesnesi (konumu) kalır.
         window.contentViewController = nil
         model.mainWindowVisible = false
+    }
+
+    // Küçültülmüş veya tamamen örtülü pencere kullanıcıya görünmez: 1 sn'lik hızlı örnekleme durur (pil).
+    func windowDidChangeOcclusionState(_ notification: Notification) { updateVisibility() }
+    func windowDidMiniaturize(_ notification: Notification) { updateVisibility() }
+    func windowDidDeminiaturize(_ notification: Notification) { updateVisibility() }
+
+    private func updateVisibility() {
+        model.mainWindowVisible = isOpen && !window.isMiniaturized && window.occlusionState.contains(.visible)
     }
 }

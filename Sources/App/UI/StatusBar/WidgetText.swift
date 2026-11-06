@@ -3,7 +3,7 @@ import CoreText
 
 /// Menü çubuğu metin çizimi: sabit taban çizgisi, ölçüm ve yazı tipleri.
 enum WidgetText {
-    enum Role {
+    enum Role: CaseIterable {
         /// Tek satır metin değeri.
         case value
         /// Küçük üst etiket.
@@ -30,7 +30,12 @@ enum WidgetText {
         case stackValue
     }
 
-    static func font(_ role: Role) -> NSFont {
+    /// Yazı tipleri bir kez üretilir (descriptor/özellik çözümü her çizimde tekrarlanmasın).
+    nonisolated(unsafe) private static let fonts: [Role: NSFont] = Dictionary(uniqueKeysWithValues: Role.allCases.map { ($0, makeFont($0)) })
+
+    static func font(_ role: Role) -> NSFont { fonts[role] ?? makeFont(role) }
+
+    private static func makeFont(_ role: Role) -> NSFont {
         switch role {
         case .value: .monospacedDigitSystemFont(ofSize: 12.5, weight: .medium)
         case .label: .systemFont(ofSize: 8, weight: .semibold)
@@ -57,9 +62,38 @@ enum WidgetText {
         return NSFont(descriptor: descriptor, size: size) ?? base
     }
 
+    private struct WidthKey: Hashable {
+        var string: String
+        var role: Role
+    }
+
+    /// Ölçüm sonuçları (metin × rol). Menü çubuğu metinleri küçük bir kümeden gelir ("12%", "1,2 MB/s"…);
+    /// her adımda `NSString.size` ile yeniden ölçmek yerine önbellekten okunur. Sınırlıdır (taşarsa temizlenir).
+    private static let widthCache = WidthCache()
+
+    private final class WidthCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [WidthKey: CGFloat] = [:]
+        private static let limit = 2_000
+
+        func value(for key: WidthKey, compute: () -> CGFloat) -> CGFloat {
+            lock.lock()
+            if let hit = storage[key] { lock.unlock(); return hit }
+            lock.unlock()
+            let width = compute()
+            lock.lock()
+            if storage.count >= Self.limit { storage.removeAll(keepingCapacity: true) }
+            storage[key] = width
+            lock.unlock()
+            return width
+        }
+    }
+
     /// Unrounded advance width; compact layouts sum these and round once.
     static func rawWidth(_ string: String, _ role: Role) -> CGFloat {
-        (string as NSString).size(withAttributes: [.font: font(role)]).width
+        widthCache.value(for: WidthKey(string: string, role: role)) {
+            (string as NSString).size(withAttributes: [.font: font(role)]).width
+        }
     }
 
     static func maxRawWidth(_ strings: [String], _ role: Role) -> CGFloat {
@@ -67,7 +101,7 @@ enum WidgetText {
     }
 
     static func width(_ string: String, _ role: Role) -> CGFloat {
-        ceil((string as NSString).size(withAttributes: [.font: font(role)]).width)
+        ceil(rawWidth(string, role))
     }
 
     static func maxWidth(_ strings: [String], _ role: Role) -> CGFloat {

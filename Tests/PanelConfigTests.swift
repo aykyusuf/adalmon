@@ -7,20 +7,19 @@ final class PanelConfigTests: XCTestCase {
         XCTAssertEqual(c.density, .compact)
         XCTAssertEqual(c.last60Rows, 3)
         XCTAssertEqual(c.todayRows, 5)
-        XCTAssertEqual(c.tileStyle, .compactTiles)
-        XCTAssertEqual(c.chartHeight, .small)
-        XCTAssertEqual(c.chartHeight.points, 40)
-        XCTAssertTrue(c.showTemperatures)
         XCTAssertTrue(c.collapsed.isEmpty)
-        XCTAssertEqual(c.visibleSections, [.system, .networkChart, .mobileCap, .blockedApps, .last60, .today])
+        XCTAssertEqual(c.visibleSections, [.system, .mobileCap, .blockedApps, .last60, .today])
+        XCTAssertEqual(c.visibleCards, [.cpu, .gpu, .memory, .temperature, .download, .upload])
+        XCTAssertEqual(c.cards.map(\.kind), [.cpu, .gpu, .memory, .temperature, .download, .upload, .disk])
+        XCTAssertFalse(c.isVisible(PanelCardKind.disk))
     }
 
     func testCodableRoundTrip() throws {
         var c = PanelConfig()
         c.density = .comfortable
-        c.tileStyle = .rows
-        c.chartHeight = .off
-        c.showTemperatures = false
+        c.setVisible(.disk, true)
+        c.setVisible(.gpu, false)
+        c.move(.upload, by: -1)
         c.last60Rows = 7
         c.todayRows = 0
         c.collapsed = [.today, .system]
@@ -29,7 +28,8 @@ final class PanelConfigTests: XCTestCase {
         let data = try JSONEncoder().encode(c)
         let decoded = try JSONDecoder().decode(PanelConfig.self, from: data)
         XCTAssertEqual(decoded, c)
-        XCTAssertEqual(decoded.visibleSections, [.system, .networkChart, .blockedApps, .today, .last60])
+        XCTAssertEqual(decoded.visibleSections, [.system, .blockedApps, .today, .last60])
+        XCTAssertEqual(decoded.visibleCards, [.cpu, .memory, .temperature, .upload, .download, .disk])
     }
 
     func testRowCountClamping() throws {
@@ -53,7 +53,31 @@ final class PanelConfigTests: XCTestCase {
         XCTAssertEqual(c.sections.count, PanelSection.allCases.count)
         XCTAssertEqual(c.sections.first, PanelSectionItem(section: .today, isVisible: false))
         XCTAssertFalse(c.isVisible(.today))
-        XCTAssertEqual(c.tileStyle, .compactTiles)
+        XCTAssertEqual(c.visibleCards.count, 6)
+    }
+
+    /// Eski sürümden kalan kayıt: kaldırılan "networkChart" bölümü ve eski anahtarlar yüzünden sıra sıfırlanmamalı.
+    func testLegacyStoredConfigKeepsOrderAndDropsUnknownSection() throws {
+        let json = Data(#"""
+        {"sections": [{"section":"today","isVisible":true},{"section":"networkChart","isVisible":true},{"section":"system","isVisible":false}],
+         "collapsed": ["networkChart","today"], "tileStyle": "cards", "chartHeight": "off", "showTemperatures": false}
+        """#.utf8)
+        let c = try JSONDecoder().decode(PanelConfig.self, from: json)
+        XCTAssertEqual(c.sections.map(\.section).prefix(2), [.today, .system])
+        XCTAssertFalse(c.isVisible(.system))
+        XCTAssertEqual(c.sections.count, PanelSection.allCases.count)
+        XCTAssertEqual(c.collapsed, [.today])
+        XCTAssertEqual(c.cards, PanelConfig.defaultCards)
+    }
+
+    func testCardsNormalizeAndMove() {
+        var c = PanelConfig(cards: [PanelCardItem(kind: .upload, isVisible: true), PanelCardItem(kind: .upload, isVisible: false)])
+        XCTAssertEqual(c.cards.count, PanelCardKind.allCases.count)
+        XCTAssertEqual(c.cards.first, PanelCardItem(kind: .upload, isVisible: true))
+        c.move(.upload, by: -1)
+        XCTAssertEqual(c.cards.first?.kind, .upload)
+        c.move(.upload, by: 1)
+        XCTAssertEqual(c.cards[1].kind, .upload)
     }
 
     func testMoveAndCollapse() {
@@ -61,7 +85,7 @@ final class PanelConfigTests: XCTestCase {
         c.move(.system, by: -1)
         XCTAssertEqual(c.sections.first?.section, .system)
         c.move(.system, by: 1)
-        XCTAssertEqual(c.sections.map(\.section).prefix(2), [.networkChart, .system])
+        XCTAssertEqual(c.sections.map(\.section).prefix(2), [.mobileCap, .system])
         c.toggleCollapsed(.today)
         XCTAssertTrue(c.isCollapsed(.today))
         c.toggleCollapsed(.today)

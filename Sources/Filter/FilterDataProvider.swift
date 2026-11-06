@@ -85,38 +85,47 @@ final class FilterDataProvider: NEFilterDataProvider, @unchecked Sendable {
             return .drop()
         }
 
-        let kind: FlowKind
-        if isLoopback {
-            guard flow.direction == .outbound, cfg.proxyPorts.contains(remotePort),
-                  !cfg.proxyOwnerPaths.contains(identity.executablePath) else {
-                diag("allow-loopback \(identity.executablePath) \(dir) \(proto) \(remoteHost):\(remotePort)")
-                return .allow() // yerel IPC, sayılmaz
-            }
-            kind = .proxied
-        } else if cfg.proxyOwnerPaths.contains(identity.executablePath) {
-            kind = .proxyEgress
-        } else {
-            kind = .direct
+        let isOutbound = flow.direction == .outbound
+        guard let kind = FlowPolicy.classify(isLoopback: isLoopback, isOutbound: isOutbound, remotePort: remotePort,
+                                             executablePath: identity.executablePath, config: cfg) else {
+            diag("allow-loopback \(identity.executablePath) \(dir) \(proto) \(remoteHost):\(remotePort)")
+            return .allow() // yerel IPC, sayılmaz
         }
 
         let isMobile = expensive
-        if isMobile, kind != .proxyEgress, cfg.blockedOnMobile.contains(identity.app) {
+        // Engel: orijin uygulamanın akışında (direct / proxied); proxyEgress asla. blockedAlways her ağda.
+        if FlowPolicy.shouldBlock(app: identity.app, kind: kind, expensive: isMobile, config: cfg, signingID: identity.signingID) {
             log.notice("blocked \(identity.app, privacy: .public) -> \(remoteHost, privacy: .public)")
             diag("DROP-blocked \(identity.app) \(remoteHost)")
+            return .drop()
+        }
+        // Veri Tasarrufu (yalnız mobil): izin listesi dışı uygulamanın yeni akışı. Karar orijin uygulamanın
+        // loopback (proxied) akışında; SpoofDPI'ın egress'ine dokunulmaz.
+        if FlowPolicy.shouldDropForDataSaver(app: identity.app, signingID: identity.signingID, executablePath: identity.executablePath,
+                                             kind: kind, isOutbound: isOutbound, remotePort: remotePort,
+                                             expensive: isMobile, config: cfg) {
+            log.notice("data-saver drop \(identity.app, privacy: .public) -> \(remoteHost, privacy: .public):\(remotePort, privacy: .public)")
+            diag("DROP-datasaver \(identity.app) \(remoteHost):\(remotePort)")
             return .drop()
         }
 
         let host = sock.remoteHostname.flatMap { $0.isEmpty ? nil : $0 } ?? remoteHost
         accumulator.begin(flow: flow.identifier,
-                          state: .init(app: identity.app, signingID: identity.signingID, host: host, kind: kind))
+                          state: .init(app: identity.app, signingID: identity.signingID, host: host, kind: kind,
+                                       executablePath: identity.executablePath, remotePort: remotePort,
+                                       isOutbound: isOutbound))
 
-        // SpoofDPI'a giden (proxied) akışların verisine DOKUNULMAZ: peek, sıfırdan kurulan filtrede yerel
-        // bağlantıyı kilitliyordu (2026-11-06). Sadece byte sayılır; hedef host bilinmez.
+        // Veri gözetimi (`FlowPolicy.dataTap`). SpoofDPI'a giden (proxied) akışta YALNIZ ilk giden ≤1024 bayt
+        // CONNECT/Host için gösterilir; `handleOutboundData` ayrıştırıp hemen `.allow()` verir (tutma yok, gelen taraf izlenmez).
         let verdict: NEFilterNewFlowVerdict
-        if isMobile, kind == .direct {
+        switch FlowPolicy.dataTap(kind: kind, expensive: isMobile) {
+        case .peekOutboundForTarget(let bytes):
+            verdict = .filterDataVerdict(withFilterInbound: false, peekInboundBytes: 0,
+                                         filterOutbound: true, peekOutboundBytes: bytes)
+        case .mobileInbound:
             verdict = .filterDataVerdict(withFilterInbound: true, peekInboundBytes: Self.mobileChunk,
                                          filterOutbound: false, peekOutboundBytes: 0)
-        } else {
+        case .none:
             verdict = .allow()
         }
         verdict.statisticsReportFrequency = .medium
@@ -124,16 +133,13 @@ final class FilterDataProvider: NEFilterDataProvider, @unchecked Sendable {
         return verdict
     }
 
+    /// Yalnız `.proxied` akışlar için çağrılır (diğerlerinde giden veri filtrelenmez). Ayrıştır, her durumda HEMEN izin ver:
+    /// yarım/bozuk/ikili veri de serbest, daha fazla bayt beklenmez, pass+peek döngüsü yok.
     override func handleOutboundData(from flow: NEFilterFlow, readBytesStartOffset offset: Int, readBytes: Data) -> NEFilterDataVerdict {
         let parsed = offset == 0 ? ProxyTargetParser.host(from: readBytes) : nil
         if let host = parsed { accumulator.setHost(host, for: flow.identifier) }
         diag("outData off=\(offset) n=\(readBytes.count) target=\(parsed ?? "-")")
-        if shouldDrop(flow) { return .drop() }
-        // Hedef okundu. Wi-Fi'de akışı tamamen serbest bırak (sıfır ek yük).
-        // Mobilde gelen veri tarafı engelleme için izlenmeye devam eder; giden taraf seyrek kontrol edilir.
-        let v: NEFilterDataVerdict = expensive
-            ? NEFilterDataVerdict(passBytes: readBytes.count, peekBytes: 8 * 1024 * 1024)
-            : .allow()
+        let v = NEFilterDataVerdict.allow()
         v.statisticsReportFrequency = .medium
         return v
     }
@@ -172,10 +178,14 @@ final class FilterDataProvider: NEFilterDataProvider, @unchecked Sendable {
 
     // MARK: Helpers
 
-    /// Mobilde, engellenen bir uygulamanın açık akışını kes.
+    /// Mobil doğrudan akışlarda (gelen veri izleniyor), sonradan engellenen / Veri Tasarrufu'na takılan uygulamanın açık akışını kes.
     private func shouldDrop(_ flow: NEFilterFlow) -> Bool {
         guard expensive, let state = accumulator.state(for: flow.identifier), state.kind != .proxyEgress else { return false }
-        return XPCServer.shared.config.blockedOnMobile.contains(state.app)
+        let cfg = XPCServer.shared.config
+        return FlowPolicy.shouldBlock(app: state.app, kind: state.kind, expensive: true, config: cfg, signingID: state.signingID)
+            || FlowPolicy.shouldDropForDataSaver(app: state.app, signingID: state.signingID, executablePath: state.executablePath,
+                                                 kind: state.kind, isOutbound: state.isOutbound, remotePort: state.remotePort,
+                                                 expensive: true, config: cfg)
     }
 
     private static func remote(_ ep: Network.NWEndpoint?) -> (host: String, port: Int, loopback: Bool) {

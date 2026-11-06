@@ -1,44 +1,84 @@
 import Foundation
 
-/// Ham host'u okunur bir gruba indirger: googlevideo/ytimg → YouTube, CDN alt alan adları → kayıtlı alan adı.
+/// Ham host'u okunur bir gruba indirger:
+/// - bilinen servisler marka adıyla (googlevideo → YouTube, amazonaws → Amazon AWS, akamaiedge → Akamai (CDN) …),
+/// - diğer alan adları kayıtlı alan adına (cdn.example.com.tr → example.com.tr),
+/// - yerel/loopback adresler tek bir kovaya ("Yerel ağ" / "SpoofDPI üzerinden"),
+/// - genel ham IP'ler olduğu gibi.
+///
+/// `group` idempotenttir: çıktısı tekrar verilirse aynı değeri döndürür (saatlik tabloda gruplanmış adlar saklanır).
 enum DomainGrouper {
-    private static let services: [(String, [String])] = [
-        ("YouTube", ["googlevideo.com", "youtube.com", "ytimg.com", "ggpht.com", "youtubei.googleapis.com", "youtu.be"]),
-        ("Netflix", ["netflix.com", "nflxvideo.net", "nflximg.net", "nflxso.net"]),
-        ("Instagram", ["instagram.com", "cdninstagram.com"]),
-        ("WhatsApp", ["whatsapp.net", "whatsapp.com"]),
-        ("Discord", ["discord.com", "discord.gg", "discordapp.com", "discordapp.net", "discord.media"]),
-        ("iCloud", ["icloud.com", "icloud-content.com", "apple-cloudkit.com"]),
-        ("Apple", ["apple.com", "aaplimg.com", "mzstatic.com", "cdn-apple.com"]),
-        ("Spotify", ["spotify.com", "scdn.co", "spotifycdn.com"]),
-        ("Twitch", ["twitch.tv", "ttvnw.net", "jtvnw.net"]),
-        ("X", ["twitter.com", "x.com", "twimg.com"]),
-        ("Claude", ["anthropic.com", "claude.ai", "claudeusercontent.com"]),
-        ("Google", ["google.com", "gstatic.com", "googleapis.com", "googleusercontent.com", "gvt1.com"]),
-        ("Steam", ["steampowered.com", "steamcontent.com", "steamstatic.com"]),
+    /// Özel/link-local/ULA/mDNS adresler ve `*.local` adları.
+    static let localName = "Yerel ağ"
+    /// Loopback adresi: filtre loopback akışlarını yalnızca yerel proxy'ye (SpoofDPI) giderse sayar, yani bu bayt gerçek
+    /// internet trafiğidir; hedef (CONNECT okunmadığı için) bilinmez.
+    static let viaProxyName = "SpoofDPI üzerinden"
+    static let unknownName = "Bilinmeyen"
+
+    private static let localSuffixes = [".local", ".lan", ".home.arpa", ".localdomain"]
+    private static let twoLevelTLDs: Set<String> = [
+        "com.tr", "net.tr", "org.tr", "gov.tr", "edu.tr", "k12.tr", "av.tr", "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au",
+        "co.jp", "co.kr", "co.in", "co.nz", "co.za", "com.br", "com.mx", "com.ar", "com.cn", "com.hk", "com.sg", "com.tw", "com.sa",
+        "com.ua",
     ]
 
-    private static let twoLevelTLDs: Set<String> = ["com.tr", "net.tr", "org.tr", "gov.tr", "edu.tr", "co.uk", "com.au", "co.jp"]
-
     static func group(_ host: String) -> String {
-        let h = host.lowercased()
-        if h.isEmpty || h == "?" { return "Bilinmeyen" }
-        if isIP(h) { return h }
-        for (name, suffixes) in services where suffixes.contains(where: { h == $0 || h.hasSuffix("." + $0) }) {
-            return name
+        var h = host.trimmingCharacters(in: .whitespaces).lowercased()
+        if h.hasSuffix(".") { h.removeLast() }
+        if h.isEmpty || h == "?" || h == "unknown" { return unknownName }
+        if let canonical = canonicalSpecialName(h) { return canonical }
+
+        if let ip = IPAddressClass.parse(h) {
+            switch ip.kind {
+            case .loopback: return viaProxyName
+            case .publicAddress: return ip.text
+            default: return localName
+            }
         }
+        if h == "localhost" || h.hasSuffix(".localhost") { return viaProxyName }
+        if localSuffixes.contains(where: { h.hasSuffix($0) }) { return localName }
+        if let service = DomainServiceTable.service(for: h) { return service }
         return registrable(h)
     }
 
+    /// Kayıtlı alan adı: `a.b.example.com.tr` → `example.com.tr`.
     static func registrable(_ h: String) -> String {
         let parts = h.split(separator: ".")
         guard parts.count > 2 else { return h }
         let lastTwo = parts.suffix(2).joined(separator: ".")
-        if twoLevelTLDs.contains(lastTwo), parts.count >= 3 { return parts.suffix(3).joined(separator: ".") }
+        if twoLevelTLDs.contains(lastTwo) { return parts.suffix(3).joined(separator: ".") }
         return lastTwo
     }
 
-    private static func isIP(_ h: String) -> Bool {
-        h.contains(":") || h.allSatisfy { $0.isNumber || $0 == "." }
+    /// Grup adının listedeki sırası (adlı alan adları → proxy → ham IP → yerel ağ).
+    static func category(ofGroup name: String) -> DomainCategory {
+        switch name {
+        case localName: .local
+        case viaProxyName: .viaProxy
+        case unknownName: .address
+        default: IPAddressClass.parse(name) != nil ? .address : .named
+        }
+    }
+
+    /// En çok bayt harcayan `limit` grubu seçer, sonra gösterim sırasına dizer: adlı alan adları (bayta göre), proxy,
+    /// ham IP'ler, en sonda "Yerel ağ".
+    static func displayOrder<T>(_ items: [T], limit: Int, name: (T) -> String, bytes: (T) -> UInt64) -> [T] {
+        let top = items.sorted { a, b in
+            bytes(a) != bytes(b) ? bytes(a) > bytes(b) : name(a) < name(b)
+        }.prefix(max(0, limit))
+        return top.sorted { a, b in
+            let (ca, cb) = (category(ofGroup: name(a)), category(ofGroup: name(b)))
+            if ca != cb { return ca < cb }
+            return bytes(a) != bytes(b) ? bytes(a) > bytes(b) : name(a) < name(b)
+        }
+    }
+
+    private static func canonicalSpecialName(_ lower: String) -> String? {
+        switch lower {
+        case localName.lowercased(): localName
+        case viaProxyName.lowercased(): viaProxyName
+        case unknownName.lowercased(): unknownName
+        default: DomainServiceTable.canonicalNames[lower]
+        }
     }
 }

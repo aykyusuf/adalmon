@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Genel bakıştaki ağ kartı: anlık ↓/↑ hız ve eksenli trafik grafiği.
+/// Canlı ağ hızı ve son 60 sn grafiği (kompakt).
 struct OverviewNetworkCard: View {
     let data: PanelData
 
@@ -8,32 +8,29 @@ struct OverviewNetworkCard: View {
         let network = data.snapshot?.network
         let down = Format.rate(network?.downloadBytesPerSecond ?? 0)
         let up = Format.rate(network?.uploadBytesPerSecond ?? 0)
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Label("Ağ", systemImage: "network")
-                    .font(.headline)
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
                 HStack(spacing: 14) {
                     Label(down, systemImage: "arrow.down").foregroundStyle(.blue)
                     Label(up, systemImage: "arrow.up").foregroundStyle(.orange)
                 }
-                .font(.title3.weight(.semibold))
+                .font(.headline)
                 .monospacedDigit()
             }
-            HStack(spacing: 14) {
-                Text("Son 60 sn: ↓\(Format.bytes(data.downLast60)) ↑\(Format.bytes(data.upLast60))")
-                Text("Bugün: ↓\(Format.bytes(data.downToday)) ↑\(Format.bytes(data.upToday))")
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
+            Text("Son 60 sn: ↓\(Format.bytes(data.downLast60)) ↑\(Format.bytes(data.upLast60))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
             TrafficChart(down: data.downHistory, up: data.upHistory)
-                .frame(height: 180)
+                .frame(height: 90)
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 16))
+        .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 14))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Ağ, indirme \(down), yükleme \(up)")
     }

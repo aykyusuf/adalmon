@@ -13,9 +13,12 @@ final class AlertCenter: NSObject, UNUserNotificationCenterDelegate {
     private let center = UNUserNotificationCenter.current()
     private var lastBurst: [String: Date] = [:]
     private var capLevelsSent: Set<Int> = []
-    private var capDay = UsageStore.dayKey()
+    private let calendar: Calendar
+    private var capDay: String
 
-    override init() {
+    init(calendar: Calendar = UsageStore.keyCalendar) {
+        self.calendar = calendar
+        self.capDay = UsageStore.dayKey(calendar: calendar)
         super.init()
         center.delegate = self
         let block = UNNotificationAction(identifier: Self.blockAction, title: "Mobilde engelle", options: [.destructive])
@@ -58,8 +61,8 @@ final class AlertCenter: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Günlük mobil limitin %50 / %80 / %100'ünde bir kez.
-    func checkCap(used: UInt64, cap: UInt64) {
-        let day = UsageStore.dayKey()
+    func checkCap(used: UInt64, cap: UInt64, now: Date = .now) {
+        let day = UsageStore.dayKey(now, calendar: calendar)
         if day != capDay { capDay = day; capLevelsSent = [] }
         guard cap > 0 else { return }
         let pct = Int(Double(used) / Double(cap) * 100)

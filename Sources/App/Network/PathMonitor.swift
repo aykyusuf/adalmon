@@ -28,10 +28,11 @@ final class PathMonitor {
             let name = iface?.name ?? ""
             Task { @MainActor in
                 guard let self else { return }
-                self.isExpensive = exp
-                self.isConstrained = con
-                self.medium = medium
-                self.interfaceName = name
+                // @Observable her atamada bildirir; yol güncellemesi çoğu zaman aynı değerleri getirir.
+                if self.isExpensive != exp { self.isExpensive = exp }
+                if self.isConstrained != con { self.isConstrained = con }
+                if self.medium != medium { self.medium = medium }
+                if self.interfaceName != name { self.interfaceName = name }
             }
         }
         monitor.start(queue: DispatchQueue(label: "adalmon.path"))

@@ -1,5 +1,8 @@
 import Foundation
 import Security
+import os
+
+private let log = Logger(subsystem: "com.example.adalmon", category: "identity")
 
 /// Audit token → uygulama kimliği. (pid, pidversion) ile önbelleklenir; PID yeniden kullanımı yanlış eşleşme üretmez.
 final class IdentityResolver: @unchecked Sendable {
@@ -33,10 +36,34 @@ final class IdentityResolver: @unchecked Sendable {
     }
 
     private func resolve(token: Data, pid: Int32) -> Identity {
+        let attrs = [kSecGuestAttributeAudit: token] as CFDictionary
+        let (signingID, path) = Self.codeInfo(attrs: attrs, pid: pid)
+        var app = Self.rollUp(path: path, fallback: signingID.isEmpty ? "pid:\(pid)" : signingID)
+
+        // WebKit ağ süreci (Safari, Mail, Raycast… adına bağlanır): `sourceAppAuditToken` süreçin kendisini verir.
+        // Süreçten sorumlu uygulamayı (launchd sorumluluk bilgisi) asıl uygulama say. Yalnız `app` değişir;
+        // yol/imza kimliği gerçek süreçte kalır (proxy sahibi ve kendi-akış kontrolleri bunlara bakar).
+        if Self.isWebKitNetworking(signingID: signingID, path: path),
+           let rpid = Self.responsiblePID(for: pid), rpid > 1, rpid != pid {
+            let (rSigning, rPath) = Self.codeInfo(attrs: [kSecGuestAttributePid: rpid] as CFDictionary, pid: rpid)
+            if !rPath.isEmpty {
+                let attributed = Self.rollUp(path: rPath, fallback: rSigning.isEmpty ? "pid:\(rpid)" : rSigning)
+                log.notice("attributed WebKit.Networking pid=\(pid, privacy: .public) -> \(attributed, privacy: .public) (responsible pid=\(rpid, privacy: .public))")
+                app = attributed
+            } else {
+                log.notice("WebKit.Networking pid=\(pid, privacy: .public): responsible pid=\(rpid, privacy: .public) unresolved, keeping process identity")
+            }
+        } else if Self.isWebKitNetworking(signingID: signingID, path: path) {
+            log.notice("WebKit.Networking pid=\(pid, privacy: .public): no responsible pid, keeping process identity")
+        }
+        return Identity(app: app, signingID: signingID, executablePath: path)
+    }
+
+    /// İmza kimliği + paket/çalıştırılabilir yolu. Önce kod imzası, yoksa `proc_pidpath`.
+    private static func codeInfo(attrs: CFDictionary, pid: Int32) -> (signingID: String, path: String) {
         var signingID = ""
         var path = ""
         var code: SecCode?
-        let attrs = [kSecGuestAttributeAudit: token] as CFDictionary
         if SecCodeCopyGuestWithAttributes(nil, attrs, [], &code) == errSecSuccess, let code {
             var staticCode: SecStaticCode?
             if SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode {
@@ -51,9 +78,25 @@ final class IdentityResolver: @unchecked Sendable {
                 }
             }
         }
-        if path.isEmpty { path = Self.procPath(pid) }
-        let app = Self.rollUp(path: path, fallback: signingID.isEmpty ? "pid:\(pid)" : signingID)
-        return Identity(app: app, signingID: signingID, executablePath: path)
+        if path.isEmpty { path = procPath(pid) }
+        return (signingID, path)
+    }
+
+    static func isWebKitNetworking(signingID: String, path: String) -> Bool {
+        signingID == "com.apple.WebKit.Networking" || path.hasSuffix("/com.apple.WebKit.Networking.xpc")
+    }
+
+    /// `responsibility_get_pid_responsible_for_pid` (libsystem, özel): XPC servisini başlatan/sorumlu uygulamanın pid'i.
+    /// Sembol yoksa `dlsym` nil döner ve atıf sessizce devre dışı kalır (eklenti yüklemesi bozulmaz).
+    private static let responsibilityFn: (@convention(c) (pid_t) -> pid_t)? = {
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_get_pid_responsible_for_pid") else { return nil }
+        return unsafeBitCast(sym, to: (@convention(c) (pid_t) -> pid_t).self)
+    }()
+
+    static func responsiblePID(for pid: Int32) -> Int32? {
+        guard let fn = responsibilityFn else { return nil }
+        let r = fn(pid)
+        return r > 0 ? r : nil
     }
 
     /// "/Applications/Google Chrome.app/Contents/Frameworks/…/Google Chrome Helper.app/…" → "/Applications/Google Chrome.app"
@@ -65,7 +108,7 @@ final class IdentityResolver: @unchecked Sendable {
         return path
     }
 
-    private static func procPath(_ pid: Int32) -> String {
+    fileprivate static func procPath(_ pid: Int32) -> String {
         guard pid > 0 else { return "" }
         var buf = [CChar](repeating: 0, count: 4096)
         let n = proc_pidpath(pid, &buf, UInt32(buf.count))

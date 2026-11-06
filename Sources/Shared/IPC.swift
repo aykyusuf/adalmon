@@ -33,10 +33,19 @@ struct FilterConfig: Codable, Sendable, Equatable {
     var forceMobile: Bool = false
     /// Uygulama anahtarı (`AppKey`) → hız sınırı. Saydam proxy ve QUIC düşürme bunu kullanır.
     var limits: [String: AppLimit] = [:]
+    /// Her ağda (Wi-Fi dahil) engellenecek uygulama anahtarları. "Tüm ağlar" ENGEL kuralları ve kademeli limit kesmesi.
+    /// (Faz B; eski filtre bilinmeyen alanı yok sayar, eski uygulama göndermezse boş kalır.)
+    var blockedAlways: Set<String> = []
+    /// Veri Tasarrufu modu açık mı. Yalnızca mobil/pahalı yolda uygulanır; bkz. `FlowPolicy.shouldDropForDataSaver`.
+    var dataSaverActive: Bool = false
+    /// Veri Tasarrufu'nda her zaman izinli uygulama anahtarları.
+    var dataSaverAllow: Set<String> = []
 }
 
 extension FilterConfig {
-    private enum CodingKeys: String, CodingKey { case proxyPorts, proxyOwnerPaths, blockedOnMobile, forceMobile, limits }
+    private enum CodingKeys: String, CodingKey { case proxyPorts, proxyOwnerPaths, blockedOnMobile, forceMobile, limits
+        case blockedAlways, dataSaverActive, dataSaverAllow
+    }
 
     /// Eksik alanlar varsayılana düşer (eski sürümün JSON'u da çözülür).
     init(from decoder: Decoder) throws {
@@ -47,6 +56,9 @@ extension FilterConfig {
         blockedOnMobile = try c.decodeIfPresent([String].self, forKey: .blockedOnMobile) ?? []
         forceMobile = try c.decodeIfPresent(Bool.self, forKey: .forceMobile) ?? false
         limits = try c.decodeIfPresent([String: AppLimit].self, forKey: .limits) ?? [:]
+        blockedAlways = try c.decodeIfPresent(Set<String>.self, forKey: .blockedAlways) ?? []
+        dataSaverActive = try c.decodeIfPresent(Bool.self, forKey: .dataSaverActive) ?? false
+        dataSaverAllow = try c.decodeIfPresent(Set<String>.self, forKey: .dataSaverAllow) ?? []
     }
 }
 

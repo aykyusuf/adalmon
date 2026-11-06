@@ -3,7 +3,7 @@ import SwiftUI
 import XCTest
 @testable import Adalmon
 
-/// Paneli sahte veriyle PNG olarak çizer ve yüksekliğini ölçer.
+/// Paneli sahte veriyle ekran dışı bir pencerede (gerçek denetimlerle) çizip PNG yazar ve yüksekliğini ölçer.
 /// Çıktı dizini: ADALMON_PANEL_PREVIEW_DIR ya da geçici dizin/panel-previews.
 @MainActor
 final class PanelSnapshotTests: XCTestCase {
@@ -14,32 +14,45 @@ final class PanelSnapshotTests: XCTestCase {
         var variants: [(name: String, config: PanelConfig, data: PanelData)] = [
             ("compact", PanelConfig(), .sample),
             ("comfortable", PanelConfig(density: .comfortable), .sample),
-            ("compact-rows", PanelConfig(tileStyle: .rows), .sample),
-            ("comfortable-cards", PanelConfig(density: .comfortable, tileStyle: .cards, chartHeight: .medium), .sample),
+            ("compact-disk", PanelConfig(cards: PanelConfig.defaultCards.map { PanelCardItem(kind: $0.kind, isVisible: true) }), .sample),
         ]
         var noFilter = PanelData.sample
         noFilter.filterConnected = false
         noFilter.installerState = .notInstalled
         variants.append(("compact-nofilter", PanelConfig(), noFilter))
-        var withToast = PanelData.sample
+        var hotspot = PanelData.sample
+        hotspot.isMobile = true
+        hotspot.medium = .wifi
+        hotspot.opensMainWindow = true
+        var withToast = hotspot
         withToast.toast = AppModel.Toast(message: "Safari mobil veride engellendi (şu an Wi-Fi'desin, etkilenmez)", undoApp: "x", undoBlocked: false)
-        variants.append(("compact-toast-collapsed", PanelConfig(collapsed: [.system, .networkChart, .mobileCap]), withToast))
+        variants.append(("compact-hotspot-toast-collapsed", PanelConfig(collapsed: [.last60, .today]), withToast))
 
         var heights: [String: CGFloat] = [:]
         for variant in variants {
-            for scheme in [ColorScheme.dark, .light] {
+            for dark in [true, false] {
                 let view = PanelContent(data: variant.data, config: .constant(variant.config), actions: .inert)
-                    .background(scheme == .dark ? Color(white: 0.16) : Color(white: 0.95))
-                    .environment(\.colorScheme, scheme)
-                let renderer = ImageRenderer(content: view)
-                renderer.scale = 2
-                let image = try XCTUnwrap(renderer.nsImage, "render failed")
-                heights[variant.name] = image.size.height
-                let tiff = try XCTUnwrap(image.tiffRepresentation)
-                let png = try XCTUnwrap(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]))
-                let url = dir.appending(path: "panel-\(variant.name)-\(scheme == .dark ? "dark" : "light").png")
+                    .background(dark ? Color(white: 0.16) : Color(white: 0.93))
+                let host = NSHostingView(rootView: view)
+                let window = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: PanelContent.width, height: 900),
+                                      styleMask: [.borderless], backing: .buffered, defer: false)
+                window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                window.contentView = host
+                window.isReleasedWhenClosed = false
+                window.orderBack(nil)
+                host.layoutSubtreeIfNeeded()
+                let size = host.fittingSize
+                host.frame = NSRect(origin: .zero, size: size)
+                host.layoutSubtreeIfNeeded()
+                RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+                let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: rep)
+                let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                let url = dir.appending(path: "panel-\(variant.name)-\(dark ? "dark" : "light").png")
                 try png.write(to: url)
-                print("PANEL_PREVIEW: \(url.path()) height=\(image.size.height)pt")
+                heights[variant.name] = size.height
+                print("PANEL_PREVIEW: \(url.path()) height=\(size.height)pt")
+                window.close()
             }
         }
         let compact = try XCTUnwrap(heights["compact"])

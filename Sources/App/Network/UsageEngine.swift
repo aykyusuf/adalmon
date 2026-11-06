@@ -33,12 +33,18 @@ final class UsageEngine {
     private var ring: [[String: Totals]] = Array(repeating: [:], count: 60)
     private var ringIndex = 0
     private var todayTotals: [String: Totals] = [:]
-    private var dayKey = UsageStore.dayKey()
+    private let calendar: Calendar
+    private var dayKey: String
     private var pending: [String: UsageStore.Row] = [:]
+    /// Saatlik tablo için bekleyen satırlar (saat başı × uygulama × gruplanmış alan adı × mobil).
+    private var pendingHourly: [HourlyKey: UsageStore.HourlyRow] = [:]
+    private struct HourlyKey: Hashable { var hour: Int; var app: String; var domain: String; var mobile: Bool }
     private let store: UsageStore
 
-    init(store: UsageStore) {
+    init(store: UsageStore, calendar: Calendar = UsageStore.keyCalendar) {
         self.store = store
+        self.calendar = calendar
+        self.dayKey = UsageStore.dayKey(calendar: calendar)
     }
 
     func loadToday() async {
@@ -58,8 +64,9 @@ final class UsageEngine {
 
     /// Her saniye çağrılır; çekilen kovalar o saniyenin trafiği sayılır.
     /// - Parameter seconds: Son çağrıdan beri geçen saniye; halka o kadar kaydırılır, pencere hep 60 sn kalır.
-    func ingest(_ buckets: [UsageBucket], seconds: Int = 1) {
-        rollDayIfNeeded()
+    func ingest(_ buckets: [UsageBucket], seconds: Int = 1, now: Date = .now) {
+        rollDayIfNeeded(now: now)
+        let hour = Int(now.timeIntervalSince1970) / 3600 * 3600
         for _ in 0..<min(max(1, seconds), ring.count) {
             ringIndex = (ringIndex + 1) % ring.count
             ring[ringIndex] = [:]
@@ -85,8 +92,18 @@ final class UsageEngine {
             row.bytesIn += b.bytesIn
             row.bytesOut += b.bytesOut
             pending[key] = row
+
+            let domain = b.host.isEmpty ? "" : host
+            let hk = HourlyKey(hour: hour, app: b.app, domain: domain, mobile: b.expensive)
+            var hr = pendingHourly[hk] ?? UsageStore.HourlyRow(hour: hour, app: b.app, domain: domain.isEmpty ? nil : domain,
+                                                               mobile: b.expensive, bytesIn: 0, bytesOut: 0)
+            hr.bytesIn += b.bytesIn
+            hr.bytesOut += b.bytesOut
+            pendingHourly[hk] = hr
         }
 
+        // Boşta (kova yok, halka boş) 60 sn'lik pencereyi yeniden toplamanın anlamı yok.
+        if buckets.isEmpty, last60.isEmpty, ring.allSatisfy(\.isEmpty) { return }
         var window: [String: Totals] = [:]
         for second in ring {
             for (app, t) in second {
@@ -94,25 +111,34 @@ final class UsageEngine {
                 for (h, v) in t.hosts { window[app, default: Totals()].hosts[h, default: 0] += v }
             }
         }
-        last60 = Self.summaries(window, limit: 6)
-        if !buckets.isEmpty { today = Self.summaries(todayTotals, limit: 30) }
+        // @Observable her atamada bildirir; değişmediyse atama yapma (gözlemci görünümler boşuna yeniden çizilmesin).
+        let newLast60 = Self.summaries(window, limit: 6)
+        if newLast60 != last60 { last60 = newLast60 }
+        if !buckets.isEmpty {
+            let newToday = Self.summaries(todayTotals, limit: 30)
+            if newToday != today { today = newToday }
+        }
     }
 
     /// Bekleyen satırları diske yazar (birkaç saniyede bir).
     func flush() async {
-        guard !pending.isEmpty else { return }
+        guard !pending.isEmpty || !pendingHourly.isEmpty else { return }
         let rows = Array(pending.values)
+        let hourly = Array(pendingHourly.values)
         pending.removeAll(keepingCapacity: true)
-        await store.add(day: dayKey, rows: rows)
+        pendingHourly.removeAll(keepingCapacity: true)
+        await store.add(day: dayKey, rows: rows, hourly: hourly)
     }
 
-    private func rollDayIfNeeded() {
-        let now = UsageStore.dayKey()
+    private func rollDayIfNeeded(now date: Date) {
+        let now = UsageStore.dayKey(date, calendar: calendar)
         guard now != dayKey else { return }
         let rows = Array(pending.values)
+        let hourly = Array(pendingHourly.values)
         let oldDay = dayKey
         pending.removeAll()
-        Task { [store] in await store.add(day: oldDay, rows: rows) }
+        pendingHourly.removeAll()
+        Task { [store] in await store.add(day: oldDay, rows: rows, hourly: hourly) }
         dayKey = now
         todayTotals = [:]
         attributedMobileToday = 0
@@ -125,8 +151,9 @@ final class UsageEngine {
             .sorted { $0.value.bytes > $1.value.bytes }
             .prefix(limit)
             .map { app, t in
-                let doms = t.hosts.sorted { $0.value > $1.value }.prefix(5).map { (name: $0.key, bytes: $0.value) }
-                return AppUsage(app: app, bytes: t.bytes, mobileBytes: t.mobile, domains: Array(doms))
+                let doms = DomainGrouper.displayOrder(t.hosts.map { (name: $0.key, bytes: $0.value) }, limit: 5,
+                                                      name: \.name, bytes: \.bytes)
+                return AppUsage(app: app, bytes: t.bytes, mobileBytes: t.mobile, domains: doms)
             }
     }
 }
