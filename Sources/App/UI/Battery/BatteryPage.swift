@@ -56,6 +56,8 @@ struct BatteryPage: View {
                     if let devices, let prefs { DevicesTab(service: devices, prefs: prefs, battery: monitor) }
                 case .ios:
                     if let devices, let prefs { IOSDevicesTab(service: devices, prefs: prefs) }
+                case .charging:
+                    ChargingTab(model: ChargingModel.shared)
                 case .mac:
                     macContent
                 }
@@ -69,7 +71,7 @@ struct BatteryPage: View {
             }
         }
         .onChange(of: tab) {
-            devices?.setPageVisible(tab != .mac)
+            devices?.setPageVisible(tab == .devices || tab == .ios)
             if tab == .ios { devices?.refreshIOS() }
         }
         .onDisappear { devices?.setPageVisible(false) }
