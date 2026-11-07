@@ -24,6 +24,14 @@
 	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Adalmon, bağlı aksesuarların (AirPods, klavye, fare, iPhone) pil düzeyini göstermek için Bluetooth'u kullanır.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_apple-mobdev2._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Adalmon, aynı Wi‑Fi ağındaki eşleşmiş iPhone ve iPad'lerin pil sağlığını okumak için yerel ağı kullanır.</string>
 	<key>NSSystemExtensionUsageDescription</key>
 	<string>Uygulama bazlı ağ kullanımını ölçmek için.</string>
 </dict>

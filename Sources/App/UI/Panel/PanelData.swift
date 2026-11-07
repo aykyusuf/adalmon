@@ -41,6 +41,8 @@ struct PanelData: Equatable {
 
     var battery: BatteryReading?
     var batteryApps: [BatteryEnergyApp] = []
+    /// Görünür cihaz pilleri (en düşük üstte).
+    var devices: [DeviceBattery] = []
 
     /// Uygulama bazlı ölçüm yoksa listeler yerine kurulum çağrısı gösterilir.
     var showsFilterCallout: Bool { installerState != .active && !filterConnected }
@@ -83,7 +85,8 @@ extension PanelData {
             toast: model.toast,
             opensMainWindow: model.prefs.showInDock,
             battery: model.battery.reading,
-            batteryApps: model.battery.energyApps
+            batteryApps: model.battery.energyApps,
+            devices: model.devices.visibleDevices
         )
     }
 }

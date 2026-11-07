@@ -8,23 +8,34 @@ struct BatteryPanelSection: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if let r = data.battery {
+        if data.battery != nil || !data.devices.isEmpty {
             let collapsed = config.isCollapsed(.battery)
-            let tint = BatteryPalette.tint(r)
+            let r = data.battery
             VStack(alignment: .leading, spacing: 6) {
-                PanelSectionHeader(title: "Pil", isCollapsed: collapsed) {
+                PanelSectionHeader(title: r == nil ? "Cihazlar" : "Pil", isCollapsed: collapsed) {
                     withAnimation(.panel(reduceMotion: reduceMotion)) { config.toggleCollapsed(.battery) }
                 } accessory: {
-                    Text(collapsed ? "%\(r.level) · " + BatteryFormat.statusLine(r) : "Sağlık " + BatteryFormat.percent(r.primaryHealthPercent))
+                    if let r {
+                        Text(collapsed ? "%\(r.level) · " + BatteryFormat.statusLine(r) : "Sağlık " + BatteryFormat.percent(r.primaryHealthPercent))
+                    } else {
+                        Text("\(data.devices.count) cihaz")
+                    }
                 }
                 if !collapsed {
                     VStack(alignment: .leading, spacing: 8) {
-                        topRow(r, tint)
-                        SegmentedCapacityBar(level: r.level, tint: tint, charging: r.isCharging, segments: 20, height: 8)
-                        statRow(r)
-                        flowRow(r)
-                        capacityRow(r)
-                        if !data.batteryApps.isEmpty { appsRow }
+                        if let r {
+                            let tint = BatteryPalette.tint(r)
+                            topRow(r, tint)
+                            SegmentedCapacityBar(level: r.level, tint: tint, charging: r.isCharging, segments: 20, height: 8)
+                            statRow(r)
+                            flowRow(r)
+                            capacityRow(r)
+                            if !data.batteryApps.isEmpty { appsRow }
+                        }
+                        if !data.devices.isEmpty {
+                            if r != nil { Divider().opacity(0.5) }
+                            DevicePanelList(devices: data.devices)
+                        }
                     }
                     .padding(density.cardPadding + 2)
                     .frame(maxWidth: .infinity, alignment: .leading)

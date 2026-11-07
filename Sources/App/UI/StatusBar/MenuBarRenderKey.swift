@@ -9,12 +9,14 @@ struct MenuBarRenderKey: Equatable {
     var connection: ConnectionState
     var histories: [[Int]]
     var battery: BatteryGlyphState?
+    var devices: [BatteryGlyphState?] = []
 
     init(components: [MenuBarComponent], config: MenuBarConfig, values: WidgetValues) {
         self.config = config
         self.components = components
         connection = values.connection
-        battery = components.contains { $0.fields.contains(.batteryLevel) } ? values.battery : nil
+        battery = components.contains { $0.deviceID == nil && $0.fields.contains(.batteryLevel) } ? values.battery : nil
+        devices = components.compactMap { c in c.deviceID.map { values.devices[$0] } }
         var texts: [String] = []
         var levels: [Int] = []
         var histories: [[Int]] = []

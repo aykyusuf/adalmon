@@ -255,7 +255,10 @@ enum ComponentRenderer {
     // MARK: Accessibility
 
     static func spokenText(_ c: MenuBarComponent, values: WidgetValues) -> String {
-        c.fields.map { field in
+        if let id = c.deviceID {
+            return values.devices[id].map { "Cihaz pili yüzde \($0.level)" } ?? "Cihaz pili bilinmiyor"
+        }
+        return c.fields.map { field in
             field == .connection
                 ? "Bağlantı " + (values.connection == .offline ? "yok" : field.text(values, showUnits: true))
                 : field.displayName + " " + field.text(values, showUnits: true, unit: c.unit)

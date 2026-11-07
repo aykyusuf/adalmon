@@ -23,6 +23,7 @@ struct GeneralSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            LicensesSection()
         }
         .formStyle(.grouped)
         .task { launchAtLogin = prefs.launchAtLogin }

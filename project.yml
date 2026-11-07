@@ -28,12 +28,16 @@ targets:
         LSMinimumSystemVersion: "26.0"
         LSUIElement: true
         NSSystemExtensionUsageDescription: Uygulama bazlı ağ kullanımını ölçmek için.
+        NSBluetoothAlwaysUsageDescription: Adalmon, bağlı aksesuarların (AirPods, klavye, fare, iPhone) pil düzeyini göstermek için Bluetooth'u kullanır.
+        NSLocalNetworkUsageDescription: Adalmon, aynı Wi‑Fi ağındaki eşleşmiş iPhone ve iPad'lerin pil sağlığını okumak için yerel ağı kullanır.
+        NSBonjourServices: [_apple-mobdev2._tcp]
     entitlements:
       path: Sources/App/Adalmon.entitlements
       properties:
         com.apple.developer.system-extension.install: true
         com.apple.developer.networking.networkextension: [content-filter-provider, app-proxy-provider]
         com.apple.security.application-groups: [YOUR_TEAM_ID.com.example.adalmon]
+        com.apple.security.device.bluetooth: true
     attributes:
       SystemCapabilities:
         com.apple.NetworkExtensions: {enabled: 1}
@@ -41,11 +45,38 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.adalmon
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         OTHER_LDFLAGS: -lsqlite3
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - target: AdalmonFilter
         embed: true
+      # libimobiledevice (LGPL-2.1+) ve bağımlılıkları: çalışma zamanında dlopen; Xcode takım kimliğiyle imzalar
+      # (kitaplık doğrulaması açık kalır). Yeniden üretmek için: tools/vendor-libimobiledevice.sh
+      - framework: Vendor/libimobiledevice/libimobiledevice-1.0.6.dylib
+        embed: true
+        codeSign: true
+        link: false
+      - framework: Vendor/libimobiledevice/libimobiledevice-glue-1.0.0.dylib
+        embed: true
+        codeSign: true
+        link: false
+      - framework: Vendor/libimobiledevice/libplist-2.0.12.dylib
+        embed: true
+        codeSign: true
+        link: false
+      - framework: Vendor/libimobiledevice/libusbmuxd-2.0.7.dylib
+        embed: true
+        codeSign: true
+        link: false
+      - framework: Vendor/libimobiledevice/libssl.4.dylib
+        embed: true
+        codeSign: true
+        link: false
+      - framework: Vendor/libimobiledevice/libcrypto.4.dylib
+        embed: true
+        codeSign: true
+        link: false
   AdalmonFilter:
     type: system-extension
     platform: macOS

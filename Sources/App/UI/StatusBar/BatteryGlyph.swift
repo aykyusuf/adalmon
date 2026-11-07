@@ -41,6 +41,20 @@ struct BatteryGlyphState: Equatable, Sendable {
     var isFull: Bool
     var timeText: String?
     var lowPowerMode: Bool
+    /// Cihaz pili ise cihaz simgesi (SF Symbol) ve "~" (yaklaşık) bilgisi.
+    var deviceSymbol: String?
+    var isApproximate = false
+
+    init(device d: DeviceBattery) {
+        level = d.summaryLevel ?? 0
+        isCharging = d.isCharging
+        isPluggedIn = false
+        isFull = false
+        timeText = nil
+        lowPowerMode = false
+        deviceSymbol = d.kind.symbol
+        isApproximate = d.isApproximate
+    }
 
     init(_ r: BatteryReading) {
         level = r.level
@@ -71,6 +85,9 @@ enum BatteryGlyph {
     private static let boltWidth: CGFloat = 9
     private static let gap: CGFloat = 3
 
+    /// "~" öneki kapsülün biraz genişlemesini ister.
+    private static func capsuleWidth(_ m: Metrics, _ state: BatteryGlyphState) -> CGFloat { m.capsule.width + (state.isApproximate ? 5 : 0) }
+
     private static func timeFont(_ m: Metrics) -> NSFont { .monospacedDigitSystemFont(ofSize: m.timeFont, weight: .medium) }
     private static func levelFont(_ m: Metrics) -> NSFont { .monospacedDigitSystemFont(ofSize: m.font, weight: .semibold) }
 
@@ -80,10 +97,19 @@ enum BatteryGlyph {
 
     private static func showsBolt(_ state: BatteryGlyphState) -> Bool { state.isCharging || (state.isPluggedIn && !state.isFull) }
 
+    private static let deviceIconWidth: CGFloat = 14
+
+    /// Mac ya da sabitlenmiş cihaz durumu.
+    static func state(_ c: MenuBarComponent, _ values: WidgetValues) -> BatteryGlyphState? {
+        guard let id = c.deviceID else { return values.battery }
+        return values.devices[id]
+    }
+
     static func width(_ c: MenuBarComponent, values: WidgetValues) -> CGFloat {
         let m = metrics(c.battery.size)
-        guard let state = values.battery else { return m.capsule.width }
-        var w = m.capsule.width
+        guard let state = state(c, values) else { return m.capsule.width + (c.deviceID != nil ? deviceIconWidth + gap : 0) }
+        var w = capsuleWidth(m, state)
+        if state.deviceSymbol != nil { w += deviceIconWidth + gap }
         if showsBolt(state) { w += boltWidth + gap - 2 }
         if c.battery.showTime, let t = state.timeText { w += gap + textWidth(t, timeFont(m)) }
         return ceil(w)
@@ -101,7 +127,7 @@ enum BatteryGlyph {
 
     static func draw(_ c: MenuBarComponent, values: WidgetValues, in rect: CGRect) {
         let m = metrics(c.battery.size)
-        guard let state = values.battery else {
+        guard let state = state(c, values) else {
             drawPlaceholder(m, in: rect)
             return
         }
@@ -109,13 +135,18 @@ enum BatteryGlyph {
         var x = rect.minX
         let midY = rect.midY
 
+        if let symbol = state.deviceSymbol {
+            WidgetGraphics.symbol(symbol, in: CGRect(x: x, y: midY - 7, width: deviceIconWidth, height: 14), color: .labelColor)
+            x += deviceIconWidth + gap
+        }
+
         if showsBolt(state) {
             let color = (state.isCharging ? tint ?? NSColor.labelColor : NSColor.labelColor.withAlphaComponent(0.7))
             WidgetGraphics.symbol("bolt.fill", in: CGRect(x: x - 1, y: midY - 5.5, width: boltWidth, height: 11), color: color)
             x += boltWidth + gap - 2
         }
 
-        let capsule = CGRect(x: x, y: midY - m.capsule.height / 2, width: m.capsule.width, height: m.capsule.height)
+        let capsule = CGRect(x: x, y: midY - m.capsule.height / 2, width: capsuleWidth(m, state), height: m.capsule.height)
         let radius = capsule.height / 2
         let outline = NSBezierPath(roundedRect: capsule.insetBy(dx: 0.6, dy: 0.6), xRadius: radius, yRadius: radius)
         outline.lineWidth = 1.2
@@ -134,7 +165,7 @@ enum BatteryGlyph {
             NSGraphicsContext.restoreGraphicsState()
         }
 
-        let text = "\(state.level)"
+        let text = (state.isApproximate ? "~" : "") + "\(state.level)"
         let font = levelFont(m)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
         let size = (text as NSString).size(withAttributes: attrs)

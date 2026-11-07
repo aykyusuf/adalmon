@@ -47,7 +47,9 @@ extension MetricCardConfig {
     /// Reads the simple cards back from a component list. Returns nil when the list was customized in the
     /// advanced editor and can't be represented by cards ("Gelişmiş düzende özelleştirildi").
     /// Card kinds missing from the list are appended hidden, with their default values.
-    static func cards(from components: [MenuBarComponent]) -> [MetricCardConfig]? {
+    static func cards(from allComponents: [MenuBarComponent]) -> [MetricCardConfig]? {
+        // Sabitlenmiş cihaz pilleri kartlarla temsil edilmez; basit düzenleyiciyi bozmasın.
+        let components = allComponents.filter { $0.deviceID == nil }
         var cards: [MetricCardConfig] = []
         var i = 0
         while i < components.count {

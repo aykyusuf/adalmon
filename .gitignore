@@ -25,3 +25,6 @@ spike/AdalmonSpike.xcodeproj/
 .env.*
 
 .DS_Store
+
+# Gömülü libimobiledevice dylib'leri: tools/vendor-libimobiledevice.sh üretir (lisanslar repoda)
+Vendor/libimobiledevice/*.dylib
