@@ -16,6 +16,7 @@ extension WidgetValues {
                   downToday: model.downToday, upToday: model.upToday,
                   temperature: s?.temperature,
                   temperatureHistory: TemperatureHistory.shared.record(s))
+        battery = model.battery.reading.map(BatteryGlyphState.init)
         if let s {
             memTotal = s.memory.totalBytes
             memUsed = s.memory.usedBytes

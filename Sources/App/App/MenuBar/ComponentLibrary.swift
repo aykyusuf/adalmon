@@ -43,6 +43,13 @@ enum ComponentLibrary {
             LibraryEntry("temp-ssd", "SSD sıcaklığı", .temperature, C(.ssdTemp, showLabel: true)),
             LibraryEntry("temp-graph", "CPU sıcaklık grafiği", .temperature, C(.cpuTemp, visual: .sparkline, colorMode: .threshold)),
 
+            LibraryEntry("battery-capsule", "Pil kapsülü", .battery, C(.batteryLevel, visual: .batteryCapsule)),
+            LibraryEntry("battery-capsule-time", "Pil kapsülü + süre", .battery,
+                         C(.batteryLevel, visual: .batteryCapsule, battery: BatteryGlyphOptions(showTime: true))),
+            LibraryEntry("battery-text", "Pil yüzdesi", .battery, C(.batteryLevel, showLabel: true)),
+            LibraryEntry("battery-ring", "Pil halkası", .battery, C(.batteryLevel, visual: .ring, colorMode: .accent)),
+            LibraryEntry("battery-temp", "Pil sıcaklığı", .battery, C(.batteryTemp, showLabel: true)),
+
             LibraryEntry("net-down", "İndirme hızı", .network, C(.download, showLabel: true)),
             LibraryEntry("net-up", "Yükleme hızı", .network, C(.upload, showLabel: true)),
             LibraryEntry("net-two", "Hız iki satır", .network, C(.upload, .download, visual: .stacked2, showLabel: true)),

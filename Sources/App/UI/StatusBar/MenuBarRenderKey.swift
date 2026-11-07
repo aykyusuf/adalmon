@@ -8,11 +8,13 @@ struct MenuBarRenderKey: Equatable {
     var levels: [Int]
     var connection: ConnectionState
     var histories: [[Int]]
+    var battery: BatteryGlyphState?
 
     init(components: [MenuBarComponent], config: MenuBarConfig, values: WidgetValues) {
         self.config = config
         self.components = components
         connection = values.connection
+        battery = components.contains { $0.fields.contains(.batteryLevel) } ? values.battery : nil
         var texts: [String] = []
         var levels: [Int] = []
         var histories: [[Int]] = []

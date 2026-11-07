@@ -17,6 +17,7 @@ struct MainWindowDetail<SettingsContent: View>: View {
         case .mobile: MobilePageHost(model: model, source: source, actions: actions)
         case .rules: RulesPage(model: model)
         case .processes: ProcessesPage(model: model, router: router)
+        case .battery: BatteryPage(monitor: model.battery, store: model.store, router: router)
         case .settings(let settings): SettingsPage(section: settings) { settingsContent(settings) }
         }
     }

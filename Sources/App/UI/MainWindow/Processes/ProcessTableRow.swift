@@ -124,7 +124,11 @@ struct ProcessTableRow: View {
         case .energy: return ResourceFormat.watts(row.energy)
         case .category: return row.category.shortTitle
         case .processCount: return row.isMember ? "—" : "\(row.processCount)"
-        case .pid: return row.pid.map { String($0) } ?? (row.pids.count == 1 ? String(row.pids[0]) : "—")
+        // Grup satırı: ana süreç (en eski = en küçük PID) + kaç alt süreç daha olduğu.
+        case .pid:
+            if let pid = row.pid { return String(pid) }
+            guard let main = row.pids.min() else { return "—" }
+            return row.pids.count > 1 ? "\(main) +\(row.pids.count - 1)" : String(main)
         }
     }
 }

@@ -9,15 +9,10 @@ struct ProcessesPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            PageHeader(title: MainSection.processes.title) {
-                Picker("Görünüm", selection: $router.processesTab) {
-                    ForEach(ProcessesTab.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-            .padding(.horizontal, 24)
-            // Tablo/kaydırıcı içerikler yüksekliklerini içeriğe göre bildirip pencereyi aşmasın.
+            PageHeader(title: MainSection.processes.title) {}
+                .padding(.horizontal, 24)
+            ProcessesTabBar(selection: $router.processesTab)
+                .padding(.horizontal, 24)
             BoundedHeight { content }
         }
         .padding(.top, 24)

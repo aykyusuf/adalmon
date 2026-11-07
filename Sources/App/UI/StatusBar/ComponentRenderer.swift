@@ -32,7 +32,7 @@ enum ComponentRenderer {
             return c.secondary != nil ? .inline(labels: c.showLabel) : .single(label: c.showLabel ? c.primary.label : nil, role: .value)
         case .stacked2:
             return c.secondary != nil ? .twoLines(labels: c.showLabel) : .labelOver
-        case .hbar, .dot, .oneLine, .labelAbove, .symbolStack:
+        case .hbar, .dot, .oneLine, .labelAbove, .symbolStack, .batteryCapsule:
             return .none
         case .iconValue, .bar, .ring, .sparkline:
             guard c.showValue else { return .none }
@@ -52,7 +52,7 @@ enum ComponentRenderer {
 
     private static func graphicWidth(_ c: MenuBarComponent) -> CGFloat {
         switch c.visual {
-        case .text, .stacked2, .hbar, .oneLine, .labelAbove, .symbolStack: 0
+        case .text, .stacked2, .hbar, .oneLine, .labelAbove, .symbolStack, .batteryCapsule: 0
         case .iconValue: iconSize
         case .bar: WidgetGraphics.verticalBarSize.width
         case .ring: WidgetGraphics.ringDiameter
@@ -100,6 +100,7 @@ enum ComponentRenderer {
     }
 
     static func width(of c: MenuBarComponent, config: MenuBarConfig, values: WidgetValues) -> CGFloat {
+        if c.visual == .batteryCapsule { return BatteryGlyph.width(c, values: values) }
         if c.visual.isCompact { return CompactLayoutRenderer.width(of: c, config: config, values: values) }
         let w: CGFloat
         switch c.visual {
@@ -124,6 +125,10 @@ enum ComponentRenderer {
     // MARK: Drawing
 
     static func draw(_ c: MenuBarComponent, config: MenuBarConfig, values: WidgetValues, in rect: CGRect) {
+        if c.visual == .batteryCapsule {
+            BatteryGlyph.draw(c, values: values, in: rect)
+            return
+        }
         if c.visual.isCompact {
             CompactLayoutRenderer.draw(c, config: config, values: values, in: rect)
             return

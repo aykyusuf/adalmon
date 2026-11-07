@@ -38,6 +38,8 @@ final class Preferences {
     var dataSaver: DataSaverConfig { didSet { Self.store(dataSaver, "dataSaver", d) } }
     /// Uygulama başına kullanım kuralları.
     var usageRules: [UsageRule] { didSet { Self.store(usageRules, "usageRules", d) } }
+    /// Pil uyarıları (düşük / dolu / takıldı-çıkarıldı).
+    var batteryAlerts: BatteryAlertConfig { didSet { Self.store(batteryAlerts, "batteryAlerts", d) } }
 
     /// Menü çubuğu widget düzeni (eski show*Item bayrakları yalnızca ilk açılışta buraya taşınır).
     let menuBar: MenuBarConfigStore
@@ -76,6 +78,7 @@ final class Preferences {
         tierLadder = Self.load(TierLadderConfig.self, "tierLadder", d) ?? TierLadderConfig()
         dataSaver = Self.load(DataSaverConfig.self, "dataSaver", d) ?? DataSaverConfig()
         usageRules = Self.load([UsageRule].self, "usageRules", d) ?? []
+        batteryAlerts = Self.load(BatteryAlertConfig.self, "batteryAlerts", d) ?? BatteryAlertConfig()
         menuBar = MenuBarConfigStore(defaults: d)
         panel = PanelConfigStore(defaults: d)
     }

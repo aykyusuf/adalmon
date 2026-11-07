@@ -4,6 +4,7 @@ enum ComponentVisual: String, Codable, CaseIterable, Identifiable, Sendable {
     case text, stacked2, iconValue, bar, hbar, ring, sparkline, dot
     /// Compact layouts of the simple metric cards (`MetricLayout`).
     case oneLine, labelAbove, symbolStack
+    case batteryCapsule
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum ComponentVisual: String, Codable, CaseIterable, Identifiable, Sendable {
         case .oneLine: "Tek satır"
         case .labelAbove: "Etiket üstte"
         case .symbolStack: "Simge"
+        case .batteryCapsule: "Pil kapsülü"
         }
     }
 
@@ -34,6 +36,8 @@ enum ComponentVisual: String, Codable, CaseIterable, Identifiable, Sendable {
 
     /// The single validity rule used by the library, the inspector chips and the tests.
     func supports(primary: DataField, secondary: DataField?) -> Bool {
+        if self == .batteryCapsule { return primary == .batteryLevel && secondary == nil }
+        if primary == .batteryLevel, isCompact || self == .stacked2 || self == .sparkline || self == .hbar || self == .dot { return false }
         if secondary != nil, !allowsSecondLine { return false }
         if secondary == .connection { return false }
         if isCompact { return primary != .connection }

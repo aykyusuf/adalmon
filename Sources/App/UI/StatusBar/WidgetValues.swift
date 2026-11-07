@@ -40,6 +40,7 @@ struct WidgetValues: Sendable, Equatable {
     var diskRead: Double = 0
     var diskWrite: Double = 0
     var gpuMemory: UInt64?
+    var battery: BatteryGlyphState?
 
     func temperature(_ source: TemperatureSource) -> Double? {
         guard let t = temperature else { return nil }
@@ -78,6 +79,7 @@ struct WidgetValues: Sendable, Equatable {
         v.diskRead = 12_400_000
         v.diskWrite = 3_400_000
         v.gpuMemory = 2_254_857_830
+        v.battery = BatteryGlyphState(.sample)
         v.temperatureHistory = [.cpu: wave(0.52, 0.06, 0).map { $0 * 100 }, .gpu: wave(0.47, 0.04, 1).map { $0 * 100 }]
         return v
     }()

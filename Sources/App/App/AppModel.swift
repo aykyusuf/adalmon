@@ -45,6 +45,8 @@ final class AppModel {
     var unattributedMobile: UInt64 { mobileToday > usage.attributedMobileToday ? mobileToday - usage.attributedMobileToday : 0 }
 
     @ObservationIgnored let store = UsageStore()
+    @ObservationIgnored private(set) lazy var battery = BatteryMonitor(
+        store: store, alertConfig: { [prefs] in prefs.batteryAlerts }, notify: { [alerts] in alerts.notify(title: $0, body: $1) })
     /// Faz 3: süreç/kaynak geçmişi ve saatlik klasör taraması (dakikada bir arka plan örnekleyici).
     @ObservationIgnored private(set) lazy var resources = ResourceService(store: store)
     @ObservationIgnored private let sampler = MetricsSampler()
@@ -94,6 +96,7 @@ final class AppModel {
         scheduleTimer()
         observeInterval()
         resources.start()
+        battery.start()
     }
 
     /// Güncelleme aralığı ayarı değişince zamanlayıcıyı hemen yeniden kur ve bir ölçüm al.
@@ -481,6 +484,7 @@ final class AppModel {
     @ObservationIgnored var mainWindowVisible = false {
         didSet {
             scheduleTimer()
+            battery.setVisible(mainWindowVisible || panelVisible)
             if mainWindowVisible && !oldValue { Task { await step() } }
         }
     }
@@ -488,6 +492,7 @@ final class AppModel {
     @ObservationIgnored var panelVisible = false {
         didSet {
             scheduleTimer()
+            battery.setVisible(mainWindowVisible || panelVisible)
             if panelVisible && !oldValue { Task { await step() } }
         }
     }
@@ -541,6 +546,7 @@ final class AppModel {
     /// Yeni ölçümü yayınlar (testler/önizlemeler de gerçek bir ölçümü buradan verir).
     func apply(_ s: SystemSnapshot) {
         snapshot = s
+        battery.setTemperature(s.temperature?.battery)
         systemHistory.append(s, notify: mainWindowVisible)
         Self.push(&cpuHistory, s.cpu.total)
         Self.push(&gpuHistory, s.gpu?.displayLoad ?? 0)

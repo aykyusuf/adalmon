@@ -44,6 +44,8 @@ struct PanelContent: View {
             if !config.visibleCards.isEmpty {
                 PanelCardGrid(data: data, cards: config.visibleCards, onOpen: actions.openApp)
             }
+        case .battery:
+            BatteryPanelSection(data: data, config: $config)
         case .mobileCap:
             MobileQuotaRow(data: data)
         case .blockedApps:

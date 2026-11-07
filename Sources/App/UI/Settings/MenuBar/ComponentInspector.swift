@@ -40,6 +40,14 @@ struct ComponentInspector: View {
         }
         colorControls
 
+        if component.visual == .batteryCapsule {
+            Toggle("Kalan / dolma süresini göster", isOn: $component.battery.showTime)
+            Toggle("Durum renkleri (şarjda yeşil, azalınca turuncu, kritikte kırmızı)", isOn: $component.battery.statusColors)
+            Picker("Boyut", selection: $component.battery.size) {
+                ForEach(BatteryGlyphOptions.Size.allCases) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+        }
         Toggle("Etiket göster", isOn: $component.showLabel)
         if component.visual.hasGraphic {
             Toggle("Değeri göster", isOn: $component.showValue)

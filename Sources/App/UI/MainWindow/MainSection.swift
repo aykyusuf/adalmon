@@ -1,11 +1,11 @@
 import SwiftUI
 
 enum MainSection: Hashable, Identifiable {
-    case overview, network, history, mobile, rules, processes
+    case overview, network, history, mobile, rules, processes, battery
     case settings(SettingsSection)
 
     /// Kenar çubuğundaki sayfalar (sıra aynı zamanda ⌘1…⌘6 sırasıdır).
-    static let pages: [MainSection] = [.overview, .network, .history, .mobile, .rules, .processes]
+    static let pages: [MainSection] = [.overview, .network, .history, .mobile, .rules, .processes, .battery]
 
     static var allCases: [MainSection] { pages + SettingsSection.allCases.map(MainSection.settings) }
 
@@ -22,6 +22,7 @@ enum MainSection: Hashable, Identifiable {
         case .mobile: "mobile"
         case .rules: "rules"
         case .processes: "processes"
+        case .battery: "battery"
         case .settings(let section): "settings.\(section.rawValue)"
         }
     }
@@ -34,6 +35,7 @@ enum MainSection: Hashable, Identifiable {
         case .mobile: "Mobil veri"
         case .rules: "Kurallar"
         case .processes: "Süreçler"
+        case .battery: "Pil"
         case .settings(let section): section.title
         }
     }
@@ -46,6 +48,7 @@ enum MainSection: Hashable, Identifiable {
         case .mobile: "antenna.radiowaves.left.and.right"
         case .rules: "shield.lefthalf.filled"
         case .processes: "waveform.path.ecg.rectangle"
+        case .battery: "battery.100percent.bolt"
         case .settings(let section): section.symbol
         }
     }
@@ -58,6 +61,7 @@ enum MainSection: Hashable, Identifiable {
         case .mobile: .green
         case .rules: .pink
         case .processes: .orange
+        case .battery: .green
         case .settings(let section): section.tint
         }
     }

@@ -1,82 +1,101 @@
 import AppKit
 import SwiftUI
 
-/// "Başlangıç": ~/Library/LaunchAgents ve /Library/LaunchAgents plist'leri (salt okunur).
 struct StartupItemsView: View {
-    @State private var items: [StartupItem] = []
-    @State private var loaded = false
+    @State private var model = StartupItemsModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !loaded {
+            if !model.loaded {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
-            } else if items.isEmpty {
+            } else if model.items.isEmpty && model.backgroundItems.isEmpty && model.backgroundLoaded {
                 ContentUnavailableView("Başlangıç öğesi yok", systemImage: "power",
                                        description: Text("LaunchAgents klasörlerinde plist bulunamadı."))
             } else {
-                List(items) { item in
-                    StartupItemRow(item: item)
-                        .listRowSeparator(.visible)
-                }
-                .listStyle(.plain)
+                list
             }
-            HStack {
-                Text("Salt okunur liste: yalnızca LaunchAgents. Giriş öğelerini Sistem Ayarları › Genel › Giriş Öğeleri'nden yönetin.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button("Giriş Öğeleri'ni aç", systemImage: "gearshape") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") { NSWorkspace.shared.open(url) }
-                }
-            }
-            .padding(.bottom, 10)
+            footer
         }
-        .task {
-            items = await Task.detached(priority: .utility) { StartupItemScanner.scan() }.value
-            loaded = true
+        .task { await model.load() }
+        .confirmationDialog("Başlangıç öğesi kaldırılsın mı?", isPresented: removalPresented, presenting: model.pendingRemoval) { item in
+            Button("Çöp Kutusu'na taşı", role: .destructive) { Task { await model.remove(item) } }
+            Button("Vazgeç", role: .cancel) {}
+        } message: { item in
+            Text("\(item.name) durdurulur ve plist dosyası Çöp Kutusu'na taşınır; oturum açınca artık başlamaz. Çöp Kutusu'ndan geri koyabilirsiniz.")
         }
     }
-}
 
-private struct StartupItemRow: View {
-    let item: StartupItem
+    private var removalPresented: Binding<Bool> {
+        Binding(get: { model.pendingRemoval != nil }, set: { if !$0 { model.pendingRemoval = nil } })
+    }
 
-    var body: some View {
+    private var list: some View {
+        List {
+            itemSection("Kullanıcı ajanları", scope: .user, subtitle: "~/Library/LaunchAgents")
+            itemSection("Tüm kullanıcılar için ajanlar", scope: .allUsers, subtitle: "/Library/LaunchAgents · Yönetici izni gerekir")
+            itemSection("Sistem hizmetleri", scope: .daemon, subtitle: "/Library/LaunchDaemons · Yönetici izni gerekir")
+            Section {
+                if !model.backgroundLoaded {
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Giriş öğeleri okunuyor…").foregroundStyle(.secondary) }
+                } else if model.backgroundItems.isEmpty {
+                    Text("Giriş öğeleri okunamadı veya yok. Sistem Ayarları'ndan bakın.").foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.backgroundItems) { BackgroundItemRow(item: $0).listRowSeparator(.visible) }
+                }
+            } header: {
+                sectionHeader("Giriş öğeleri (Arka planda izin ver)", subtitle: "Sistem Ayarları'ndan yönetilir")
+            }
+        }
+        .listStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func itemSection(_ title: String, scope: StartupItem.Scope, subtitle: String) -> some View {
+        let rows = model.items.filter { $0.scope == scope }
+        if !rows.isEmpty {
+            Section {
+                ForEach(rows) { item in
+                    StartupItemRow(item: item, isBusy: model.busy.contains(item.id),
+                                   onToggle: { Task { await model.setEnabled(item.status == .disabled, for: item) } },
+                                   onRemove: { model.pendingRemoval = item },
+                                   onOpenSettings: Self.openLoginItemsSettings)
+                    .listRowSeparator(.visible)
+                }
+            } header: {
+                sectionHeader(title, subtitle: subtitle)
+            }
+        }
+    }
+
+    private func sectionHeader(_ title: String, subtitle: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(title).font(.headline)
+            Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+
+    private var footer: some View {
         HStack(spacing: 10) {
-            Image(nsImage: icon).resizable().scaledToFit().frame(width: 24, height: 24).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.name).lineLimit(1)
-                Text(item.program ?? item.plistPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            if let notice = model.notice {
+                Label(notice.text, systemImage: notice.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(notice.isError ? Color.orange : Color.green).lineLimit(2)
+                    .id(notice.id)
+                    .task(id: notice.id) {
+                        try? await Task.sleep(for: .seconds(6))
+                        if model.notice?.id == notice.id { model.notice = nil }
+                    }
+            } else {
+                Text("Apple'ın kendi öğelerine dokunulmaz. Yönetici izni gerektirenleri Sistem Ayarları › Genel › Giriş Öğeleri'nden yönetin.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Spacer(minLength: 8)
-            Text(item.scope.rawValue).font(.caption).foregroundStyle(.secondary)
-            Text(item.status.title)
-                .font(.caption.weight(.medium))
-                .padding(.horizontal, 8).padding(.vertical, 2)
-                .background(statusColor.opacity(0.18), in: .capsule)
-                .foregroundStyle(statusColor)
-            Button("Finder'da göster", systemImage: "folder") { ProcessActions.reveal(path: item.plistPath) }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("Finder'da göster")
+            Spacer()
+            Button("Giriş Öğeleri ayarlarını aç", systemImage: "gearshape", action: Self.openLoginItemsSettings)
         }
-        .padding(.vertical, 3)
-        .contextMenu {
-            Button("Finder'da göster", systemImage: "folder") { ProcessActions.reveal(path: item.plistPath) }
-            Button("Yolu kopyala", systemImage: "doc.on.doc") { ProcessActions.copy(item.program ?? item.plistPath) }
-        }
+        .padding(.bottom, 10)
     }
 
-    private var icon: NSImage {
-        if let program = item.program, program.hasPrefix("/") { return NSWorkspace.shared.icon(forFile: AppNaming.outermostApp(of: program)) }
-        return NSWorkspace.shared.icon(forFile: item.plistPath)
-    }
-
-    private var statusColor: Color {
-        switch item.status {
-        case .enabled: .green
-        case .disabled: .secondary
-        case .unknown: .orange
-        }
+    private static func openLoginItemsSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") { NSWorkspace.shared.open(url) }
     }
 }

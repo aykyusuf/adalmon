@@ -1,18 +1,25 @@
 import Foundation
 
-/// ~/Library/LaunchAgents ve /Library/LaunchAgents içindeki plist'leri okur (salt okunur).
-/// Durum: plist'teki `Disabled` anahtarı; macOS 13+ "Giriş Öğeleri" geçersiz kılmaları (`launchctl disable`) okunamadığı için
-/// `Disabled` yoksa etkin sayılır ("Bilinmiyor" yalnızca plist okunamazsa).
 enum StartupItemScanner {
-    static func directories() -> [(url: URL, scope: StartupItem.Scope)] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return [(home.appending(path: "Library/LaunchAgents", directoryHint: .isDirectory), .user),
-                (URL(filePath: "/Library/LaunchAgents", directoryHint: .isDirectory), .allUsers)]
+    static func directories(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [(url: URL, scope: StartupItem.Scope)] {
+        [(home.appending(path: "Library/LaunchAgents", directoryHint: .isDirectory), .user),
+         (URL(filePath: "/Library/LaunchAgents", directoryHint: .isDirectory), .allUsers),
+         (URL(filePath: "/Library/LaunchDaemons", directoryHint: .isDirectory), .daemon)]
     }
 
-    static func scan() -> [StartupItem] {
+    /// Plist'leri okur ve `launchctl print-disabled` geçersiz kılmalarını uygular (dosya G/Ç + 2 kısa `launchctl` çağrısı; ana iş parçacığında çağırmayın).
+    static func scan(launchctl: any LaunchctlRunning = SystemLaunchctl(), uid: uid_t = getuid(),
+                     directories: [(url: URL, scope: StartupItem.Scope)] = directories()) async -> [StartupItem] {
+        let guiOverrides = LaunchctlDisabledParser.parse(await launchctl.run(.printDisabled(.gui(uid: uid))).output)
+        let systemOverrides = LaunchctlDisabledParser.parse(await launchctl.run(.printDisabled(.system)).output)
+        return readPlists(in: directories).map {
+            applying(overrides: $0.scope == .daemon ? systemOverrides : guiOverrides, to: $0)
+        }
+    }
+
+    static func readPlists(in directories: [(url: URL, scope: StartupItem.Scope)]) -> [StartupItem] {
         var items: [StartupItem] = []
-        for (dir, scope) in directories() {
+        for (dir, scope) in directories {
             let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
             for file in files where file.pathExtension == "plist" {
                 if let item = parse(url: file, scope: scope) { items.append(item) }
@@ -22,20 +29,33 @@ enum StartupItemScanner {
     }
 
     static func parse(url: URL, scope: StartupItem.Scope) -> StartupItem? {
-        guard let data = try? Data(contentsOf: url),
+        parse(data: try? Data(contentsOf: url), path: url.path, scope: scope)
+    }
+
+    /// Saf ayrıştırma: `data` nil/bozuksa etiket dosya adından alınır ve durum `.unknown` olur.
+    static func parse(data: Data?, path: String, scope: StartupItem.Scope) -> StartupItem? {
+        let fileLabel = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+        guard let data,
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
-            return StartupItem(label: url.deletingPathExtension().lastPathComponent, name: friendlyName(label: url.deletingPathExtension().lastPathComponent),
-                               plistPath: url.path, program: nil, scope: scope, status: .unknown, runsAtLoad: false)
+            return StartupItem(label: fileLabel, name: friendlyName(label: fileLabel), plistPath: path, program: nil,
+                               scope: scope, status: .unknown, runsAtLoad: false)
         }
-        let label = (plist["Label"] as? String) ?? url.deletingPathExtension().lastPathComponent
+        let label = (plist["Label"] as? String) ?? fileLabel
         let program = (plist["Program"] as? String) ?? (plist["ProgramArguments"] as? [String])?.first
         let disabled = (plist["Disabled"] as? Bool) ?? false
         let runsAtLoad = (plist["RunAtLoad"] as? Bool) ?? false
-        return StartupItem(label: label, name: name(program: program, label: label), plistPath: url.path, program: program,
+        return StartupItem(label: label, name: name(program: program, label: label), plistPath: path, program: program,
                            scope: scope, status: disabled ? .disabled : .enabled, runsAtLoad: runsAtLoad)
     }
 
-    /// Çalıştırılan dosya bir `.app` içindeyse uygulamanın adı; yoksa etiketten türetilen kısa ad.
+    /// launchd'nin geçersiz kılma veritabanı plist'teki `Disabled` anahtarından önceliklidir.
+    static func applying(overrides: [String: Bool], to item: StartupItem) -> StartupItem {
+        guard let disabled = overrides[item.label] else { return item }
+        var copy = item
+        copy.status = disabled ? .disabled : .enabled
+        return copy
+    }
+
     static func name(program: String?, label: String) -> String {
         if let program, program.contains(".app/") {
             let app = AppNaming.outermostApp(of: program)

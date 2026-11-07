@@ -6,7 +6,7 @@ enum DataField: String, Codable, CaseIterable, Identifiable, Sendable {
     case gpu, gpuTemp, gpuMemory
     case memoryPercent, memoryUsed, memoryFree, swapUsed, memoryPressure
     case diskPercent, diskFree, diskRead, diskWrite, ssdTemp
-    case batteryTemp
+    case batteryTemp, batteryLevel
     case download, upload, downloadLast60, uploadLast60, downloadToday, uploadToday
     case mobileUsed, mobileRemaining, mobilePercent
     case connection
@@ -21,6 +21,7 @@ enum DataField: String, Codable, CaseIterable, Identifiable, Sendable {
         case .cpuTemp, .cpuMaxTemp: .temperature
         case .gpu, .gpuMemory: .gpu
         case .gpuTemp, .ssdTemp, .batteryTemp: .temperature
+        case .batteryLevel: .battery
         case .memoryPercent, .memoryUsed, .memoryFree, .swapUsed, .memoryPressure: .memory
         case .diskPercent, .diskFree, .diskRead, .diskWrite: .disk
         case .download, .upload, .downloadLast60, .uploadLast60, .downloadToday, .uploadToday: .network
@@ -31,7 +32,7 @@ enum DataField: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var kind: FieldKind {
         switch self {
-        case .cpu, .gpu, .memoryPercent, .diskPercent, .mobilePercent: .percent
+        case .cpu, .gpu, .memoryPercent, .diskPercent, .mobilePercent, .batteryLevel: .percent
         case .cpuTemp, .cpuMaxTemp, .gpuTemp, .ssdTemp, .batteryTemp: .temperature
         case .gpuMemory, .memoryUsed, .memoryFree, .swapUsed: .bytes(binary: true)
         case .diskFree, .downloadLast60, .uploadLast60, .downloadToday, .uploadToday, .mobileRemaining: .bytes(binary: false)
@@ -71,6 +72,7 @@ enum DataField: String, Codable, CaseIterable, Identifiable, Sendable {
         case .diskWrite: "Disk yazma"
         case .ssdTemp: "SSD sıcaklığı"
         case .batteryTemp: "Pil sıcaklığı"
+        case .batteryLevel: "Pil seviyesi"
         case .download: "İndirme hızı"
         case .upload: "Yükleme hızı"
         case .downloadLast60: "İndirme (son 60 sn)"
@@ -101,6 +103,7 @@ enum DataField: String, Codable, CaseIterable, Identifiable, Sendable {
         case .diskWrite: "YAZ"
         case .ssdTemp: "SSD°"
         case .batteryTemp: "PİL°"
+        case .batteryLevel: "PİL"
         case .download, .downloadLast60, .downloadToday: "↓"
         case .upload, .uploadLast60, .uploadToday: "↑"
         case .mobileUsed, .mobilePercent: "MOB"
@@ -145,6 +148,7 @@ enum DataField: String, Codable, CaseIterable, Identifiable, Sendable {
         case .memoryPercent: v.memory
         case .diskPercent: v.disk
         case .mobilePercent: v.mobileCap == 0 ? 0 : Double(v.mobileUsed) / Double(v.mobileCap)
+        case .batteryLevel: v.battery.map { Double($0.level) / 100 }
         case .cpuTemp, .cpuMaxTemp, .gpuTemp, .ssdTemp, .batteryTemp: temperatureSource.flatMap(v.temperature)
         case .gpuMemory: v.gpuMemory.map { Double($0) }
         case .memoryUsed: Double(v.memUsed)
@@ -171,7 +175,7 @@ enum DataField: String, Codable, CaseIterable, Identifiable, Sendable {
     func level(_ v: WidgetValues) -> Double {
         let raw = rawValue(v) ?? 0
         let level: Double = switch self {
-        case .cpu, .gpu, .memoryPercent, .diskPercent, .mobilePercent, .connection: raw
+        case .cpu, .gpu, .memoryPercent, .diskPercent, .mobilePercent, .connection, .batteryLevel: raw
         case .cpuTemp, .cpuMaxTemp, .gpuTemp, .ssdTemp, .batteryTemp: raw / WidgetValues.temperatureFullScale
         case .memoryUsed, .gpuMemory: v.memTotal == 0 ? 0 : raw / Double(v.memTotal)
         case .memoryFree: v.memTotal == 0 ? 0 : 1 - raw / Double(v.memTotal)

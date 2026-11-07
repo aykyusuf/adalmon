@@ -17,6 +17,12 @@ struct ProcessPermissions: Equatable, Sendable {
         var p = ProcessPermissions()
         p.canRevealFile = key.hasPrefix("/")
         p.canNetworkControl = !isMember && key.hasPrefix("/") && category != .system && key != ResourceKeys.system
+        if isShellComponent(key) {
+            // Finder/Dock gibi: sonlandırılınca macOS yeniden açar ama askıya almak arayüzü dondurur.
+            p.reason = "macOS arayüz bileşeni: askıya alma/sonlandırma ekranı dondurabilir; yalnızca yeniden başlatılabilir."
+            p.canRestart = !isMember && ownedCount > 0
+            return p
+        }
         if category == .system || key == ResourceKeys.system {
             p.reason = "macOS sistem süreci: oturumu veya sistemi bozabileceği için değiştirilemez."
         } else if ownedCount == 0 {
@@ -26,5 +32,14 @@ struct ProcessPermissions: Equatable, Sendable {
             p.canRestart = !isMember && category == .app && key.hasSuffix(".app")
         }
         return p
+    }
+
+    /// Oturumun arayüzünü taşıyan süreçler (yol sonekiyle). Bunlarda yalnızca "yeniden başlat" serbesttir.
+    static let shellComponents = ["/Finder.app", "/Dock.app", "/SystemUIServer.app", "/ControlCenter.app",
+                                  "/NotificationCenter.app", "/WindowManager.app", "/loginwindow.app", "/WindowServer",
+                                  "/Spotlight.app", "/TextInputMenuAgent.app"]
+
+    static func isShellComponent(_ key: String) -> Bool {
+        shellComponents.contains { key.hasSuffix($0) || key.contains($0 + "/") }
     }
 }

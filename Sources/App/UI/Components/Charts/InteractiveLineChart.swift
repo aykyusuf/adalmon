@@ -35,7 +35,9 @@ struct InteractiveLineChart: View {
         Chart {
             ForEach(lines) { line in
                 ForEach(line.points) { p in
-                    AreaMark(x: .value("Zaman", p.date), y: .value(line.name, p.value), series: .value("Seri", line.name), stacking: .unstacked)
+                    // Alan, y ekseninin alt sınırından başlar: eksen 0'dan başlamıyorsa (ör. boş alan 12–15 GB) grafik dışına taşmaz.
+                    AreaMark(x: .value("Zaman", p.date), yStart: .value(line.name, yDomain.lowerBound),
+                             yEnd: .value(line.name, max(yDomain.lowerBound, p.value)), series: .value("Seri", line.name))
                         .foregroundStyle(.linearGradient(colors: [line.color.opacity(lines.count > 1 ? 0.22 : 0.4), line.color.opacity(0.03)],
                                                          startPoint: .top, endPoint: .bottom))
                         .interpolationMethod(.monotone)
