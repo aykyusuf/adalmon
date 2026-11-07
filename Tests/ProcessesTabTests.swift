@@ -22,7 +22,7 @@ final class ProcessesTabBarLayoutTests: XCTestCase {
     func testBarFitsAtMinimumAndNarrowWidths() {
         struct Host: View {
             @State var tab: ProcessesTab = .processes
-            var body: some View { ProcessesTabBar(selection: $tab) }
+            var body: some View { CapsuleTabBar(selection: $tab) }
         }
         for width in [670.0, 420.0, 300.0] {
             let host = NSHostingView(rootView: Host().frame(width: width))

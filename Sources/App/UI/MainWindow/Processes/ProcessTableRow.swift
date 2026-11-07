@@ -30,15 +30,10 @@ struct ProcessTableRow: View {
 
     private var nameCell: some View {
         HStack(spacing: 6) {
-            if row.isMember { Color.clear.frame(width: 34, height: 1) }
+            if row.isMember { Color.clear.frame(width: 24, height: 1) }
             chevron
             if row.isMember {
-                Text(row.name).lineLimit(1).truncationMode(.middle)
-                if row.processCount > 1 {
-                    Text("×\(row.processCount)").font(.caption).foregroundStyle(.tertiary).help("\(row.processCount) süreç")
-                } else if let pid = row.pid, pid > 0 {
-                    Text("pid \(pid)").font(.caption).foregroundStyle(.tertiary)
-                }
+                memberLabel
             } else {
                 ResourceAppLabel(key: row.key, size: 20, hint: row.pathHint)
                 if row.processCount > 1 {
@@ -56,6 +51,29 @@ struct ProcessTableRow: View {
         .padding(.leading, 10)
         .padding(.trailing, 6)
         .foregroundStyle(row.isMember ? .secondary : .primary)
+    }
+
+    /// Üye adı önce tam görünür; pid/adet etiketi yalnızca adın tamamıyla birlikte sığıyorsa gösterilir (üst üste binmez).
+    private var memberLabel: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                memberName
+                if let suffix = memberSuffix {
+                    Text(suffix.text).font(.caption).foregroundStyle(.tertiary).lineLimit(1).fixedSize().help(suffix.help)
+                }
+            }
+            memberName
+        }
+    }
+
+    private var memberName: some View {
+        Text(row.name).lineLimit(1).truncationMode(.middle)
+    }
+
+    private var memberSuffix: (text: String, help: String)? {
+        if row.processCount > 1 { return ("×\(row.processCount)", "\(row.processCount) süreç") }
+        if let pid = row.pid, pid > 0 { return ("pid \(pid)", "PID \(pid)") }
+        return nil
     }
 
     @ViewBuilder

@@ -16,12 +16,15 @@ struct ProcessSection: Identifiable {
 /// ve ana pencere görünürken çalışır; aralık kullanıcının güncelleme aralığıdır.
 ///
 /// Tablo sırası kararlıdır: sıralama yalnızca sütun/arama/genişletme değişince ya da her `resortEvery`. ölçümde yenilenir;
-/// imleç listenin üstündeyken donar (satırlar imlecin altından kaymaz). Sıra yalnızca `apply` ve özellik gözlemcilerinde
+/// imleç listenin üstündeyken donar (satırlar imlecin altından kaymaz); imleç listeye girdikten ya da listede tıklama/klavye
+/// seçimi yapıldıktan sonra `reorderHoldOff` süresince de yeniden sıralanmaz (tıklamayı götüren satır kaymasın). Sıra yalnızca `apply` ve özellik gözlemcilerinde
 /// yazılır, `body`'de değil.
 @MainActor @Observable
 final class ProcessLiveModel {
     /// Sıralamanın kaç ölçümde bir yenileneceği (kararlılık için).
     static let resortEvery = 3
+    /// İmleç girişi ya da seçimden sonra periyodik yeniden sıralamanın bekletileceği süre.
+    static let reorderHoldOff: Duration = .milliseconds(1_500)
 
     private(set) var rows: [LiveRow] = []
     private(set) var members: [String: [LiveRow]] = [:]
@@ -40,7 +43,7 @@ final class ProcessLiveModel {
     var query = "" { didSet { if query != oldValue { rebuildSections(resort: true) } } }
     var sortColumn: ProcessColumn = .cpu { didSet { if sortColumn != oldValue { rebuildSections(resort: true) } } }
     var sortAscending = false { didSet { if sortAscending != oldValue { rebuildSections(resort: true) } } }
-    var selection: String?
+    var selection: String? { didSet { if selection != oldValue { noteInteraction() } } }
 
     /// Sonlandırma akışı: önce onay, sonra SIGTERM, hâlâ yaşıyorsa "zorla" onayı.
     var killRequest: KillRequest?
@@ -61,8 +64,14 @@ final class ProcessLiveModel {
 
     /// İmleç listenin üstündeyken sıra donar; çıkınca bir sonraki ölçümde yenilenir.
     @ObservationIgnored var isPointerInside = false {
-        didSet { if oldValue && !isPointerInside { resortPending = true } }
+        didSet {
+            if isPointerInside && !oldValue { noteInteraction() }
+            if oldValue && !isPointerInside { resortPending = true }
+        }
     }
+    /// Zaman kaynağı (testlerde değiştirilir).
+    @ObservationIgnored var now: () -> ContinuousClock.Instant = { .now }
+    @ObservationIgnored private var holdUntil: ContinuousClock.Instant?
     @ObservationIgnored private var isSampling = false
     @ObservationIgnored private var pendingMembers = false
     @ObservationIgnored private weak var host: AppModel?
@@ -72,6 +81,16 @@ final class ProcessLiveModel {
     @ObservationIgnored private var orderRank: [String: Int] = [:]
     @ObservationIgnored private var applyCount = 0
     @ObservationIgnored private var resortPending = true
+
+    /// Kullanıcı listeyle etkileşti (imleç girdi, tıkladı, klavyeyle seçti): kısa süre sıra değişmez.
+    func noteInteraction() { holdUntil = now() + Self.reorderHoldOff }
+
+    /// Periyodik yeniden sıralama şu an bekletiliyor mu (imleç listede ya da yakın zamanda etkileşim oldu)?
+    private var isReorderHeld: Bool {
+        if isPointerInside { return true }
+        guard let holdUntil else { return false }
+        return now() < holdUntil
+    }
 
     /// Sistem "Hareketi azalt" ayarı açıksa animasyon yok.
     private var motion: Animation? {
@@ -161,7 +180,7 @@ final class ProcessLiveModel {
         if let snapshot { latest = snapshot }
         applyCount += 1
         // Sıra yalnızca seyrek yenilenir ve imleç listedeyken donar; yalnızca gerçek yeniden sıralama animasyonlu.
-        let reorder = resortPending || (applyCount % Self.resortEvery == 0 && !isPointerInside)
+        let reorder = !isReorderHeld && (resortPending || applyCount % Self.resortEvery == 0)
         if reorder {
             withAnimation(motion) { rebuildSections(resort: true) }
         } else {
@@ -202,8 +221,8 @@ final class ProcessLiveModel {
     /// Aramaya uyan, sıralanmış, kategoriye ayrılmış bölümleri kurar. `resort` false ise önceki sıra korunur
     /// (yeni satırlar sıralı konumlarına eklenir, kaybolanlar düşer).
     private func rebuildSections(resort: Bool) {
-        let doResort = resort || resortPending
-        resortPending = false
+        let doResort = resort || (resortPending && !isReorderHeld)
+        if doResort { resortPending = false }
         let needle = query.trimmingCharacters(in: .whitespaces)
         let filtered = needle.isEmpty ? rows : rows.filter { $0.name.localizedStandardContains(needle) }
         if doResort { orderRank = [:] }

@@ -11,7 +11,7 @@ struct ProcessesPage: View {
         VStack(alignment: .leading, spacing: 12) {
             PageHeader(title: MainSection.processes.title) {}
                 .padding(.horizontal, 24)
-            ProcessesTabBar(selection: $router.processesTab)
+            CapsuleTabBar(selection: $router.processesTab)
                 .padding(.horizontal, 24)
             BoundedHeight { content }
         }

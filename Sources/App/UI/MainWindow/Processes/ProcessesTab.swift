@@ -1,6 +1,6 @@
 import Foundation
 
-enum ProcessesTab: String, CaseIterable, Identifiable, Hashable {
+enum ProcessesTab: String, CapsuleTabItem {
     case processes, performance, history, startup, disk
 
     var id: String { rawValue }
@@ -26,11 +26,4 @@ enum ProcessesTab: String, CaseIterable, Identifiable, Hashable {
     }
 
     var needsLiveSampling: Bool { self == .processes || self == .performance }
-
-    /// Sıradaki (+1) / önceki (-1) sekme; uçlarda yerinde kalır (←/→ ile gezinme).
-    func neighbor(_ offset: Int) -> ProcessesTab {
-        let all = Self.allCases
-        guard let index = all.firstIndex(of: self) else { return self }
-        return all[min(max(index + offset, 0), all.count - 1)]
-    }
 }

@@ -1,6 +1,13 @@
 import XCTest
 @testable import Adalmon
 
+/// Elle ilerletilen zaman kaynağı.
+@MainActor
+private final class TestClock {
+    var now = ContinuousClock.now
+    func advance(by d: Duration) { now = now + d }
+}
+
 /// "İşlemler" tablosu: sütun yerleşimi (genişliğe göre) ve sıra kararlılığı (satırlar her ölçümde zıplamasın).
 @MainActor
 final class ProcessTableStabilityTests: XCTestCase {
@@ -71,7 +78,9 @@ final class ProcessTableStabilityTests: XCTestCase {
     }
 
     func testOrderFreezesWhilePointerIsInsideAndResortsAfterLeaving() {
+        let clock = TestClock()
         let live = ProcessLiveModel()
+        live.now = { clock.now }
         let a = "/Applications/A.app", b = "/Applications/B.app"
         live.apply(snapshot([a: 3_000_000_000, b: 1_000_000_000]), snapshot: nil, net: [:])
         live.isPointerInside = true
@@ -80,8 +89,36 @@ final class ProcessTableStabilityTests: XCTestCase {
             XCTAssertEqual(order(live), ["A.app", "B.app"], "imleç listedeyken sıra donar")
         }
         live.isPointerInside = false
+        clock.advance(by: ProcessLiveModel.reorderHoldOff + .milliseconds(1))
         live.apply(snapshot([a: 1_000_000_000, b: 3_000_000_000]), snapshot: nil, net: [:])
-        XCTAssertEqual(order(live), ["B.app", "A.app"], "imleç çıkınca bir sonraki ölçümde yenilenir")
+        XCTAssertEqual(order(live), ["B.app", "A.app"], "imleç çıkınca (bekleme dolunca) bir sonraki ölçümde yenilenir")
+    }
+
+    func testNoPeriodicReorderShortlyAfterPointerEntersOrSelection() {
+        let clock = TestClock()
+        let live = ProcessLiveModel()
+        live.now = { clock.now }
+        let a = "/Applications/A.app", b = "/Applications/B.app"
+        live.apply(snapshot([a: 3_000_000_000, b: 1_000_000_000]), snapshot: nil, net: [:])
+        let swapped = snapshot([a: 1_000_000_000, b: 3_000_000_000])
+
+        // İmleç girdi ve hemen çıktı: bekleme süresince periyodik yeniden sıralama olmaz.
+        live.isPointerInside = true
+        live.isPointerInside = false
+        for _ in 0..<(ProcessLiveModel.resortEvery * 2) { live.apply(swapped, snapshot: nil, net: [:]) }
+        XCTAssertEqual(order(live), ["A.app", "B.app"], "imleç girişinden sonra 1,5 sn sıra değişmez")
+        clock.advance(by: ProcessLiveModel.reorderHoldOff + .milliseconds(1))
+        live.apply(swapped, snapshot: nil, net: [:])
+        XCTAssertEqual(order(live), ["B.app", "A.app"], "bekleme dolunca bekleyen yeniden sıralama uygulanır")
+
+        // Tıklama/klavye seçimi de bekleme başlatır.
+        let back = snapshot([a: 3_000_000_000, b: 1_000_000_000])
+        live.selection = live.sections.first?.rows.first?.id
+        for _ in 0..<(ProcessLiveModel.resortEvery * 2) { live.apply(back, snapshot: nil, net: [:]) }
+        XCTAssertEqual(order(live), ["B.app", "A.app"], "seçimden sonra 1,5 sn sıra değişmez")
+        clock.advance(by: ProcessLiveModel.reorderHoldOff + .milliseconds(1))
+        for _ in 0..<ProcessLiveModel.resortEvery { live.apply(back, snapshot: nil, net: [:]) }
+        XCTAssertEqual(order(live), ["A.app", "B.app"])
     }
 
     func testSortChangeAndQueryResortImmediately() {

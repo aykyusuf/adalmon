@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Sekme çubuğundaki tek sekme: simge + (isteğe bağlı) etiket. Seçili kapsül `ProcessesTabBar` tarafından
+/// Sekme çubuğundaki tek sekme: simge + (isteğe bağlı) etiket. Seçili kapsül `CapsuleTabBar` tarafından
 /// eşleşen geometriyle (`matchedGeometryEffect`) çizilir.
-struct ProcessesTabButton: View {
-    let tab: ProcessesTab
+struct CapsuleTabButton: View {
+    let title: String
+    let systemImage: String
     let isSelected: Bool
     let showsLabel: Bool
     let isHovered: Bool
@@ -13,12 +14,12 @@ struct ProcessesTabButton: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: tab.systemImage)
+                Image(systemName: systemImage)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                     .frame(width: 18)
                 if showsLabel {
-                    Text(tab.title)
+                    Text(title)
                         .font(.callout.weight(isSelected ? .semibold : .regular))
                         .foregroundStyle(isSelected ? Color.primary : Color.secondary)
                         .lineLimit(1)
@@ -39,8 +40,8 @@ struct ProcessesTabButton: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-        .help(tab.title)
-        .accessibilityLabel(tab.title)
+        .help(title)
+        .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

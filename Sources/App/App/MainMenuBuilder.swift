@@ -1,6 +1,6 @@
 import AppKit
 
-/// Dock modunda görünen uygulama menüsü: Adalmon, Düzen, Pencere.
+/// Dock modunda görünen uygulama menüsü: Adalmon, Düzen, Görünüm, Pencere, Yardım.
 @MainActor
 enum MainMenuBuilder {
     /// - Parameter target: `openSettings(_:)` ve `showMainWindow(_:)` eylemlerini karşılayan nesne.
@@ -12,6 +12,9 @@ enum MainMenuBuilder {
         let window = windowMenu(target: target)
         main.addItem(submenuItem(window))
         NSApp.windowsMenu = window
+        let help = helpMenu()
+        main.addItem(submenuItem(help))
+        NSApp.helpMenu = help
         return main
     }
 
@@ -59,7 +62,7 @@ enum MainMenuBuilder {
         return menu
     }
 
-    /// "Görünüm": ⌘1…⌘5 ile sayfalar, kenar çubuğu ve tam ekran.
+    /// "Görünüm": sayfa kısayolları (⌘1…⌘7), kenar çubuğu ve tam ekran.
     private static func viewMenu() -> NSMenu {
         let menu = NSMenu(title: "Görünüm")
         for section in MainSection.pages {
@@ -73,6 +76,11 @@ enum MainMenuBuilder {
                           modifiers: [.command, .control]))
         menu.addItem(item("Tam Ekran", #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control]))
         return menu
+    }
+
+    /// Boş "Yardım" menüsü: macOS buraya otomatik menü arama alanını ekler (⌘? ile tüm menü komutlarında arama).
+    private static func helpMenu() -> NSMenu {
+        NSMenu(title: "Yardım")
     }
 
     private static func windowMenu(target: AppDelegate) -> NSMenu {
