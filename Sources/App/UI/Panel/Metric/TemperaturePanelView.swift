@@ -37,7 +37,7 @@ struct TemperaturePanelView: View {
                 }
             }
             if !model.sensors.isEmpty {
-                PanelDetailSection(id: "temperature.sensors", title: "Sensörler", symbol: "sensor", tint: .orange, config: $config) {
+                PanelCollapsibleCard(id: "temperature.sensors", title: "Sensörler", symbol: "sensor", tint: .orange, config: $config) {
                     Text("\(model.sensors.count)")
                 } content: {
                     ForEach(model.sensors.prefix(14)) { s in

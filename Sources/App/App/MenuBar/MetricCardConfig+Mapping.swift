@@ -20,6 +20,13 @@ extension MetricCardConfig {
             c.enabled = shown
             return [c]
         }
+        if kind == .battery {
+            var c = MenuBarComponent(.batteryLevel, visual: .batteryCapsule, showLabel: showLabel, layout: layout,
+                                     battery: BatteryGlyphOptions(showTime: showTime, statusColors: thresholdColor))
+            c.id = Self.componentID(kind, slot: 0)
+            c.enabled = shown
+            return [c]
+        }
         var out: [MenuBarComponent] = []
         let f = renderFields
         if let first = f.first {
@@ -59,7 +66,12 @@ extension MetricCardConfig {
             var card = MetricCardConfig(kind, shown: c.enabled, fields: [], layout: layout,
                                   thresholdColor: c.colorMode == .threshold, showLabel: c.showLabel)
             var consumed = 1
-            if c.visual == .sparkline {
+            if kind == .battery {
+                guard c.visual == .batteryCapsule else { return nil }
+                card.fields = [.batteryLevel]
+                card.thresholdColor = c.battery.statusColors
+                card.showTime = c.battery.showTime
+            } else if c.visual == .sparkline {
                 card.showGraph = true
             } else if kind != .connection {
                 var canonical = Set<DataField>()

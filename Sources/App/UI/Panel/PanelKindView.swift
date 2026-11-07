@@ -10,6 +10,8 @@ struct PanelKindView: View {
     let battery: BatteryPanelSource
     var maxHeight: CGFloat?
     var previewHover: Double?
+    /// Pil paneli: menü çubuğundaki cihaz öğesinden gelinen cihaz.
+    var focusDeviceID: String?
 
     var body: some View {
         let opens = data.opensMainWindow
@@ -24,8 +26,8 @@ struct PanelKindView: View {
             MemoryPanelView(model: .make(data, processes: live.processes), isMeasuringProcesses: live.isMeasuring,
                             actions: actions, opensMainWindow: opens, maxHeight: maxHeight, previewHover: previewHover)
         case .disk:
-            DiskPanelView(model: .make(data, writers: live.writers), actions: actions, opensMainWindow: opens,
-                          maxHeight: maxHeight, previewHover: previewHover)
+            DiskPanelView(model: .make(data, writers: live.writers), isMeasuringWriters: live.isMeasuring, actions: actions,
+                          opensMainWindow: opens, maxHeight: maxHeight, previewHover: previewHover)
         case .network:
             NetworkPanelView(model: .make(data), data: data, config: $config, actions: actions, maxHeight: maxHeight, previewHover: previewHover)
         case .temperature:
@@ -35,7 +37,9 @@ struct PanelKindView: View {
             if let reading = battery.reading {
                 BatteryPanelView(model: .make(reading, lastRefresh: battery.lastRefresh), apps: battery.apps, devices: battery.devices,
                                  lowPowerControl: battery.lowPowerControl, config: $config, actions: actions,
-                                 opensMainWindow: opens, maxHeight: maxHeight)
+                                 opensMainWindow: opens, maxHeight: maxHeight, pinnedDeviceIDs: battery.pinnedDeviceIDs,
+                                 appsLoading: battery.appsLoading, devicesLoading: battery.devicesLoading,
+                                 focusDeviceID: focusDeviceID)
             } else {
                 PanelScaffold(kind: .battery, actions: actions, opensMainWindow: opens, maxHeight: maxHeight) {
                     PanelCard {

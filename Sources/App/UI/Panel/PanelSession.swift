@@ -5,6 +5,8 @@ import Observation
 @MainActor @Observable
 final class PanelSession {
     var kind: PanelKind = .combined
+    /// Menü çubuğundaki cihaz öğesinden açıldıysa o cihaz (pil paneli ona kaydırılır).
+    var focusDeviceID: String?
     /// Panelin alabileceği en büyük yükseklik (ekrana göre).
     var maxHeight: CGFloat = 640
 }

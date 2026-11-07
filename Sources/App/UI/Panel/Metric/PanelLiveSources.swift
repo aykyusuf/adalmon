@@ -11,6 +11,9 @@ final class PanelLiveSources {
     private(set) var isMeasuring = true
     private(set) var activeKind: PanelKind?
 
+    /// Taban çizgisi ile ilk gösterilen örnek arasındaki süre.
+    static let firstDeltaDelay: Duration = .milliseconds(500)
+
     @ObservationIgnored private let sampler = LiveResourceSampler()
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private weak var model: AppModel?
@@ -46,7 +49,8 @@ final class PanelLiveSources {
     private func processLoop(_ metric: TopProcessBuilder.Metric) async {
         await sampler.reset()
         _ = await sampler.sample() // taban çizgisi
-        try? await Task.sleep(for: .seconds(1))
+        // İlk veri hızlı gelsin: tam aralığı beklemeden ~0,5 sn'lik ilk fark gösterilir; sonra 2 sn'lik düzenli turlar.
+        try? await Task.sleep(for: Self.firstDeltaDelay)
         while !Task.isCancelled {
             let snap = await sampler.sample()
             guard !Task.isCancelled else { return }

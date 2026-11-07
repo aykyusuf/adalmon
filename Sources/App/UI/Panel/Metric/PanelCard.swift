@@ -11,8 +11,7 @@ struct PanelCard<Content: View>: View {
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.quaternary)
+                PanelCardBackground(cornerRadius: 14)
                     .overlay {
                         if let tint {
                             RoundedRectangle(cornerRadius: 14, style: .continuous)

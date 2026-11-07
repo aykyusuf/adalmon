@@ -62,6 +62,21 @@ struct MetricCardView: View {
 
     @ViewBuilder
     private var details: some View {
+        if card.kind == .battery {
+            HStack(spacing: 14) {
+                Toggle("Süreyi göster", isOn: $card.showTime)
+                Toggle("Durum rengi (şarj / düşük)", isOn: $card.thresholdColor)
+            }
+            .toggleStyle(.checkbox)
+            Text("Mac pilini kapsül içinde yüzde olarak gösterir. Cihaz pilleri (iPhone, AirPods…) ayrı menü çubuğu öğeleri olarak, pil panelinden eklenir.")
+                .font(.caption).foregroundStyle(.secondary)
+        } else {
+            genericDetails
+        }
+    }
+
+    @ViewBuilder
+    private var genericDetails: some View {
         LabeledContent("Göster") {
             HStack(spacing: 14) {
                 ForEach(card.kind.options) { field in

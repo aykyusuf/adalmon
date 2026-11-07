@@ -39,7 +39,7 @@ struct BatteryPanelSection: View {
                     }
                     .padding(density.cardPadding + 2)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: .rect(cornerRadius: PanelMetricCard.cornerRadius, style: .continuous))
+                    .background { PanelCardBackground(cornerRadius: PanelMetricCard.cornerRadius) }
                     .transition(.opacity)
                 }
             }

@@ -2,7 +2,7 @@ import Foundation
 
 /// One simple settings card; the order of cards is the order in the menu bar.
 enum MetricCardKind: String, CaseIterable, Identifiable, Sendable {
-    case connection, cpu, gpu, memory, disk, network, mobile, temperature
+    case connection, cpu, gpu, memory, disk, network, mobile, temperature, battery
 
     var id: String { rawValue }
 
@@ -16,6 +16,7 @@ enum MetricCardKind: String, CaseIterable, Identifiable, Sendable {
         case .network: "Ağ"
         case .mobile: "Mobil veri"
         case .temperature: "Sıcaklık (SSD/Pil)"
+        case .battery: "Pil"
         }
     }
 
@@ -29,6 +30,7 @@ enum MetricCardKind: String, CaseIterable, Identifiable, Sendable {
         case .network: "arrow.up.arrow.down"
         case .mobile: "antenna.radiowaves.left.and.right"
         case .temperature: "thermometer.medium"
+        case .battery: "battery.100percent"
         }
     }
 
@@ -43,6 +45,7 @@ enum MetricCardKind: String, CaseIterable, Identifiable, Sendable {
         case .network: [.download, .upload]
         case .mobile: [.mobileUsed, .mobileRemaining]
         case .temperature: [.ssdTemp, .batteryTemp]
+        case .battery: [.batteryLevel]
         }
     }
 
@@ -63,6 +66,7 @@ enum MetricCardKind: String, CaseIterable, Identifiable, Sendable {
         case .mobileRemaining: "Kalan"
         case .ssdTemp: "SSD"
         case .batteryTemp: "Pil"
+        case .batteryLevel: "Yüzde"
         default: field.displayName
         }
     }
@@ -70,7 +74,7 @@ enum MetricCardKind: String, CaseIterable, Identifiable, Sendable {
     /// Field drawn by the optional line chart ("Grafik").
     var graphField: DataField? { self == .cpu ? .cpu : nil }
 
-    var hasLayout: Bool { self != .connection }
+    var hasLayout: Bool { self != .connection && self != .battery }
 
     init?(field: DataField) {
         switch field {
@@ -82,6 +86,7 @@ enum MetricCardKind: String, CaseIterable, Identifiable, Sendable {
         case .download, .upload, .downloadLast60, .uploadLast60, .downloadToday, .uploadToday: self = .network
         case .mobileUsed, .mobileRemaining: self = .mobile
         case .ssdTemp, .batteryTemp: self = .temperature
+        case .batteryLevel: self = .battery
         default: return nil
         }
     }

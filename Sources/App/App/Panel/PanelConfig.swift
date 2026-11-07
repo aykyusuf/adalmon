@@ -13,6 +13,10 @@ struct PanelConfig: Codable, Equatable, Sendable {
     var density: PanelDensity
     /// Metrik panellerinde (pil ayrıntı bölümleri vb.) daraltılmış bölüm kimlikleri; hatırlanır.
     var detailCollapsed: Set<String> = []
+    /// Varsayılanı "kapalı" olan bölümlerden kullanıcının açtıkları (ör. "battery.info").
+    var detailExpanded: Set<String> = []
+    /// Panel zemini: koyu opak (varsayılan) ya da cam.
+    var background: PanelBackground = .default
     var last60Rows: Int { didSet { last60Rows = Self.clamp(last60Rows) } }
     var todayRows: Int { didSet { todayRows = Self.clamp(todayRows) } }
 
@@ -26,8 +30,12 @@ struct PanelConfig: Codable, Equatable, Sendable {
          density: PanelDensity = .compact,
          last60Rows: Int = 3,
          todayRows: Int = 5,
-         detailCollapsed: Set<String> = []) {
+         detailCollapsed: Set<String> = [],
+         detailExpanded: Set<String> = [],
+         background: PanelBackground = .default) {
         self.detailCollapsed = detailCollapsed
+        self.detailExpanded = detailExpanded
+        self.background = background
         self.sections = Self.normalized(sections)
         self.cards = Self.normalized(cards)
         self.collapsed = collapsed
@@ -37,7 +45,7 @@ struct PanelConfig: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case sections, cards, collapsed, density, last60Rows, todayRows, detailCollapsed
+        case sections, cards, collapsed, density, last60Rows, todayRows, detailCollapsed, detailExpanded, background
     }
 
     /// Eksik ya da bilinmeyen alanlar varsayılana düşer; böylece eski kayıtlar yeni sürümde de açılır.
@@ -55,7 +63,9 @@ struct PanelConfig: Codable, Equatable, Sendable {
             density: (try? c.decodeIfPresent(PanelDensity.self, forKey: .density)) ?? d.density,
             last60Rows: (try? c.decodeIfPresent(Int.self, forKey: .last60Rows)) ?? d.last60Rows,
             todayRows: (try? c.decodeIfPresent(Int.self, forKey: .todayRows)) ?? d.todayRows,
-            detailCollapsed: (try? c.decodeIfPresent(Set<String>.self, forKey: .detailCollapsed)) ?? []
+            detailCollapsed: (try? c.decodeIfPresent(Set<String>.self, forKey: .detailCollapsed)) ?? [],
+            detailExpanded: (try? c.decodeIfPresent(Set<String>.self, forKey: .detailExpanded)) ?? [],
+            background: (try? c.decodeIfPresent(PanelBackground.self, forKey: .background)) ?? .default
         )
     }
 
@@ -74,10 +84,20 @@ struct PanelConfig: Codable, Equatable, Sendable {
 
     func isCollapsed(_ section: PanelSection) -> Bool { collapsed.contains(section) }
 
-    func isDetailCollapsed(_ id: String) -> Bool { detailCollapsed.contains(id) }
+    /// `defaultCollapsed`: bölümün hiç dokunulmamış hali (ör. "Pil bilgisi" kapalı başlar).
+    func isDetailCollapsed(_ id: String, defaultCollapsed: Bool = false) -> Bool {
+        if defaultCollapsed { return !detailExpanded.contains(id) }
+        return detailCollapsed.contains(id)
+    }
 
-    mutating func toggleDetailCollapsed(_ id: String) {
-        if detailCollapsed.contains(id) { detailCollapsed.remove(id) } else { detailCollapsed.insert(id) }
+    mutating func toggleDetailCollapsed(_ id: String, defaultCollapsed: Bool = false) {
+        if isDetailCollapsed(id, defaultCollapsed: defaultCollapsed) {
+            detailCollapsed.remove(id)
+            detailExpanded.insert(id)
+        } else {
+            detailExpanded.remove(id)
+            detailCollapsed.insert(id)
+        }
     }
 
     mutating func setVisible(_ section: PanelSection, _ visible: Bool) {

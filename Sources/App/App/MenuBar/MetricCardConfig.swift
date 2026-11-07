@@ -12,11 +12,14 @@ struct MetricCardConfig: Equatable, Identifiable, Sendable {
     var thresholdColor = false
     var showLabel = true
     var networkSource: NetworkCardSource = .speed
+    /// Pil kartı: kalan / dolum süresini de göster.
+    var showTime = false
 
     var id: MetricCardKind { kind }
 
     init(_ kind: MetricCardKind, shown: Bool, fields: [DataField], showGraph: Bool = false, layout: MetricLayout = .inline,
-         thresholdColor: Bool = false, showLabel: Bool = true, networkSource: NetworkCardSource = .speed) {
+         thresholdColor: Bool = false, showLabel: Bool = true, networkSource: NetworkCardSource = .speed, showTime: Bool = false) {
+        self.showTime = showTime
         self.kind = kind
         self.shown = shown
         self.fields = fields
@@ -37,6 +40,8 @@ struct MetricCardConfig: Equatable, Identifiable, Sendable {
         MetricCardConfig(.disk, shown: false, fields: [.diskFree]),
         MetricCardConfig(.mobile, shown: false, fields: [.mobileUsed]),
         MetricCardConfig(.temperature, shown: false, fields: [.ssdTemp]),
+        // Mac pili: "[100]" kapsülü; renkler (düşük / şarj) varsayılan açık.
+        MetricCardConfig(.battery, shown: false, fields: [.batteryLevel], thresholdColor: true, showLabel: false),
     ]
 
     static func defaultCard(_ kind: MetricCardKind) -> MetricCardConfig {

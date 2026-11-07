@@ -105,7 +105,48 @@ enum BatteryGlyph {
         return values.devices[id]
     }
 
+    // MARK: Cihaz öğesi ("📱 32%")
+
+    private static var deviceFont: NSFont { .monospacedDigitSystemFont(ofSize: 13, weight: .semibold) }
+
+    static func deviceText(_ state: BatteryGlyphState?) -> String {
+        guard let state else { return "–%" }
+        return (state.isApproximate ? "~" : "") + "\(state.level)%"
+    }
+
+    /// Metin rengi: düşük seviyede turuncu / kırmızı (durum renkleri açıksa), aksi halde sistem etiket rengi.
+    static func deviceTint(_ c: MenuBarComponent, _ state: BatteryGlyphState?) -> NSColor? {
+        guard c.battery.statusColors, let state, !state.isCharging else { return nil }
+        if state.level <= 10 { return .systemRed }
+        if state.level < 20 { return .systemOrange }
+        return nil
+    }
+
+    private static func deviceWidth(_ c: MenuBarComponent, _ state: BatteryGlyphState?) -> CGFloat {
+        var w = deviceIconWidth + gap + textWidth(deviceText(state), deviceFont)
+        if state?.isCharging == true { w += boltWidth - 3 }
+        return ceil(w)
+    }
+
+    private static func drawDevice(_ c: MenuBarComponent, _ state: BatteryGlyphState?, in rect: CGRect) {
+        var x = rect.minX
+        let midY = rect.midY
+        WidgetGraphics.symbol(state?.deviceSymbol ?? "dot.radiowaves.left.and.right",
+                              in: CGRect(x: x, y: midY - 7, width: deviceIconWidth, height: 14), color: .labelColor)
+        x += deviceIconWidth + gap
+        if state?.isCharging == true {
+            WidgetGraphics.symbol("bolt.fill", in: CGRect(x: x - 2, y: midY - 5.5, width: boltWidth, height: 11), color: .systemGreen)
+            x += boltWidth - 3
+        }
+        let color = deviceTint(c, state) ?? NSColor.labelColor
+        let attrs: [NSAttributedString.Key: Any] = [.font: deviceFont, .foregroundColor: color]
+        let text = deviceText(state) as NSString
+        let size = text.size(withAttributes: attrs)
+        text.draw(at: NSPoint(x: x, y: midY - size.height / 2 + 0.3), withAttributes: attrs)
+    }
+
     static func width(_ c: MenuBarComponent, values: WidgetValues) -> CGFloat {
+        if c.deviceID != nil { return deviceWidth(c, state(c, values)) }
         let m = metrics(c.battery.size)
         guard let state = state(c, values) else { return m.capsule.width + (c.deviceID != nil ? deviceIconWidth + gap : 0) }
         var w = capsuleWidth(m, state)
@@ -126,6 +167,7 @@ enum BatteryGlyph {
     }
 
     static func draw(_ c: MenuBarComponent, values: WidgetValues, in rect: CGRect) {
+        if c.deviceID != nil { drawDevice(c, state(c, values), in: rect); return }
         let m = metrics(c.battery.size)
         guard let state = state(c, values) else {
             drawPlaceholder(m, in: rect)

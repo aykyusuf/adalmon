@@ -1,13 +1,10 @@
 import AppKit
 import Observation
 
-/// Menü çubuğu öğeleri. `MenuBarConfig` tek öğe modundaysa tüm etkin widget'lar tek NSStatusItem'da,
-/// ayrı öğeler modundaysa her widget kendi NSStatusItem'ında çizilir.
+/// Menü çubuğu öğeleri (`StatusItemPlan`): tek öğe modunda etkin widget'lar tek NSStatusItem'da, ayrı modda her biri kendi
+/// öğesinde; sabitlenmiş cihaz pilleri her iki modda da kendi öğesindedir.
 @MainActor
 final class StatusBarController: NSObject {
-    /// Tek öğe modu eski kompakt kapsülün adını kullanır; kullanıcının yerleştirdiği konum korunur.
-    private static let combinedKey = "compact"
-
     private let model: AppModel
     private let onClick: (NSStatusBarButton, PanelRoute) -> Void
     private var items: [String: NSStatusItem] = [:]
@@ -49,14 +46,8 @@ final class StatusBarController: NSObject {
         tick &+= 1
         let config = model.prefs.menuBar.config
         let values = WidgetValues(model: model)
-        let enabled = config.enabledComponents
 
-        let groups: [(key: String, items: [MenuBarComponent])] =
-            if config.displayMode == .combined || enabled.isEmpty {
-                [(Self.combinedKey, enabled)]
-            } else {
-                enabled.map { ("item.\($0.id.uuidString)", [$0]) }
-            }
+        let groups = StatusItemPlan.groups(for: config)
         syncItems(keys: groups.map(\.key))
 
         for group in groups {
@@ -145,6 +136,6 @@ final class StatusBarController: NSObject {
             if let hit = PanelRouter.component(at: x, in: components, frames: frames) { target = [hit] }
         }
         let kind = PanelRouter.kind(for: target, clickMode: config.clickMode)
-        onClick(sender, PanelRoute(itemKey: key, kind: kind))
+        onClick(sender, PanelRoute(itemKey: key, kind: kind, focusDeviceID: PanelRouter.focusDeviceID(for: target)))
     }
 }

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DiskPanelView: View {
     let model: DiskPanelModel
+    var isMeasuringWriters = false
     let actions: PanelActions
     let opensMainWindow: Bool
     var maxHeight: CGFloat?
@@ -31,7 +32,8 @@ struct DiskPanelView: View {
             PanelCard {
                 VStack(alignment: .leading, spacing: 6) {
                     PanelGroupTitle(title: "En çok yazanlar", trailing: "son 1 saat")
-                    TopProcessList(processes: model.writers, tint: .orange, emptyText: "Son 1 saatte kayda değer yazma yok") { _ in
+                    TopProcessList(processes: model.writers, tint: .orange, emptyText: "Son 1 saatte kayda değer yazma yok",
+                                   isMeasuring: isMeasuringWriters) { _ in
                         actions.openProcesses(.disk)
                     }
                 }

@@ -36,11 +36,20 @@ struct PanelSettingsPane: View {
                     }
                 }
 
-                Section("Görünüm") {
+                Section {
+                    Picker("Zemin", selection: $store.config.background) {
+                        ForEach(PanelBackground.allCases) { Text($0.displayName).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
                     Picker("Yoğunluk", selection: $store.config.density) {
                         ForEach(PanelDensity.allCases) { Text($0.displayName).tag($0) }
                     }
                     .pickerStyle(.segmented)
+                } header: {
+                    Text("Görünüm")
+                } footer: {
+                    Text("Koyu (opak): koyu yüzey, açık görünümde eşdeğer açık yüzey; parlak duvar kâğıtlarında solmaz. Cam (saydam): Liquid Glass.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Section("Listeler") {
@@ -77,6 +86,7 @@ struct PanelSettingsPane: View {
     /// Görünüm yalnızca bu bölme açıkken var olur; güncellemeler modelin kendi örnekleme adımıyla gelir (zamanlayıcı yok).
     private var preview: some View {
         let scale = Self.previewScale
+        let background = model.prefs.panel.config.background
         return VStack(alignment: .leading, spacing: 8) {
             Text("Önizleme")
                 .font(.caption.weight(.semibold))
@@ -84,7 +94,8 @@ struct PanelSettingsPane: View {
             ScrollView {
                 PanelView(model: model, openApp: {}, openSettings: {})
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { previewHeight = $0 }
-                    .background(.regularMaterial, in: .rect(cornerRadius: 18))
+                    .background { if background == .glass { RoundedRectangle(cornerRadius: 18).fill(.regularMaterial) } }
+                    .panelSurface(background)
                     .scaleEffect(scale, anchor: .topLeading)
                     .frame(width: PanelContent.width * scale, height: previewHeight * scale, alignment: .topLeading)
                     .allowsHitTesting(false)
