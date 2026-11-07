@@ -26,7 +26,7 @@ struct BatteryPanelView: View {
             BatteryHeroCard(model: model)
             PanelCollapsibleCard(id: "battery.info", title: "Pil bilgisi", symbol: "info", tint: .cyan, config: $config,
                                  defaultCollapsed: true) { EmptyView() } content: {
-                BatteryInfoBlocks(model: model, actions: actions)
+                BatteryInfoBlocks(model: model, actions: actions, devices: devices)
             }
             BatteryEnergyAppsCard(apps: apps, isLoading: appsLoading, config: $config, actions: actions)
             BatteryDevicesCard(devices: devices, pinnedIDs: pinnedDeviceIDs, isLoading: devicesLoading, focusID: focusDeviceID,

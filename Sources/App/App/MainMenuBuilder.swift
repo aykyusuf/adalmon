@@ -62,7 +62,7 @@ enum MainMenuBuilder {
         return menu
     }
 
-    /// "Görünüm": sayfa kısayolları (⌘1…⌘7), kenar çubuğu ve tam ekran.
+    /// "Görünüm": sayfa kısayolları (⌘1…⌘8), kenar çubuğu ve tam ekran.
     private static func viewMenu() -> NSMenu {
         let menu = NSMenu(title: "Görünüm")
         for section in MainSection.pages {

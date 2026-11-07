@@ -191,7 +191,7 @@ struct BatteryPage: View {
             StatCard(symbol: "arrow.triangle.2.circlepath", title: "Döngü", value: BatteryFormat.int(r.cycles),
                      subtitle: "/ \(BatteryFormat.int(r.cycleLimit)) · %\(Int((Double(r.cycles ?? 0) / Double(max(1, r.cycleLimit)) * 100).rounded())) kullanıldı",
                      tint: .blue, info: "Bir döngü, pilin toplamda bir tam şarj kadar kullanılmasıdır. Apple bu pil için \(r.cycleLimit) döngüde %80 kapasiteyi hedefler.")
-            StatCard(symbol: "bolt.fill", title: "Güç", value: BatteryFormat.watts(r.systemPowerW),
+            StatCard(symbol: "bolt.fill", title: "Güç", value: BatteryFormat.watts(r.macLoadW),
                      subtitle: r.isPluggedIn ? "Mac'in çektiği (adaptörden)" : "Mac'in çektiği (pilden)", tint: .orange,
                      info: "Sistemin o an harcadığı güç (PowerTelemetry SystemPowerIn). Pilde iken bataryadan, fişte iken adaptörden gelir.")
         }
@@ -308,22 +308,10 @@ struct BatteryPage: View {
     }
 
     private func powerFlowCard(_ r: BatteryReading) -> some View {
-        let f = PowerFlowSummary(r)
-        return ChartCard(title: "Güç akışı", symbol: "bolt.circle", trailing: {
+        ChartCard(title: "Güç akışı", symbol: "bolt.circle", trailing: {
             Text(r.isPluggedIn ? "Adaptör bağlı" : "Pil kullanılıyor").font(.callout).foregroundStyle(.secondary)
-        }, footer: r.isPluggedIn ? "Adaptör → kablo → Mac; kalan güç pile gider. Değerler PowerTelemetry'den." : "Pilde iken Mac'in çektiği güç doğrudan bataryadan gelir.") {
-            HStack(alignment: .top, spacing: 8) {
-                PowerFlowNode(symbol: "powerplug.fill", title: r.isPluggedIn ? f.adapterTitle : "Şarj aleti yok", value: r.isPluggedIn ? f.adapterWatts : "—",
-                              tint: .green, dim: !r.isPluggedIn)
-                PowerFlowConnector(tint: .green, active: r.isPluggedIn)
-                PowerFlowNode(symbol: r.cable == .magSafe ? "magsafe.batterypack" : "cable.connector", title: "Kablo", value: r.isPluggedIn ? f.cableTitle : "—",
-                              tint: .teal, dim: !r.isPluggedIn)
-                PowerFlowConnector(tint: .orange, active: true)
-                PowerFlowNode(symbol: "laptopcomputer", title: f.macTitle, value: f.macWatts, tint: .orange)
-                PowerFlowConnector(tint: r.isCharging ? .green : .blue, active: r.isCharging || !r.isPluggedIn)
-                PowerFlowNode(symbol: "battery.100percent", title: f.batteryTitle, value: f.batteryWatts, tint: BatteryPalette.tint(r))
-            }
-            .padding(.vertical, 6)
+        }, footer: r.isPluggedIn ? "Adaptör Mac'e ve (şarj oluyorsa) pile dağılır; kalınlık ve hız watt ile orantılı. Değerler PowerTelemetry'den." : "Pilde iken Mac'in çektiği güç doğrudan bataryadan gelir.") {
+            PowerFlowView(model: PowerFlowModel.make(r, deviceLevels: (devices?.devices ?? [])))
         }
     }
 

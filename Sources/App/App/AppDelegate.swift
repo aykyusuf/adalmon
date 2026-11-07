@@ -60,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.start()
         ChargingModel.shared.startIfNeeded() // ana şalter kapalıysa hiçbir şey yapmaz
         dockMode.start()
+        if !AppEnvironment.isRunningTests { WallpaperService.shared.start() } // ana şalter kapalıysa hiçbir şey yapmaz
         if model.prefs.showInDock { mainWindow.show() }
     }
 

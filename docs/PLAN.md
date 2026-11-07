@@ -62,3 +62,7 @@ Hepsi `Sources/App`; `Sources/Filter` ve `Sources/Shared` (XPC, `FilterConfig`) 
 
 ## Faz 5 (2026-11-07) — metrik başına panel
 - Kullanıcı: "her metrik ayrı olsun, tıklayınca onun hakkında ayrı detaylar yer alsın; bataryada da Juicy gibi detaylı bir panel açılsın". Seçim: "Her metrik ayrı panel" (iStat tarzı). Mevcut tek panel ayarlarda "Tek panelde birleştir" seçeneği olarak kalsın.
+
+## Faz 7 (2026-11-07) — canlı duvar kâğıdı
+- Araştırma: crew-chief-reports/wallpaper-research-202409.md. Karar: **A (masaüstü seviyesinde video penceresi, `.desktopWindow` tam seviye) varsayılan + B deneysel** (Apple Aerial `entries.json` enjeksiyonu, kapalı gelir, geri alınabilir, HEVC Main10 hvc1 AVAssetWriter). Ekran koruyucu (.saver) yok.
+- Duraklatma: pildeyken, Düşük Güç Modunda, masaüstü görünmüyorken (örtülme/tam ekran/kilit/ekran uykusu) dur — hepsi varsayılan açık, kullanıcı her birini kapatabilmeli ("istersem açabileyim, kesin dur olmasın, devam et diyebileyim").

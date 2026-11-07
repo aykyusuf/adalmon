@@ -1,11 +1,11 @@
 import SwiftUI
 
 enum MainSection: Hashable, Identifiable {
-    case overview, network, history, mobile, rules, processes, battery
+    case overview, network, history, mobile, rules, processes, battery, wallpaper
     case settings(SettingsSection)
 
-    /// Kenar çubuğundaki sayfalar (sıra aynı zamanda ⌘1…⌘6 sırasıdır).
-    static let pages: [MainSection] = [.overview, .network, .history, .mobile, .rules, .processes, .battery]
+    /// Kenar çubuğundaki sayfalar (sıra aynı zamanda ⌘1…⌘8 sırasıdır).
+    static let pages: [MainSection] = [.overview, .network, .history, .mobile, .rules, .processes, .battery, .wallpaper]
 
     static var allCases: [MainSection] { pages + SettingsSection.allCases.map(MainSection.settings) }
 
@@ -23,6 +23,7 @@ enum MainSection: Hashable, Identifiable {
         case .rules: "rules"
         case .processes: "processes"
         case .battery: "battery"
+        case .wallpaper: "wallpaper"
         case .settings(let section): "settings.\(section.rawValue)"
         }
     }
@@ -36,6 +37,7 @@ enum MainSection: Hashable, Identifiable {
         case .rules: "Kurallar"
         case .processes: "Süreçler"
         case .battery: "Pil"
+        case .wallpaper: "Duvar kâğıdı"
         case .settings(let section): section.title
         }
     }
@@ -49,6 +51,7 @@ enum MainSection: Hashable, Identifiable {
         case .rules: "shield.lefthalf.filled"
         case .processes: "waveform.path.ecg.rectangle"
         case .battery: "battery.100percent.bolt"
+        case .wallpaper: "photo.on.rectangle.angled"
         case .settings(let section): section.symbol
         }
     }
@@ -62,6 +65,7 @@ enum MainSection: Hashable, Identifiable {
         case .rules: .pink
         case .processes: .orange
         case .battery: .green
+        case .wallpaper: .teal
         case .settings(let section): section.tint
         }
     }
@@ -75,7 +79,7 @@ enum MainSection: Hashable, Identifiable {
         if case .settings(.mobileData) = self { .mobile } else { self }
     }
 
-    /// ⌘ ile birlikte kullanılan rakam ("1"…"6"); ayar bölümlerinin kısayolu yoktur.
+    /// ⌘ ile birlikte kullanılan rakam ("1"…"8"); ayar bölümlerinin kısayolu yoktur.
     var shortcutKey: String? {
         Self.pages.firstIndex(of: self).map { String($0 + 1) }
     }

@@ -46,6 +46,8 @@ struct BatteryPanelModel: Equatable {
     var updatedText: String
 
     var lowPowerMode: Bool
+    /// Güç akışı şeması için ham okuma.
+    var reading = BatteryReading()
 
     enum CurrentDirection: Equatable { case charging, discharging, idle }
 
@@ -76,7 +78,7 @@ struct BatteryPanelModel: Equatable {
         case .onBattery: "Deşarj oluyor"
         }
         let voltage = r.voltageMV.map { Double($0) / 1000 }
-        let sysW = r.systemPowerW
+        let sysW = r.macLoadW
         let usage: String = {
             guard let w = sysW else { return "Güç ölçülemiyor" }
             if w < 8 { return "Hafif kullanım: web ve belgeler" }
@@ -121,7 +123,7 @@ struct BatteryPanelModel: Equatable {
             currentFullText: BatteryFormat.mAh(r.rawMaxMAh),
             designText: BatteryFormat.mAh(r.designMAh),
             updatedText: updatedText(lastRefresh ?? r.timestamp, now: now),
-            lowPowerMode: r.lowPowerMode)
+            lowPowerMode: r.lowPowerMode, reading: r)
     }
 
     static func temperatureNote(_ s: BatteryFormat.TemperatureStatus?) -> String {

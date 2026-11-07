@@ -65,10 +65,10 @@ final class DockModeTests: XCTestCase {
             XCTAssertTrue(titles.contains(expected), "\(expected) menüsü yok: \(titles)")
         }
 
-        // Görünüm: tüm sayfalar ⌘1…⌘7 (Süreçler ⌘6, Pil ⌘7).
+        // Görünüm: tüm sayfalar ⌘1…⌘8 (Süreçler ⌘6, Pil ⌘7, Duvar kâğıdı ⌘8).
         let view = try XCTUnwrap(menu.items.first { $0.title == "Görünüm" }?.submenu)
         let pageKeys = view.items.filter { $0.action == #selector(MainWindowCommands.selectSection(_:)) }
-        XCTAssertEqual(pageKeys.map(\.keyEquivalent), ["1", "2", "3", "4", "5", "6", "7"])
+        XCTAssertEqual(pageKeys.map(\.keyEquivalent), ["1", "2", "3", "4", "5", "6", "7", "8"])
         XCTAssertTrue(pageKeys.allSatisfy { $0.keyEquivalentModifierMask == .command })
         XCTAssertEqual(pageKeys[5].representedObject as? String, MainSection.processes.id)
         XCTAssertEqual(pageKeys[6].representedObject as? String, MainSection.battery.id)

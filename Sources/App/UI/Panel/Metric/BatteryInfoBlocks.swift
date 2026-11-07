@@ -4,6 +4,7 @@ import SwiftUI
 struct BatteryInfoBlocks: View {
     let model: BatteryPanelModel
     let actions: PanelActions
+    var devices: [DeviceBattery] = []
 
     var body: some View {
         health
@@ -91,11 +92,7 @@ struct BatteryInfoBlocks: View {
     private var flow: some View {
         VStack(alignment: .leading, spacing: 8) {
             blockTitle("Güç akışı", "bolt.horizontal.circle", .green)
-            HStack(spacing: 8) {
-                flowBox(symbol: model.isPluggedIn ? "powerplug.fill" : "battery.50percent", text: model.flowSourceText, width: 62)
-                flowBox(symbol: nil, text: model.flowCenterText, width: nil, emphasized: true)
-                flowBox(symbol: "laptopcomputer", text: nil, width: 46)
-            }
+            PowerFlowView(model: PowerFlowModel.make(model.reading, deviceLevels: devices))
             VStack(spacing: 2) {
                 Label(model.flowNote, systemImage: "checkmark.circle.fill").labelStyle(PanelTitleLabelStyle(tint: .green)).font(.caption.weight(.semibold))
                 Text(model.flowUsage).font(.caption2).foregroundStyle(.secondary)
@@ -107,18 +104,6 @@ struct BatteryInfoBlocks: View {
                 chip("MAC ÇEKİYOR", model.macTakesText)
             }
         }
-    }
-
-    private func flowBox(symbol: String?, text: String?, width: CGFloat?, emphasized: Bool = false) -> some View {
-        VStack(spacing: 3) {
-            if let symbol { Image(systemName: symbol).font(.system(size: 15)).foregroundStyle(.secondary) }
-            if let text {
-                Text(text).font(emphasized ? .system(.title3, design: .rounded, weight: .semibold) : .caption.weight(.semibold)).monospacedDigit()
-            }
-        }
-        .frame(maxWidth: width ?? .infinity, minHeight: 58)
-        .background(.primary.opacity(emphasized ? 0.09 : 0.05), in: .rect(cornerRadius: 12, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 
     private func chip(_ title: String, _ value: String) -> some View {

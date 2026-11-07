@@ -42,12 +42,18 @@ enum AppleSmartBatteryParser {
         if let t = registry["PowerTelemetryData"] as? [String: Any] {
             r.systemPowerMW = int(t["SystemPowerIn"])
             r.batteryPowerMW = int(t["BatteryPower"])
+            r.systemLoadMW = int(t["SystemLoad"])
+            r.adapterEfficiencyLossMW = int(t["AdapterEfficiencyLoss"])
+            r.systemVoltageInMV = int(t["SystemVoltageIn"])
+            r.systemCurrentInMA = int(t["SystemCurrentIn"])
         }
         if let a = registry["AdapterDetails"] as? [String: Any] {
             r.adapterWatts = int(a["Watts"])
             r.adapterName = a["Name"] as? String
             r.adapterDescription = a["Description"] as? String
             r.adapterIsWireless = bool(a["IsWireless"]) ?? false
+            r.adapterVoltageMV = int(a["AdapterVoltage"])
+            r.adapterCurrentMA = int(a["Current"])
         }
         r.cable = cable ?? inferCable(r)
         return r

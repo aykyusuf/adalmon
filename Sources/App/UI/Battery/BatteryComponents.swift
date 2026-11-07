@@ -74,7 +74,7 @@ struct PowerFlowSummary {
         adapterWatts = r.adapterLabelWatts.map { "\($0) W" } ?? "—"
         cableTitle = r.cable.title
         macTitle = r.isPluggedIn ? "Mac" : "Mac çekiyor"
-        macWatts = BatteryFormat.watts(r.systemPowerW)
+        macWatts = BatteryFormat.watts(r.macLoadW)
         let rate = r.chargeRateW
         if let rate, rate > 0.05 {
             batteryTitle = "Pili şarj ediyor"
