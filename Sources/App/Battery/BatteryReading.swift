@@ -43,6 +43,20 @@ struct BatteryReading: Sendable, Equatable {
     var lowPowerMode = false
     /// Apple'ın Ayarlar'da gösterdiği "Maksimum kapasite" (system_profiler); yoksa nil.
     var appleMaxCapacityPercent: Int?
+    // Güç akışı (PowerTelemetryData + AdapterDetails). Hepsi isteğe bağlı; yoksa model V × A ile tamamlar.
+    /// SystemLoad: Mac'in kendi tükettiği güç (pil şarjı hariç).
+    var systemLoadMW: Int?
+    /// AdapterEfficiencyLoss: adaptörde ısıya giden güç.
+    var adapterEfficiencyLossMW: Int?
+    var systemVoltageInMV: Int?
+    var systemCurrentInMA: Int?
+    /// AdapterDetails.AdapterVoltage / Current: adaptörün pazarlanan (PD) sözleşmesi.
+    var adapterVoltageMV: Int?
+    var adapterCurrentMA: Int?
+    /// Fişin takılı olduğu port ("MagSafe 3", "USB‑C 2"); okunamazsa nil.
+    var adapterPortName: String?
+    /// Güç alan/veren dış aksesuarlar (USB‑C / Thunderbolt portları). Güç ölçümü yok; bkz. `PowerPortAccessory`.
+    var accessories: [PowerPortAccessory] = []
 
     // MARK: Sağlık
 
@@ -63,6 +77,8 @@ struct BatteryReading: Sendable, Equatable {
     // MARK: Güç
 
     var systemPowerW: Double? { systemPowerMW.map { Double($0) / 1000 } }
+    /// Mac'in kendi tükettiği güç: SystemLoad (pil şarjı hariç), yoksa SystemPowerIn.
+    var macLoadW: Double? { systemLoadMW.map { Double($0) / 1000 } ?? systemPowerW }
     var batteryPowerW: Double? { batteryPowerMW.map { Double($0) / 1000 } }
 
     /// Etiketteki watt ("70W USB-C Power Adapter" → 70), yoksa AdapterDetails.Watts.

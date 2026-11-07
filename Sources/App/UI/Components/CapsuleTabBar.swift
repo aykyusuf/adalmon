@@ -16,7 +16,8 @@ struct CapsuleTabBar<Tab: CapsuleTabItem>: View {
         }
         .frame(maxWidth: .infinity)
         .focusable()
-        .contentShape(.focusEffect, .capsule)
+        // Sistem odak halkası çubuğun etrafına köşeli sarı çerçeve çiziyordu; seçili kapsül odağı zaten gösteriyor.
+        .focusEffectDisabled()
         .onKeyPress(.leftArrow) { move(-1) }
         .onKeyPress(.rightArrow) { move(1) }
         .accessibilityElement(children: .contain)

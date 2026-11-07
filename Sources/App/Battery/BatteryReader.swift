@@ -10,6 +10,9 @@ enum BatteryReader {
         let ps = internalBatteryDescription() ?? [:]
         var reading = AppleSmartBatteryParser.parse(registry: registry, powerSource: ps, now: now, lowPowerMode: lowPowerMode)
         if reading.isPluggedIn, !reading.adapterIsWireless, let cable = activePortCable() { reading.cable = cable }
+        let ports = PowerPortAccessoryReader.read()
+        reading.accessories = ports.accessories
+        if reading.isPluggedIn { reading.adapterPortName = ports.adapterPortName }
         return reading
     }
 
