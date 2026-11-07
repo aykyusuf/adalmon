@@ -8,6 +8,7 @@ struct AppHourlyChart: View {
     let emptyMessage: String
 
     private static let locale = Locale(identifier: "tr_TR")
+    @State private var hoveredHour: Date?
 
     var body: some View {
         Chart {
@@ -16,6 +17,9 @@ struct AppHourlyChart: View {
                     .foregroundStyle(by: .value("Ağ", AppUsageSeries.other))
                 BarMark(x: .value("Saat", hour.start, unit: .hour), y: .value("Veri", hour.mobile))
                     .foregroundStyle(by: .value("Ağ", AppUsageSeries.mobile))
+            }
+            if let hour = hours.first(where: { $0.start == hoveredHour }) {
+                ChartBarSelectionMarks(x: hour.start.addingTimeInterval(1_800), title: Self.range(hour.start), rows: rows(hour))
             }
         }
         .chartForegroundStyleScale(domain: AppUsageSeries.scaleDomain, range: AppUsageSeries.scaleRange)
@@ -34,6 +38,7 @@ struct AppHourlyChart: View {
                 }
             }
         }
+        .chartPointer(as: Date.self, pointerMoved)
         .frame(height: 110)
         .overlay {
             if hours.isEmpty {
@@ -47,5 +52,22 @@ struct AppHourlyChart: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Bugünün saatlik kullanım grafiği")
         .accessibilityValue(hours.isEmpty ? "Kayıt yok" : "Toplam \(Format.bytes(hours.reduce(0) { $0 + $1.total }))")
+    }
+
+    /// İmlecin altındaki saatin başlangıcı (kayıtlı saat yoksa nil); yalnızca değişince durum yazılır.
+    private func pointerMoved(_ date: Date?) {
+        let start = date.flatMap { d in hours.first { $0.start <= d && d < $0.start.addingTimeInterval(3_600) }?.start }
+        if hoveredHour != start { hoveredHour = start }
+    }
+
+    private func rows(_ hour: AppDetail.Hour) -> [ChartTooltipRow] {
+        [ChartTooltipRow(name: AppUsageSeries.mobile, color: .orange, text: Format.bytes(hour.mobile)),
+         ChartTooltipRow(name: AppUsageSeries.other, color: .blue, text: Format.bytes(hour.other)),
+         ChartTooltipRow(name: "Toplam", color: .secondary, text: Format.bytes(hour.total))]
+    }
+
+    private static func range(_ start: Date) -> String {
+        let end = start.addingTimeInterval(3_600)
+        return "\(start.formatted(.dateTime.hour().minute().locale(locale))) – \(end.formatted(.dateTime.hour().minute().locale(locale)))"
     }
 }

@@ -1,5 +1,4 @@
 import AppKit
-import Charts
 import SwiftUI
 
 /// "Disk": boş alan eğilimi, en çok yazanlar (geçmişten) ve büyüyen klasörler (saatlik tarama).
@@ -52,27 +51,8 @@ struct ProcessDiskView: View {
                         .foregroundStyle(delta < 0 ? Color.orange : Color.secondary)
                         .monospacedDigit()
                 }
-                Chart(free) { p in
-                    LineMark(x: .value("Zaman", Date(timeIntervalSince1970: TimeInterval(p.ts))),
-                             y: .value("Boş", Double(p.freeBytes) / 1e9))
-                        .foregroundStyle(Color.accentColor)
-                        .interpolationMethod(.monotone)
-                }
-                .chartYScale(domain: .automatic(includesZero: false))
-                .chartYAxis {
-                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { v in
-                        AxisGridLine()
-                        AxisValueLabel { if let d = v.as(Double.self) { Text("\(Int(d.rounded())) GB") } }
-                    }
-                }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 5)) { _ in
-                        AxisGridLine()
-                        AxisValueLabel(format: window == .days7 ? .dateTime.weekday(.abbreviated).hour() : .dateTime.hour().minute())
-                    }
-                }
-                .frame(height: 150)
-                .accessibilityLabel("Boş alan grafiği")
+                DiskFreeChart(points: free, window: window)
+                    .frame(height: 150)
             }
         }
     }

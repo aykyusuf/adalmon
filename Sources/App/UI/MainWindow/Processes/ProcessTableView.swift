@@ -5,15 +5,17 @@ struct ProcessTableView: View {
     let model: AppModel
     let router: SettingsRouter
     @Bindable var live: ProcessLiveModel
-    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Ölçülen genişliğe göre hesaplanan sütunlar (ilk ölçümden önce makul bir varsayılan).
+    @State private var columns = ProcessTableLayout.columns(forWidth: 700)
 
     var body: some View {
-        let sections = live.sections()
+        let sections = live.sections
         VStack(spacing: 0) {
-            ProcessColumnHeader(totals: live.totals, sortColumn: live.sortColumn, sortAscending: live.sortAscending,
+            ProcessColumnHeader(columns: columns, totals: live.totals, sortColumn: live.sortColumn, sortAscending: live.sortAscending,
                                 onSort: live.sort(by:))
-                .padding(.leading, 12)
-                .padding(.trailing, 20)
+                .padding(.leading, ProcessTableLayout.leadingInset)
+                .padding(.trailing, ProcessTableLayout.trailingInset)
             Divider()
             List(selection: $live.selection) {
                 ForEach(sections) { section in
@@ -30,6 +32,7 @@ struct ProcessTableView: View {
             }
             .listStyle(.plain)
             .environment(\.defaultMinListRowHeight, ProcessTableLayout.rowHeight)
+            .onHover { live.isPointerInside = $0 }
             .overlay {
                 if sections.isEmpty {
                     if live.rows.isEmpty {
@@ -45,6 +48,9 @@ struct ProcessTableView: View {
             .onCopyCommand { copyProviders() }
             Divider()
             footer(sections)
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+            columns = ProcessTableLayout.columns(forWidth: ProcessTableLayout.contentWidth(forContainer: width))
         }
         .searchable(text: $live.query, prompt: "İşlem veya uygulama ara")
         .toolbar { ProcessToolbar(live: live) }
@@ -67,7 +73,7 @@ struct ProcessTableView: View {
     // MARK: Satır
 
     private func tableRow(_ row: LiveRow) -> some View {
-        ProcessTableRow(row: row, memoryTotal: Double(live.totals.memoryTotal), isSelected: live.selection == row.id,
+        ProcessTableRow(row: row, columns: columns, memoryTotal: Double(live.totals.memoryTotal), isSelected: live.selection == row.id,
                         isExpanded: live.expanded.contains(row.key), canExpand: live.canExpand(row), isMeasuring: live.isMeasuring) {
             live.setExpanded(row.key, !live.expanded.contains(row.key), service: model.resources, model: model)
         }
@@ -119,7 +125,9 @@ struct ProcessTableView: View {
     }
 
     private func toggle(_ category: ProcessCategory) {
-        if live.collapsed.contains(category) { live.collapsed.remove(category) } else { live.collapsed.insert(category) }
+        withAnimation(reduceMotion ? nil : .spring(duration: 0.28)) {
+            if live.collapsed.contains(category) { live.collapsed.remove(category) } else { live.collapsed.insert(category) }
+        }
     }
 
     private var killTitle: String {

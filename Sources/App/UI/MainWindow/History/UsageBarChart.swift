@@ -9,13 +9,18 @@ struct UsageBarChart: View {
 
     var body: some View {
         let axisLabels = Dictionary(uniqueKeysWithValues: bars.compactMap { bar in bar.axisLabel.map { (bar.id, $0) } })
-        Chart(bars) { bar in
-            BarMark(x: .value("Zaman", bar.id), y: .value("Veri", Double(bar.other)))
-                .foregroundStyle(by: .value("Ağ", MediumStyle.wifiName))
-                .opacity(opacity(bar))
-            BarMark(x: .value("Zaman", bar.id), y: .value("Veri", Double(bar.mobile)))
-                .foregroundStyle(by: .value("Ağ", MediumStyle.mobileName))
-                .opacity(opacity(bar))
+        Chart {
+            ForEach(bars) { bar in
+                BarMark(x: .value("Zaman", bar.id), y: .value("Veri", Double(bar.other)))
+                    .foregroundStyle(by: .value("Ağ", MediumStyle.wifiName))
+                    .opacity(opacity(bar))
+                BarMark(x: .value("Zaman", bar.id), y: .value("Veri", Double(bar.mobile)))
+                    .foregroundStyle(by: .value("Ağ", MediumStyle.mobileName))
+                    .opacity(opacity(bar))
+            }
+            if let hovered = bars.first(where: { $0.id == hoverID }) {
+                ChartBarSelectionMarks(x: hovered.id, title: hovered.label, rows: tooltipRows(hovered))
+            }
         }
         .chartForegroundStyleScale(MediumStyle.scale)
         .chartLegend(.hidden)
@@ -42,6 +47,12 @@ struct UsageBarChart: View {
         .accessibilityLabel("Kullanım grafiği")
         .accessibilityValue(summary)
         .accessibilityHint("Ayrıntıyı aşağıdaki karttan önceki ve sonraki düğmeleriyle gezebilirsin")
+    }
+
+    private func tooltipRows(_ bar: HistoryBar) -> [ChartTooltipRow] {
+        [ChartTooltipRow(name: MediumStyle.mobileName, color: MediumStyle.mobileColor, text: Format.bytes(bar.mobile)),
+         ChartTooltipRow(name: MediumStyle.wifiName, color: MediumStyle.wifiColor, text: Format.bytes(bar.other)),
+         ChartTooltipRow(name: "Toplam", color: .secondary, text: Format.bytes(bar.total))]
     }
 
     private func opacity(_ bar: HistoryBar) -> Double {

@@ -14,6 +14,15 @@ enum ProcessCategory: Int, CaseIterable, Identifiable, Hashable, Sendable {
         }
     }
 
+    /// "Tür" sütunu için kısa ad.
+    var shortTitle: String {
+        switch self {
+        case .app: "Uygulama"
+        case .background: "Arka plan"
+        case .system: "Sistem"
+        }
+    }
+
     /// Anahtar `.app` yolu ve çalışan "normal" uygulamalar kümesinden kategori çıkarır (saf mantık).
     static func classify(key: String, regularAppPaths: Set<String>) -> ProcessCategory {
         if key == ResourceKeys.system { return .system }

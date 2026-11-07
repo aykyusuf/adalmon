@@ -7,7 +7,7 @@ enum HeatTint {
     static func intensity(column: ProcessColumn, value: Double, memoryTotal: Double = 0) -> Double {
         let scaled: Double
         switch column {
-        case .name: return 0
+        case .name, .category, .processCount, .pid: return 0
         case .cpu: scaled = value / 60
         case .memory: scaled = memoryTotal > 0 ? value / memoryTotal / 0.15 : 0
         case .disk: scaled = value / 50_000_000
@@ -19,10 +19,14 @@ enum HeatTint {
         return min(1, scaled.squareRoot())
     }
 
+    /// Yoğunluğu 1/24 basamaklara yuvarlar: ufak dalgalanmalar 0,25 sn'lik renk geçişini boşuna tetiklemesin.
+    static func quantized(_ t: Double) -> Double { (t * 24).rounded() / 24 }
+
+    /// Sıfırda da aynı renk tonu (saydam): geçiş boş renkten turuncuya gri bir ara tondan geçmez.
     static func color(intensity t: Double, dark: Bool) -> Color {
-        guard t > 0 else { return .clear }
         let low = (r: 1.0, g: 0.80, b: 0.22), high = (r: 1.0, g: 0.45, b: 0.10)
         let r = low.r + (high.r - low.r) * t, g = low.g + (high.g - low.g) * t, b = low.b + (high.b - low.b) * t
+        guard t > 0 else { return Color(red: low.r, green: low.g, blue: low.b).opacity(0) }
         let alpha = dark ? 0.07 + 0.36 * t : 0.10 + 0.50 * t
         return Color(red: r, green: g, blue: b).opacity(alpha)
     }

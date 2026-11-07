@@ -1,41 +1,25 @@
-import Charts
 import SwiftUI
 
-/// İndirme (alan) ve yükleme (çizgi) geçmişi; hız eksenli büyük sürüm.
+/// İndirme ve yükleme geçmişi; hız eksenli büyük sürüm. İmleç gelince ikisinin değeri ve "yaklaşık N sn önce" görünür.
 struct TrafficChart: View {
     let down: [Double]
     let up: [Double]
+    var secondsPerPoint = 2
 
     var body: some View {
         let peak = max(down.max() ?? 0, up.max() ?? 0, 50_000) * 1.1
-        Chart {
-            ForEach(Array(down.enumerated()), id: \.offset) { p in
-                AreaMark(x: .value("Örnek", p.offset), y: .value("İndirme", p.element), series: .value("Seri", "İndirme"))
-                    .foregroundStyle(.linearGradient(colors: [.blue.opacity(0.4), .blue.opacity(0.03)], startPoint: .top, endPoint: .bottom))
-                    .interpolationMethod(.monotone)
-                LineMark(x: .value("Örnek", p.offset), y: .value("İndirme", p.element), series: .value("Seri", "İndirme"))
-                    .foregroundStyle(.blue)
-                    .lineStyle(StrokeStyle(lineWidth: 2))
-                    .interpolationMethod(.monotone)
-            }
-            ForEach(Array(up.enumerated()), id: \.offset) { p in
-                LineMark(x: .value("Örnek", p.offset), y: .value("Yükleme", p.element), series: .value("Seri", "Yükleme"))
-                    .foregroundStyle(.orange)
-                    .lineStyle(StrokeStyle(lineWidth: 2))
-                    .interpolationMethod(.monotone)
-            }
-        }
-        .chartXAxis(.hidden)
-        .chartXScale(domain: 0...max(AppModel.historyLength - 1, down.count - 1))
-        .chartYScale(domain: 0...peak)
-        .chartYAxis {
-            AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
-                AxisGridLine()
-                AxisValueLabel {
-                    if let v = value.as(Double.self) { Text(Format.rate(v)) }
-                }
-            }
-        }
-        .accessibilityHidden(true)
+        let count = AppModel.historyLength
+        InteractiveLineChart(
+            lines: [ChartLine(name: "İndirme", color: .blue, points: SampleAxis.points(down, capacity: count)),
+                    ChartLine(name: "Yükleme", color: .orange, points: SampleAxis.points(up, capacity: count))],
+            xDomain: SampleAxis.date(0)...SampleAxis.date(Double(max(count - 1, down.count - 1))),
+            yDomain: 0...peak,
+            yLabel: { Format.rate($0) },
+            timeLabel: { SampleAxis.ageText(of: $0, count: down.count, secondsPerPoint: secondsPerPoint) },
+            yAxisPosition: .trailing,
+            yAxisValues: .automatic(desiredCount: 4),
+            lineWidth: 2,
+            compact: true)
+            .accessibilityHidden(true)
     }
 }

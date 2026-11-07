@@ -3,6 +3,7 @@ import SwiftUI
 /// "İşlemler" satırı: ad hücresi + ısı haritası tonlu sayısal hücreler.
 struct ProcessTableRow: View {
     let row: LiveRow
+    let columns: ProcessTableColumns
     let memoryTotal: Double
     let isSelected: Bool
     let isExpanded: Bool
@@ -10,15 +11,17 @@ struct ProcessTableRow: View {
     let isMeasuring: Bool
     let onToggleExpand: () -> Void
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     var body: some View {
         HStack(spacing: 0) {
             nameCell
-                .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(ProcessTableLayout.numericColumns) { column in
-                numericCell(column)
+                .frame(width: columns.nameWidth, alignment: .leading)
+            ForEach(columns.entries) { entry in
+                cell(entry)
             }
+            Spacer(minLength: 0)
         }
         .frame(height: ProcessTableLayout.rowHeight)
         .background(isHovering && !isSelected ? Color.primary.opacity(0.05) : .clear)
@@ -77,6 +80,7 @@ struct ProcessTableRow: View {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(reduceMotion ? nil : .spring(duration: 0.28), value: isExpanded)
                     .frame(width: 18, height: 22)
                     .contentShape(.rect)
             }
@@ -88,20 +92,28 @@ struct ProcessTableRow: View {
         }
     }
 
-    private func numericCell(_ column: ProcessColumn) -> some View {
-        let t = isSelected || isMeasuring ? 0 : HeatTint.intensity(column: column, value: column.value(of: row), memoryTotal: memoryTotal)
-        return Text(text(column))
+    private func cell(_ entry: ProcessTableColumns.Entry) -> some View {
+        let column = entry.column
+        let t = column.isMetric && !isSelected && !isMeasuring
+            ? HeatTint.quantized(HeatTint.intensity(column: column, value: column.value(of: row), memoryTotal: memoryTotal))
+            : 0
+        let value = text(column)
+        return Text(value)
             .monospacedDigit()
             .lineLimit(1)
             .foregroundStyle(row.isMember ? .secondary : .primary)
+            .contentTransition(.numericText())
+            .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: value)
             .padding(.horizontal, 8)
-            .frame(width: ProcessTableLayout.width(column), height: ProcessTableLayout.rowHeight, alignment: .trailing)
-            .background(HeatTint.color(intensity: t, dark: scheme == .dark))
-            .overlay(alignment: .trailing) { Rectangle().fill(.background.opacity(0.5)).frame(width: 1) }
+            .frame(width: entry.width, height: ProcessTableLayout.rowHeight, alignment: .trailing)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                $0.background(HeatTint.color(intensity: t, dark: scheme == .dark))
+            }
+            .overlay(alignment: .trailing) { if column.isMetric { Rectangle().fill(.background.opacity(0.5)).frame(width: 1) } }
     }
 
     private func text(_ column: ProcessColumn) -> String {
-        if isMeasuring && !row.isMember && column != .memory { return "…" }
+        if isMeasuring && !row.isMember && column.isMetric && column != .memory { return "…" }
         switch column {
         case .name: return ""
         case .cpu: return ResourceFormat.percent(row.cpu)
@@ -110,6 +122,9 @@ struct ProcessTableRow: View {
         case .network: return row.network < 1 ? "—" : Format.rate(row.network)
         case .gpu: return ResourceFormat.percent(row.gpu)
         case .energy: return ResourceFormat.watts(row.energy)
+        case .category: return row.category.shortTitle
+        case .processCount: return row.isMember ? "—" : "\(row.processCount)"
+        case .pid: return row.pid.map { String($0) } ?? (row.pids.count == 1 ? String(row.pids[0]) : "—")
         }
     }
 }
