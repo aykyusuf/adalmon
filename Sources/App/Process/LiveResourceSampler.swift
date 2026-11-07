@@ -2,10 +2,26 @@ import Darwin
 import Foundation
 
 struct LiveMember: Sendable, Equatable, Identifiable {
+    /// Temsilci süreç (gruplanmış üyede en küçük pid); kalan (kısa ömürlü) satırında 0.
     var pid: Int32
     var name: String
     var usage: ResourceUsage
-    var id: Int32 { pid }
+    /// Üyenin tüm süreçleri (tek süreçte `[pid]`; çalıştırılabilire göre gruplanmış terminal üyesinde hepsi; kalanda boş).
+    var pids: [pid_t]
+    /// Terminal alt anahtarı (`"<terminal>|<yol>"`); tek süreç üyelerinde nil.
+    var childKey: String?
+    /// Çalıştırılabilir yol (Finder'da göster); yoksa nil.
+    var path: String?
+    var id: String { childKey ?? "pid-\(pid)" }
+
+    init(pid: Int32, name: String, usage: ResourceUsage, pids: [pid_t]? = nil, childKey: String? = nil, path: String? = nil) {
+        self.pid = pid
+        self.name = name
+        self.usage = usage
+        self.pids = pids ?? [pid]
+        self.childKey = childKey
+        self.path = path
+    }
 }
 
 struct LiveGroup: Sendable, Equatable, Identifiable {
@@ -64,7 +80,8 @@ actor LiveResourceSampler {
             var pidOf: [ProcessKey: pid_t] = [:]
             var owner: [ProcessKey: String] = [:]
             for key in expanded {
-                guard let group = sweep.groups[key] else { continue }
+                // Terminal grupları süpürmeden hazır gelen çalıştırılabilir kırılımını kullanır.
+                guard let group = sweep.groups[key], sweep.terminalChildren[key] == nil else { continue }
                 for pid in group.pids {
                     guard let found = CoalitionAPI.processCounters(of: pid) else { continue }
                     var c = found.counters
@@ -88,10 +105,12 @@ actor LiveResourceSampler {
 
         var groups: [LiveGroup] = []
         groups.reserveCapacity(sweep.groups.count)
-        for (key, group) in sweep.groups {
-            let list = (members[key] ?? []).sorted {
-                $0.usage.cpuNs != $1.usage.cpuNs ? $0.usage.cpuNs > $1.usage.cpuNs : $0.usage.footprint > $1.usage.footprint
+        for (key, group) in sweep.groups where group.terminalParent == nil {
+            if let childKeys = sweep.terminalChildren[key] {
+                groups.append(terminalGroup(key: key, own: group, childKeys: childKeys, sweep: sweep, gpu: gpuDelta))
+                continue
             }
+            let list = (members[key] ?? []).sorted(by: Self.memberOrder)
             // Coalition gpu_time bu makinede çoğu canlı süreç için 0 kalıyor; AppUsage (süreç başına) farklarının toplamı ile
             // coalition farkından büyüğü alınır (ölü süreçlerin katkısı coalition'dan, canlıların ki AppUsage'tan).
             var usage = group.usage
@@ -101,5 +120,39 @@ actor LiveResourceSampler {
                                     members: Array(list.prefix(Self.maxMembersPerGroup))))
         }
         return LiveSnapshot(groups: groups, elapsed: elapsed, totalProcessCount: sweep.groups.values.reduce(0) { $0 + $1.pids.count })
+    }
+
+    private static func memberOrder(_ a: LiveMember, _ b: LiveMember) -> Bool {
+        a.usage.cpuNs != b.usage.cpuNs ? a.usage.cpuNs > b.usage.cpuNs : a.usage.footprint > b.usage.footprint
+    }
+
+    /// Terminal / IDE satırı: kendi süreçleri + tüm çalıştırılabilir kırılımı toplanır (coalition toplamı); üyeler çalıştırılabilire
+    /// göre gruplanmış değerlerdir ("Warp › xcodebuild"). Kalan (kısa ömürlü süreçler) ayrı üye olarak gösterilir.
+    private func terminalGroup(key: String, own: SweepResult.Group, childKeys: [String], sweep: SweepResult,
+                               gpu: [pid_t: UInt64]) -> LiveGroup {
+        func withGPU(_ g: SweepResult.Group) -> ResourceUsage {
+            var u = g.usage
+            u.gpuNs = max(u.gpuNs, g.pids.reduce(UInt64(0)) { $0 &+ (gpu[$1] ?? 0) })
+            return u
+        }
+        var total = own.usage
+        var pids = own.pids
+        var members: [LiveMember] = []
+        if !own.pids.isEmpty {
+            let name = AppNaming.identity(forApp: key).name + " (uygulamanın kendisi)"
+            members.append(LiveMember(pid: own.pids.min() ?? 0, name: name, usage: withGPU(own), pids: own.pids, childKey: key, path: key))
+        }
+        for ck in childKeys {
+            guard let g = sweep.groups[ck], let parts = TerminalChildKey.split(ck) else { continue }
+            total.add(g.usage)
+            pids.append(contentsOf: g.pids)
+            let residual = parts.child == TerminalChildKey.residual
+            members.append(LiveMember(pid: g.pids.min() ?? 0, name: residual ? TerminalChildKey.residualLabel : AppNaming.executableName(parts.child),
+                                      usage: withGPU(g), pids: g.pids, childKey: ck, path: residual ? nil : parts.child))
+        }
+        let gpuSum = pids.reduce(UInt64(0)) { $0 &+ (gpu[$1] ?? 0) }
+        total.gpuNs = max(total.gpuNs, gpuSum)
+        members.sort(by: Self.memberOrder)
+        return LiveGroup(key: key, usage: total, processCount: pids.count, pids: pids, members: Array(members.prefix(Self.maxMembersPerGroup)))
     }
 }

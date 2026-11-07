@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.mainWindow = mainWindow
         self.panel = panel
         self.dockMode = dockMode
+        AdalmonIntentHub.backend = LiveIntentBackend(model: model, openRoute: { router.open(route: $0) })
         statusBar = StatusBarController(model: model) { [weak panel] button in panel?.toggle(relativeTo: button) }
         model.start()
         dockMode.start()
@@ -53,6 +54,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard model.prefs.showInDock else { return true }
         mainWindow?.show()
         return false
+    }
+
+    /// `adalmon://battery` vb. (widget dokunuşu, kestirmeler).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let router else { return }
+        for url in urls { router.handle(url: url) }
     }
 
     @objc func openSettings(_ sender: Any?) { router?.open() }

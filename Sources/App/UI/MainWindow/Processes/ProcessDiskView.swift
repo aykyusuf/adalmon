@@ -7,6 +7,7 @@ struct ProcessDiskView: View {
     @State private var window: ResourceWindow = .hours24
     @State private var free: [DiskFreePoint] = []
     @State private var writers: [ResourceRank] = []
+    @State private var writerHints: [String: String] = [:]
     @State private var report = UsageStore.FolderGrowthReport()
     @State private var firstRecord: Int?
     @State private var loaded = false
@@ -65,7 +66,7 @@ struct ProcessDiskView: View {
                 let peak = max(1, writers.first?.value ?? 1)
                 let coverage = ResourceFormat.coverage(window: window, firstRecord: firstRecord)
                 ForEach(writers.prefix(8)) { w in
-                    ResourceRankRow(rank: w, fraction: w.value / peak, metric: .diskWrite, coverage: coverage, tint: .orange)
+                    ResourceRankRow(rank: w, fraction: w.value / peak, metric: .diskWrite, coverage: coverage, hint: writerHints[w.app], tint: .orange)
                 }
                 Text("Yazılan bayttır, net büyüme değildir: aynı dosyayı yeniden yazma ve silinen geçici dosyalar da dahil. Kopyalama (APFS klonu) neredeyse hiç yazma göstermez.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -122,6 +123,7 @@ struct ProcessDiskView: View {
         let store = model.store
         free = await store.diskFreeSeries(window: window)
         writers = await store.topConsumers(metric: .diskWrite, window: window, limit: 8)
+        writerHints = DuplicateNameHints.hints(keys: writers.map(\.app), name: { ResourceDisplay.name($0) })
         report = await store.folderGrowth(window: window)
         firstRecord = await store.resourceTimeRange()?.first
         loaded = true

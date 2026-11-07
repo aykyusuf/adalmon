@@ -34,9 +34,13 @@ struct ProcessTableRow: View {
             chevron
             if row.isMember {
                 Text(row.name).lineLimit(1).truncationMode(.middle)
-                if let pid = row.pid { Text("pid \(pid)").font(.caption).foregroundStyle(.tertiary) }
+                if row.processCount > 1 {
+                    Text("×\(row.processCount)").font(.caption).foregroundStyle(.tertiary).help("\(row.processCount) süreç")
+                } else if let pid = row.pid, pid > 0 {
+                    Text("pid \(pid)").font(.caption).foregroundStyle(.tertiary)
+                }
             } else {
-                ResourceAppLabel(key: row.key, size: 20)
+                ResourceAppLabel(key: row.key, size: 20, hint: row.pathHint)
                 if row.processCount > 1 {
                     Text("\(row.processCount)")
                         .font(.caption2.weight(.medium))
@@ -123,10 +127,10 @@ struct ProcessTableRow: View {
         case .gpu: return ResourceFormat.percent(row.gpu)
         case .energy: return ResourceFormat.watts(row.energy)
         case .category: return row.category.shortTitle
-        case .processCount: return row.isMember ? "—" : "\(row.processCount)"
+        case .processCount: return row.isMember && row.processCount <= 1 ? "—" : "\(row.processCount)"
         // Grup satırı: ana süreç (en eski = en küçük PID) + kaç alt süreç daha olduğu.
         case .pid:
-            if let pid = row.pid { return String(pid) }
+            if row.isMember && row.processCount <= 1 { return row.pid.flatMap { $0 > 0 ? String($0) : nil } ?? "—" }
             guard let main = row.pids.min() else { return "—" }
             return row.pids.count > 1 ? "\(main) +\(row.pids.count - 1)" : String(main)
         }

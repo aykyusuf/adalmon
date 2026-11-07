@@ -5,19 +5,28 @@ import AppKit
 enum ResourceDisplay {
     static func name(_ key: String) -> String {
         switch key {
-        case ResourceKeys.system: "Sistem (macOS)"
-        case ResourceKeys.other: "Diğer"
-        case ResourceKeys.unknown: "Bilinmeyen"
-        default: AppCatalog.shared.name(for: key)
+        case ResourceKeys.system: return "Sistem (macOS)"
+        case ResourceKeys.other: return "Diğer"
+        case ResourceKeys.unknown: return "Bilinmeyen"
+        default:
+            if let cached = compoundNames[key] { return cached }
+            if let compound = TerminalChildKey.displayName(key, appName: { AppCatalog.shared.name(for: $0) }) {
+                compoundNames[key] = compound
+                return compound
+            }
+            return AppCatalog.shared.name(for: key)
         }
     }
+
+    /// "Terminal › araç" adları (sıralama karşılaştırıcıları her çağrıda yeniden kurmasın).
+    private static var compoundNames: [String: String] = [:]
 
     static func icon(_ key: String) -> NSImage {
         switch key {
         case ResourceKeys.system: symbol("gearshape.2.fill")
         case ResourceKeys.other: symbol("ellipsis.circle.fill")
         case ResourceKeys.unknown: symbol("questionmark.circle.fill")
-        default: AppCatalog.shared.icon(for: key)
+        default: AppCatalog.shared.icon(for: TerminalChildKey.split(key)?.terminal ?? key)
         }
     }
 
@@ -32,6 +41,8 @@ import SwiftUI
 struct ResourceAppLabel: View {
     let key: String
     var size: CGFloat = 22
+    /// Aynı adlı başka satır varsa yer ipucu ("DerivedData", "/Applications").
+    var hint: String?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -43,6 +54,15 @@ struct ResourceAppLabel: View {
             Text(ResourceDisplay.name(key))
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .layoutPriority(1)
+            if let hint {
+                Text("· \(hint)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(hint)
+            }
         }
     }
 }

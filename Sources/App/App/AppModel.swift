@@ -54,6 +54,7 @@ final class AppModel {
         defaults: .standard)
     /// Faz 3: süreç/kaynak geçmişi ve saatlik klasör taraması (dakikada bir arka plan örnekleyici).
     @ObservationIgnored private(set) lazy var resources = ResourceService(store: store)
+    @ObservationIgnored private(set) lazy var widgets = WidgetPublisher.live()
     @ObservationIgnored private let sampler = MetricsSampler()
     @ObservationIgnored private let samplerQueue = DispatchQueue(label: "adalmon.metrics", qos: .utility)
     @ObservationIgnored private let filter = FilterClient()
@@ -101,6 +102,7 @@ final class AppModel {
         scheduleTimer()
         observeInterval()
         resources.start()
+        battery.onPowerStateChange = { [weak self] in self?.publishWidgets(forced: true) }
         battery.start()
         devices.start()
     }
@@ -547,7 +549,25 @@ final class AppModel {
         if due(5) || rules.output != lastRuleOutput || isMobile != lastPushedMobile { pushConfig(force: false) }
         if due(10) { await persist() }
         lastUpdate = .now
+        publishWidgets()
         onStep?()
+    }
+
+    // MARK: Widget anlık görüntüsü
+
+    /// Widget'ların okuduğu özet. Yalnızca yazma zamanı geldiğinde kurulur (bkz. `WidgetPublishGate`).
+    func widgetSnapshot(now: Date = .now) -> WidgetSnapshot {
+        let monthly = prefs.monthlyCapBytes
+        let hidden = Set(prefs.deviceSettings.filter { $0.value.hidden }.keys)
+        return WidgetSnapshotBuilder.make(
+            now: now, battery: battery.reading, devices: devices.devices, hiddenDeviceIDs: hidden,
+            pinnedDeviceIDs: prefs.menuBar.config.components.compactMap(\.deviceID), system: snapshot,
+            mobileToday: mobileToday, dailyCap: prefs.dailyCapBytes,
+            cycleUsed: monthly == nil ? nil : cycleUsedBeforeToday + mobileToday, monthlyCap: monthly, isOnMobile: isMobile)
+    }
+
+    private func publishWidgets(forced: Bool = false) {
+        widgets.tick(forced: forced) { [self] in widgetSnapshot() }
     }
 
     /// Yeni ölçümü yayınlar (testler/önizlemeler de gerçek bir ölçümü buradan verir).

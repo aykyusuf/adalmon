@@ -6,13 +6,14 @@ struct ResourceRankRow: View {
     let fraction: Double
     let metric: ResourceMetric
     let coverage: Double
+    var hint: String?
     var isSelected = false
     var tint: Color = .accentColor
 
     var body: some View {
         let text = ResourceFormat.rankText(metric: metric, value: rank.value, coverage: coverage)
         HStack(spacing: 10) {
-            ResourceAppLabel(key: rank.app)
+            ResourceAppLabel(key: rank.app, hint: hint)
                 .frame(width: 190, alignment: .leading)
             GeometryReader { geo in
                 Capsule()
@@ -34,7 +35,7 @@ struct ResourceRankRow: View {
         .background(isSelected ? Color.accentColor.opacity(0.14) : .clear, in: .rect(cornerRadius: 8))
         .contentShape(.rect(cornerRadius: 8))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(ResourceDisplay.name(rank.app)), \(text.primary) \(text.secondary ?? "")")
+        .accessibilityLabel("\(ResourceDisplay.name(rank.app))\(hint.map { ", \($0)" } ?? ""), \(text.primary) \(text.secondary ?? "")")
     }
 }
 
