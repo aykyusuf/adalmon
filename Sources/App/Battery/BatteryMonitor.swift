@@ -216,6 +216,9 @@ final class BatteryMonitor {
     /// Ayarlardaki "Önizle" düğmeleri.
     func preview(_ event: BatteryAlertEvent) { deliver(event) }
 
+    /// Cihaz (AirPods, iPhone…) uyarıları aynı sunucuyu kullanır: ses, bildirim, balon / kenar parlaması.
+    func present(_ event: BatteryAlertEvent) { deliver(event) }
+
     // MARK: Sağlık ve geçmiş
 
     private func applyHealthCache() {

@@ -47,6 +47,11 @@ final class AppModel {
     @ObservationIgnored let store = UsageStore()
     @ObservationIgnored private(set) lazy var battery = BatteryMonitor(
         store: store, alertConfig: { [prefs] in prefs.batteryAlerts }, notify: { [alerts] in alerts.notify(title: $0, body: $1) })
+    /// Pil Faz 2: Bluetooth / HID / iPhone & iPad pilleri.
+    @ObservationIgnored private(set) lazy var devices = DeviceBatteryService(
+        settings: { [prefs] in prefs.deviceSettings }, enabled: { [prefs] in prefs.deviceMonitoring },
+        includeWifi: { [prefs] in prefs.deviceIncludeWifi }, deliver: { [weak self] in self?.battery.present($0) },
+        defaults: .standard)
     /// Faz 3: süreç/kaynak geçmişi ve saatlik klasör taraması (dakikada bir arka plan örnekleyici).
     @ObservationIgnored private(set) lazy var resources = ResourceService(store: store)
     @ObservationIgnored private let sampler = MetricsSampler()
@@ -97,6 +102,7 @@ final class AppModel {
         observeInterval()
         resources.start()
         battery.start()
+        devices.start()
     }
 
     /// Güncelleme aralığı ayarı değişince zamanlayıcıyı hemen yeniden kur ve bir ölçüm al.
@@ -493,6 +499,7 @@ final class AppModel {
         didSet {
             scheduleTimer()
             battery.setVisible(mainWindowVisible || panelVisible)
+            devices.setPanelVisible(panelVisible)
             if panelVisible && !oldValue { Task { await step() } }
         }
     }

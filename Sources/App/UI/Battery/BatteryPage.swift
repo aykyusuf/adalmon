@@ -5,12 +5,26 @@ struct BatteryPage: View {
     let monitor: BatteryMonitor
     let store: UsageStore
     let router: SettingsRouter
+    /// Cihazlar ve iPhone & iPad sekmeleri için (önizleme/testlerde verilmeyebilir).
+    var devices: DeviceBatteryService?
+    var prefs: Preferences?
 
+    @State private var tab: BatteryTab
     @State private var levelRange: BatteryLevelRange = .h24
     @State private var energyRange: BatteryDayRange = .d7
     @State private var screenRange: BatteryDayRange = .d7
     @State private var tempMode: TempMode = .day
     @State private var data = PageData()
+
+    init(monitor: BatteryMonitor, store: UsageStore, router: SettingsRouter, devices: DeviceBatteryService? = nil,
+         prefs: Preferences? = nil, initialTab: BatteryTab = .mac) {
+        self.monitor = monitor
+        self.store = store
+        self.router = router
+        self.devices = devices
+        self.prefs = prefs
+        _tab = State(initialValue: initialTab)
+    }
 
     enum TempMode: String, CaseIterable, Identifiable {
         case day = "24 sa", trend = "Trend"
@@ -24,7 +38,7 @@ struct BatteryPage: View {
         var loaded = false
     }
 
-    private struct LoadKey: Hashable { var level: BatteryLevelRange; var visible = true }
+    private struct LoadKey: Hashable { var level: BatteryLevelRange; var mac: Bool }
 
     var body: some View {
         ScrollView {
@@ -36,6 +50,44 @@ struct BatteryPage: View {
                     .buttonStyle(.link)
                     .help("Düşük pil, şarj seviyesi ve takıldı/çıkarıldı uyarılarını ayarla")
                 }
+                tabPicker
+                switch tab {
+                case .devices:
+                    if let devices, let prefs { DevicesTab(service: devices, prefs: prefs, battery: monitor) }
+                case .ios:
+                    if let devices, let prefs { IOSDevicesTab(service: devices, prefs: prefs) }
+                case .mac:
+                    macContent
+                }
+            }
+            .padding(24)
+        }
+        .task(id: LoadKey(level: levelRange, mac: tab == .mac)) {
+            while !Task.isCancelled, tab == .mac {
+                await load()
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+        .onChange(of: tab) {
+            devices?.setPageVisible(tab != .mac)
+            if tab == .ios { devices?.refreshIOS() }
+        }
+        .onDisappear { devices?.setPageVisible(false) }
+    }
+
+    private var tabPicker: some View {
+        Picker("Bölüm", selection: $tab) {
+            ForEach(BatteryTab.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private var macContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Group {
                 if let r = monitor.reading {
                     hero(r)
                     statCards(r)
@@ -56,13 +108,6 @@ struct BatteryPage: View {
                                            description: Text("Pil verisi yalnızca dahili pili olan Mac'lerde gösterilir."))
                         .frame(maxWidth: .infinity, minHeight: 300)
                 }
-            }
-            .padding(24)
-        }
-        .task(id: LoadKey(level: levelRange)) {
-            while !Task.isCancelled {
-                await load()
-                try? await Task.sleep(for: .seconds(60))
             }
         }
     }

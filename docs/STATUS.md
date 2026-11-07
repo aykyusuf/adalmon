@@ -76,3 +76,9 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 - `Sources/App/Battery/` (BatteryMonitor: IOPS olayı + 60 sn zamanlayıcı tol. 15 sn, panel/pencere görünürken 5 sn; parser, health, rollup, alert motoru), `UsageStore+Battery` (battery_min 14 gün, battery_daily 400 gün), menü çubuğu `.batteryCapsule` bileşeni, panel "Pil" bölümü, Dock ⌘7 Pil sayfası, Ayarlar › Pil uyarıları (balon/kenar parlaması/ses/bildirim).
 - Sağlık: Apple "Maksimum kapasite" (system_profiler, 6 sa önbellek) + ham/tasarım ikisi birlikte. Sıcaklık: mevcut HID örnekleyici (bu Mac'te 27,1 °C okundu).
 - Açık: pil sıcaklığı canlı uygulamada izlenmeli; uyarı balonu tıklanabilir (tam click-through değil, kapat düğmesi için); uygulama kapanırken bekleyen ≤5 dakikalık örnek flush edilmiyor.
+
+## Pil Faz 2 — cihazlar (2026-11-07) — kurulmadı, commit yok
+- `Sources/App/Battery/Devices/`: `DeviceBatteryService` (HID IORegistry + system_profiler önbelleği + CoreBluetooth GATT 0x180F + AirPods proximity-pairing reklamı + libimobiledevice), saf çözümleyiciler/birleştirici/uyarı motoru, `LibIMobileDevice` (dlopen). Kadans: arka planda 5 dk, görünürken 30 sn (tarama 60 sn), iOS ayrıntıları 10 dk. CoreBluetooth ancak panel/sayfa açılınca ya da izin zaten verilmişse kurulur; testte hiçbir canlı kaynak yok.
+- UI: panel Pil bölümünde "Cihazlar" satırları; Pil sayfasında Mac | Cihazlar | iPhone & iPad; menü çubuğuna cihaz sabitleme (`MenuBarComponent.deviceID`); Ayarlar › Genel › Lisanslar.
+- Kitaplıklar: `Vendor/libimobiledevice` (tools/vendor-libimobiledevice.sh ile üretilir, @rpath), Xcode takım kimliğiyle gömüp imzalar.
+- DOĞRULANMADI (kullanıcı gerekir): Bluetooth izni + gerçek AirPods/GATT, iPhone USB "Güven"/Wi‑Fi okuması, LifetimeData anahtar adları, reklam bayt düzeni.

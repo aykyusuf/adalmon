@@ -20,16 +20,19 @@ final class MenuBarConfigStore {
         save()
     }
 
-    var currentPreset: MenuBarPreset? { MenuBarPreset.matching(config.components) }
+    var currentPreset: MenuBarPreset? { MenuBarPreset.matching(config.components.filter { $0.deviceID == nil }) }
 
     /// Simple metric cards, or nil when the advanced editor produced something cards can't represent.
     var cards: [MetricCardConfig]? { MetricCardConfig.cards(from: config.components) }
 
     func apply(cards: [MetricCardConfig]) {
-        let components = MetricCardConfig.components(for: cards)
+        let components = MetricCardConfig.components(for: cards) + pinnedDeviceComponents
         guard components != config.components else { return }
         config.components = components
     }
+
+    /// Kart/ön ayar değişince sabitlenmiş cihaz pilleri korunur.
+    private var pinnedDeviceComponents: [MenuBarComponent] { config.components.filter { $0.deviceID != nil } }
 
     /// "Basit düzene dön": replaces an advanced component list with the default cards (layout options kept).
     func resetToSimpleLayout() {
@@ -37,7 +40,7 @@ final class MenuBarConfigStore {
     }
 
     func apply(_ preset: MenuBarPreset) {
-        config.components = preset.components
+        config.components = preset.components + pinnedDeviceComponents
     }
 
     /// "Varsayılana dön": default components and layout options.
@@ -50,6 +53,18 @@ final class MenuBarConfigStore {
         let copy = component.duplicated()
         config.components.append(copy)
         return copy.id
+    }
+
+    func isPinned(device id: String) -> Bool { config.components.contains { $0.deviceID == id } }
+
+    /// Cihaz pilini menü çubuğuna sabitler / kaldırır. Sıra, bileşen düzenleyicideki sürükleme ile değişir.
+    func setPinned(device id: String, name: String? = nil, _ pinned: Bool) {
+        if pinned {
+            guard !isPinned(device: id) else { return }
+            config.components.append(.device(id, name: name))
+        } else {
+            config.components.removeAll { $0.deviceID == id }
+        }
     }
 
     func remove(id: MenuBarComponent.ID) {

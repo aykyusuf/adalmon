@@ -40,6 +40,12 @@ final class Preferences {
     var usageRules: [UsageRule] { didSet { Self.store(usageRules, "usageRules", d) } }
     /// Pil uyarıları (düşük / dolu / takıldı-çıkarıldı).
     var batteryAlerts: BatteryAlertConfig { didSet { Self.store(batteryAlerts, "batteryAlerts", d) } }
+    /// Cihaz pilleri (Bluetooth, HID, iPhone/iPad) izlensin mi.
+    var deviceMonitoring: Bool { didSet { d.set(deviceMonitoring, forKey: "deviceMonitoring") } }
+    /// Wi‑Fi'deki (kablosuz eşleşmiş) iPhone/iPad'leri de göster.
+    var deviceIncludeWifi: Bool { didSet { d.set(deviceIncludeWifi, forKey: "deviceIncludeWifi") } }
+    /// Cihaz kimliği → gizle / uyarı ayarı.
+    var deviceSettings: [String: DeviceSettings] { didSet { Self.store(deviceSettings, "deviceSettings", d) } }
 
     /// Menü çubuğu widget düzeni (eski show*Item bayrakları yalnızca ilk açılışta buraya taşınır).
     let menuBar: MenuBarConfigStore
@@ -79,6 +85,9 @@ final class Preferences {
         dataSaver = Self.load(DataSaverConfig.self, "dataSaver", d) ?? DataSaverConfig()
         usageRules = Self.load([UsageRule].self, "usageRules", d) ?? []
         batteryAlerts = Self.load(BatteryAlertConfig.self, "batteryAlerts", d) ?? BatteryAlertConfig()
+        deviceMonitoring = d.object(forKey: "deviceMonitoring") as? Bool ?? true
+        deviceIncludeWifi = d.object(forKey: "deviceIncludeWifi") as? Bool ?? true
+        deviceSettings = Self.load([String: DeviceSettings].self, "deviceSettings", d) ?? [:]
         menuBar = MenuBarConfigStore(defaults: d)
         panel = PanelConfigStore(defaults: d)
     }

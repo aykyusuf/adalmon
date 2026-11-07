@@ -13,5 +13,7 @@
 	<array>
 		<string>BC62U5TGCQ.com.yusufayik.adalmon</string>
 	</array>
+	<key>com.apple.security.device.bluetooth</key>
+	<true/>
 </dict>
 </plist>

@@ -17,6 +17,11 @@ extension WidgetValues {
                   temperature: s?.temperature,
                   temperatureHistory: TemperatureHistory.shared.record(s))
         battery = model.battery.reading.map(BatteryGlyphState.init)
+        let pinned = Set(model.prefs.menuBar.config.components.compactMap(\.deviceID))
+        if !pinned.isEmpty {
+            devices = Dictionary(model.devices.devices.filter { pinned.contains($0.id) }.map { ($0.id, BatteryGlyphState(device: $0)) },
+                                 uniquingKeysWith: { a, _ in a })
+        }
         if let s {
             memTotal = s.memory.totalBytes
             memUsed = s.memory.usedBytes

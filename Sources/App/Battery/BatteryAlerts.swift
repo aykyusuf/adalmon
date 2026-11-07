@@ -88,10 +88,12 @@ struct BatteryAlertEvent: Equatable, Sendable {
     var level: Int
     var minutes: Int?
     var action: BatteryAlertAction
+    /// Cihaz uyarılarında cihaz adı (Mac için nil).
+    var subject: String? = nil
 
     var title: String {
         switch kind {
-        case .low: "Pil azaldı"
+        case .low: subject.map { "\($0) pili azaldı" } ?? "Pil azaldı"
         case .charged(let t): t >= 100 ? "Pil doldu" : "Pil %\(t)'e ulaştı"
         case .pluggedIn: "Şarj aleti takıldı"
         case .unplugged: "Şarj aleti çıkarıldı"
