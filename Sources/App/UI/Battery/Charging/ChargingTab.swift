@@ -11,7 +11,7 @@ struct ChargingTab: View {
             if model.featureEnabled {
                 ChargingHelperCard(model: model)
                 if model.installState.isEnabled {
-                    ChargeLimitCard(model: model)
+                    // Şarj sınırı kartı bilerek yok: bu Mac'te şarjı durduran SMC anahtarı yok, kullanıcı "şarj sınırı olmasın" dedi.
                     LowPowerModeCard(model: model)
                     if model.status?.supportsMagSafeLED == true { MagSafeLEDCard(model: model) }
                     ChargingOptionsCard(model: model)
