@@ -75,15 +75,16 @@ final class MetricPanelPreviewTests: XCTestCase {
         full.systemPowerMW = 14_200; full.batteryPowerMW = 0
         try await render(.battery, name: "battery-full", battery: BatteryPanelSource(reading: full, lastRefresh: .now, apps: battery().apps, devices: DeviceBattery.samples))
         let collapsed = try await render(.battery, name: "battery-collapsed",
-                                         config: PanelConfig(detailCollapsed: ["battery.info", "battery.devices"]))
+                                         config: PanelConfig(detailCollapsed: ["battery.apps", "battery.devices"]))
         XCTAssertLessThan(collapsed.height + 250, bat.height, "daraltılan bölümler paneli belirgin küçültmeli")
         XCTAssertGreaterThan(cpu.height, 400)
     }
 
     func testMetricPanelHeightIsCappedAndScrolls() async throws {
-        let natural = try await render(.battery, name: "x", maxHeight: nil, png: false).height
+        let open = PanelConfig(detailExpanded: ["battery.info"]) // varsayılan kompakt; "Pil bilgisi" açılınca uzun
+        let natural = try await render(.battery, name: "x", config: open, maxHeight: nil, png: false).height
         XCTAssertGreaterThan(natural, 900, "pil paneli doğal olarak uzun")
-        let capped = try await render(.battery, name: "battery-capped", maxHeight: 640).height
+        let capped = try await render(.battery, name: "battery-capped", config: open, maxHeight: 640).height
         XCTAssertLessThanOrEqual(capped, 641, "panel sınırı aştı: \(capped)")
         XCTAssertGreaterThan(capped, 600, "panel kalan yeri kullanmalı")
         let cpuNatural = try await render(.cpu, name: "x", png: false).height

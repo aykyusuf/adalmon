@@ -23,6 +23,8 @@ final class BatteryMonitor {
     /// Son okuma zamanı (değişmeyen okumalarda da ilerler; panelde "son güncelleme").
     private(set) var lastRefreshAt: Date?
     var energyApps: [BatteryEnergyApp] = []
+    /// Enerji kullanan uygulamalar en az bir kez okundu mu (panelde iskelet için).
+    private(set) var energyAppsLoaded = false
     var lastFullCharge: Date?
     var hasBattery: Bool { reading != nil }
 
@@ -251,10 +253,11 @@ final class BatteryMonitor {
     }
 
     func refreshHistoryExtras() async {
-        guard let store else { return }
+        guard let store else { energyAppsLoaded = true; return }
         lastFullCharge = await store.lastFullCharge()
-        if isPreview { return }
+        if isPreview { energyAppsLoaded = true; return }
         let ranks = await store.topConsumers(metric: .energy, window: .hours24, limit: 15)
+        defer { energyAppsLoaded = true }
         let total = ranks.reduce(0) { $0 + $1.value }
         guard total > 0 else { energyApps = []; return }
         let apps = ranks.prefix(5).map {

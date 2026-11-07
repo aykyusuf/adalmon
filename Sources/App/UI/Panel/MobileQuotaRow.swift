@@ -48,7 +48,7 @@ struct MobileQuotaRow: View {
         .padding(.horizontal, density.cardPadding)
         .padding(.vertical, density.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: .rect(cornerRadius: PanelMetricCard.cornerRadius, style: .continuous))
+        .background { PanelCardBackground(cornerRadius: PanelMetricCard.cornerRadius) }
         .help("Bugün mobil: \(Format.bytes(quota.usedBytes)) / \(Format.bytes(quota.capBytes)) · Wi-Fi bugün \(Format.bytes(data.wifiToday))")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Mobil kota")

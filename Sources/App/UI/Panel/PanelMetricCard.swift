@@ -40,8 +40,7 @@ struct PanelMetricCard: View {
         .padding(density.cardPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-                .fill(.quaternary)
+            PanelCardBackground(cornerRadius: Self.cornerRadius)
                 .overlay {
                     RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
                         .fill(LinearGradient(colors: [card.tint.opacity(0.14), card.tint.opacity(0)],

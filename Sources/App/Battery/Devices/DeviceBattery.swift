@@ -35,6 +35,12 @@ struct DeviceBattery: Identifiable, Equatable, Sendable, Codable {
         return (isApproximate ? "~" : "") + "%\(l)"
     }
 
+    /// "32%" biçimi (menü çubuğu öğesi ve panel satırı); yaklaşık değerde "~32%".
+    var percentText: String {
+        guard let l = summaryLevel else { return "—" }
+        return (isApproximate ? "~" : "") + "\(l)%"
+    }
+
     /// "5 dk önce", "dün 14:20" benzeri son görülme.
     func lastSeenText(now: Date = .now) -> String {
         if now.timeIntervalSince(lastSeen) < 90 { return "şimdi" }

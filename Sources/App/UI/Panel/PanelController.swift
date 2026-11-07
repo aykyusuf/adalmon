@@ -10,6 +10,8 @@ import SwiftUI
 final class PanelController {
     private let panel: PanelWindow
     private let glass = NSGlassEffectView()
+    /// Pencere içeriği: cam modda `glass`, opak modda doğrudan hosting view bunun içindedir.
+    private let root = NSView()
     private let model: AppModel
     private let session = PanelSession()
     private let live: PanelLiveSources
@@ -58,8 +60,8 @@ final class PanelController {
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.animationBehavior = .utilityWindow
-        glass.cornerRadius = 18
-        panel.contentView = glass
+        glass.cornerRadius = PanelSurface.cornerRadius
+        panel.contentView = root
         panel.onCancel = { [weak self] in self?.close() }
     }
 
@@ -87,6 +89,7 @@ final class PanelController {
         a.showCombined = { [weak self] in self?.setKind(.combined) }
         a.refreshBattery = { [weak self] in self?.model.battery.refreshNow() }
         a.setLowPowerMode = { on in Task { await ChargingModel.shared.setLowPowerMode(on) } }
+        a.setDevicePinned = { [weak self] id, name, pinned in self?.model.prefs.menuBar.setPinned(device: id, name: name, pinned) }
         return a
     }
 
@@ -99,13 +102,17 @@ final class PanelController {
         guard let g = geometry(for: button) else { return }
         anchorFrame = g.frame
         route = newRoute
+        // Canlı örnekleyici en başta başlar: ilk veri panel çizilirken hazırlanır.
+        live.activate(newRoute.kind)
+        loadBatteryExtras(for: newRoute.kind)
         session.maxHeight = Self.availableHeight(buttonMinY: g.frame.minY, visible: g.screen)
         session.kind = newRoute.kind
+        session.focusDeviceID = newRoute.focusDeviceID
         model.panelKind = newRoute.kind
         let host = NSHostingView(rootView: PanelRootView(model: model, session: session, live: live, actions: makeActions(),
                                                          onSizeChange: { [weak self] size in self?.resize(to: size) }))
         host.autoresizingMask = [.width, .height]
-        glass.contentView = host
+        mount(host)
         host.layoutSubtreeIfNeeded()
         var size = host.fittingSize
         if size.width < 100 || size.height < 100 { size = NSSize(width: PanelContent.width, height: 640) }
@@ -115,6 +122,7 @@ final class PanelController {
         x = min(max(x, g.screen.minX + 8), g.screen.maxX - size.width - 8)
         let y = g.frame.minY - size.height - Self.gapBelowButton
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        panel.invalidateShadow()
         // Esc yalnızca etkin uygulamanın anahtar penceresine gider: başka uygulama önde iken de çalışması için önce uygulamayı
         // etkinleştir, sonra paneli anahtar yap. Ana pencere (Dock modu) görünürken etkinleştirmek onu öne getirirdi: atlanır.
         if !NSApp.isActive && !model.mainWindowVisible {
@@ -132,7 +140,6 @@ final class PanelController {
             }
         }
         model.panelVisible = true
-        live.activate(newRoute.kind)
 
         outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             let location = NSEvent.mouseLocation
@@ -156,6 +163,7 @@ final class PanelController {
         anchorFrame = g.frame
         route = newRoute
         session.maxHeight = Self.availableHeight(buttonMinY: g.frame.minY, visible: g.screen)
+        session.focusDeviceID = newRoute.focusDeviceID
         setKind(newRoute.kind)
         var f = panel.frame
         let top = g.frame.minY - Self.gapBelowButton
@@ -170,6 +178,35 @@ final class PanelController {
         model.panelKind = kind
         route?.kind = kind
         live.activate(kind)
+        loadBatteryExtras(for: kind)
+    }
+
+    /// Pil/birleşik panel açılınca enerji kullanan uygulamalar (24 sa) okunur; panelde iskelet bununla çözülür.
+    private func loadBatteryExtras(for kind: PanelKind) {
+        guard kind.needsBatterySampling else { return }
+        let battery = model.battery
+        Task { await battery.refreshHistoryExtras() }
+    }
+
+    /// Hosting view'ı pencerenin içeriğine yerleştirir: cam modda `NSGlassEffectView` içine, opakta doğrudan.
+    private func mount(_ host: NSView) {
+        unmount()
+        switch model.prefs.panel.config.background {
+        case .glass:
+            glass.frame = root.bounds
+            glass.autoresizingMask = [.width, .height]
+            glass.contentView = host
+            root.addSubview(glass)
+        case .solid:
+            host.frame = root.bounds
+            root.addSubview(host)
+        }
+    }
+
+    private func unmount() {
+        glass.contentView = nil
+        glass.removeFromSuperview()
+        root.subviews.forEach { $0.removeFromSuperview() }
     }
 
     /// İçerik büyüyüp küçülünce paneli üst kenarı sabit kalacak şekilde yeniden boyutlandır.
@@ -180,14 +217,25 @@ final class PanelController {
         let top = f.maxY
         f.size.height = height
         f.origin.y = top - height
-        panel.setFrame(f, display: true, animate: false)
+        if panel.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            // Kart açılıp kapanırken pencere yüksekliği içeriğin animasyonuyla birlikte yumuşakça değişir.
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.16
+                ctx.allowsImplicitAnimation = true
+                panel.animator().setFrame(f, display: true)
+            }
+        } else {
+            panel.setFrame(f, display: true, animate: false)
+        }
+        panel.invalidateShadow()
     }
 
     func close() {
         guard panel.isVisible || route != nil else { return }
         panel.orderOut(nil)
-        glass.contentView = nil
+        unmount()
         route = nil
+        session.focusDeviceID = nil
         live.activate(nil)
         model.panelVisible = false
         model.panelKind = .combined

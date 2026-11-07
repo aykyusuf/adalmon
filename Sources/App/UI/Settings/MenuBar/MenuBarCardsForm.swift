@@ -70,6 +70,25 @@ struct MenuBarCardsForm: View {
                 }
             }
 
+            if !pinnedDevices.isEmpty {
+                Section {
+                    ForEach(pinnedDevices) { component in
+                        HStack {
+                            Label(component.deviceName ?? "Cihaz", systemImage: "iphone").labelStyle(.titleAndIcon)
+                            Spacer()
+                            Button("Menü çubuğundan kaldır", systemImage: "minus.circle") { store.remove(id: component.id) }
+                                .labelStyle(.iconOnly).buttonStyle(.borderless)
+                                .help("Menü çubuğundan kaldır")
+                        }
+                    }
+                } header: {
+                    Text("Cihaz pilleri")
+                } footer: {
+                    Text("Cihaz pilleri ayrı menü çubuğu öğeleridir. Yenisini Pil panelindeki cihaz satırından iğne ile ekle.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             Section {
                 Button("Gelişmiş düzenleyici…", systemImage: "slider.horizontal.3", action: onOpenAdvanced)
             } footer: {
@@ -80,6 +99,8 @@ struct MenuBarCardsForm: View {
         }
         .formStyle(.grouped)
     }
+
+    private var pinnedDevices: [MenuBarComponent] { store.config.components.filter { $0.deviceID != nil } }
 
     private var totalWidth: CGFloat {
         let items = store.config.enabledComponents

@@ -6,7 +6,7 @@ struct BatteryPanelModel: Equatable {
     var tint: Color
     var charging: Bool
     var statusTitle: String
-    /// "DOLANA KADAR" / "BOŞALANA KADAR" / "TAM ŞARJLI".
+    /// "DOLANA KADAR" / "BİTENE KADAR" / "TAM ŞARJLI".
     var untilLabel: String
     var untilValue: String
 
@@ -59,7 +59,7 @@ struct BatteryPanelModel: Equatable {
         case .full: ("TAM ŞARJLI", "∞")
         case .charging: ("DOLANA KADAR", r.timeToFullMinutes.map(BatteryFormat.clock) ?? "…")
         case .pluggedNotCharging: ("ŞARJ OLMUYOR", "∞")
-        case .onBattery: ("BOŞALANA KADAR", r.timeToEmptyMinutes.map(BatteryFormat.clock) ?? "…")
+        case .onBattery: ("BİTENE KADAR", r.timeToEmptyMinutes.map(BatteryFormat.clock) ?? "…")
         }
         let statusTitle: String = switch r.state {
         case .full: "Tam şarjlı"

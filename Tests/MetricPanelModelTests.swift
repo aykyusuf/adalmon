@@ -103,7 +103,7 @@ final class MetricPanelModelTests: XCTestCase {
     func testBatteryModelDischargingChargingAndFull() {
         let now = Date()
         let d = BatteryPanelModel.make(.sample, lastRefresh: now.addingTimeInterval(-180), now: now)
-        XCTAssertEqual(d.level, 78); XCTAssertEqual(d.untilLabel, "BOŞALANA KADAR"); XCTAssertEqual(d.untilValue, "3:12")
+        XCTAssertEqual(d.level, 78); XCTAssertEqual(d.untilLabel, "BİTENE KADAR"); XCTAssertEqual(d.untilValue, "3:12")
         XCTAssertEqual(d.healthText, "%86"); XCTAssertEqual(d.healthWord, "İyi"); XCTAssertEqual(d.cyclesText, "178/1.000")
         XCTAssertEqual(d.celsiusText, "31,4 °C"); XCTAssertEqual(d.fahrenheitText, "88,5 °F")
         XCTAssertEqual(d.currentDirection, .discharging); XCTAssertEqual(d.chargingStateText, "Deşarj oluyor")

@@ -28,7 +28,7 @@ struct ToastBanner: View {
                 }
             }
             .padding(8)
-            .background(.quaternary, in: .rect(cornerRadius: 10, style: .continuous))
+            .background { PanelCardBackground(cornerRadius: 10) }
             .transition(.move(edge: .top).combined(with: .opacity))
             .accessibilityElement(children: .combine)
         }

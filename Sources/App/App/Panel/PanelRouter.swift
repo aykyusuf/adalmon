@@ -4,9 +4,16 @@ import Foundation
 enum PanelRouter {
     /// - Parameter components: tıklanan öğedeki (hit-test sonrası tek) bileşenler; ilki birincildir.
     static func kind(for components: [MenuBarComponent], clickMode: PanelClickMode) -> PanelKind {
+        // Cihaz pili öğesi her zaman Pil panelini (o cihaza odaklı) açar.
+        if components.count == 1, components[0].deviceID != nil { return kind(for: components[0]) }
         if clickMode == .combined { return .combined }
         guard let primary = components.first else { return .combined }
         return kind(for: primary)
+    }
+
+    /// Tıklanan öğe tek bir cihaz pilinden oluşuyorsa cihaz kimliği (panel o cihaza kaydırılır).
+    static func focusDeviceID(for components: [MenuBarComponent]) -> String? {
+        components.count == 1 ? components[0].deviceID : nil
     }
 
     /// Bileşenin kendi paneli: elle seçim > pil bileşeni > birincil alanın kategorisi.
@@ -47,6 +54,14 @@ struct PanelRoute: Equatable, Sendable {
     /// Durum öğesinin kimliği (StatusBarController grup anahtarı).
     var itemKey: String
     var kind: PanelKind
+    /// Cihaz öğesinden açıldıysa cihaz kimliği (pil paneli o cihaza odaklanır).
+    var focusDeviceID: String?
+
+    init(itemKey: String, kind: PanelKind, focusDeviceID: String? = nil) {
+        self.itemKey = itemKey
+        self.kind = kind
+        self.focusDeviceID = focusDeviceID
+    }
 }
 
 enum PanelToggle {

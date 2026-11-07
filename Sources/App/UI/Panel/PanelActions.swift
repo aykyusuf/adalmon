@@ -18,6 +18,8 @@ struct PanelActions {
     var showCombined: @MainActor () -> Void = {}
     var refreshBattery: @MainActor () -> Void = {}
     var setLowPowerMode: @MainActor (_ on: Bool) -> Void = { _ in }
+    /// Cihaz pilini menü çubuğuna ekler / çıkarır (kimlik, ad, sabitle).
+    var setDevicePinned: @MainActor (_ id: String, _ name: String, _ pinned: Bool) -> Void = { _, _, _ in }
 
     /// Hiçbir şey yapmayan eylemler (önizleme/test).
     static var inert: PanelActions {
