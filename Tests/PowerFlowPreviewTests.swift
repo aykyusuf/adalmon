@@ -32,10 +32,21 @@ final class PowerFlowPreviewTests: XCTestCase {
         return r
     }
 
-    private func card(_ model: PowerFlowModel, phase: Double, reduceMotion: Bool = false) -> some View {
+    private func supplementing() -> BatteryReading {
+        var r = charging()
+        r.isCharging = false; r.amperageMA = -1_800
+        r.systemPowerMW = 30_000; r.batteryPowerMW = -12_000; r.systemLoadMW = 42_000
+        return r
+    }
+
+    private let usbDevice = PowerPortAccessory(id: "usb.1", name: "iPhone", kind: .phone, portName: "USB‑C 2", detail: "Apple · USB", allocatedMW: 7_500)
+    private let monitor = PowerPortAccessory(id: "port.USB‑C 4", name: "Harici ekran", kind: .display, portName: "USB‑C 4",
+                                             detail: "Realtek · DisplayPort", allocatedMW: nil, isDisplayOnly: true)
+
+    private func card(_ model: PowerFlowModel, width: CGFloat, phase: Double, reduceMotion: Bool = false) -> some View {
         PowerFlowView(model: model, forceAnimating: false, fixedPhase: reduceMotion ? nil : phase, forceReduceMotion: reduceMotion)
-            .padding(14)
-            .frame(width: 520)
+            .padding(8)
+            .frame(width: width)
             .background(Color(white: 0.16))
             .environment(\.colorScheme, .dark)
     }
@@ -53,15 +64,21 @@ final class PowerFlowPreviewTests: XCTestCase {
     }
 
     func testRenderPreviews() throws {
-        try render(card(PowerFlowModel.make(charging()), phase: 6), name: "pf-charging")
-        try render(card(PowerFlowModel.make(full()), phase: 6), name: "pf-full")
-        try render(card(PowerFlowModel.make(onBattery()), phase: 6), name: "pf-battery")
-        var withDevices = charging()
-        withDevices.accessories = [
-            PowerPortAccessory(id: "usb.1", name: "iPhone", kind: .phone, portName: "USB‑C 2", detail: "Apple · USB", allocatedMW: 7_500),
-            PowerPortAccessory(id: "usb.2", name: "Portable SSD", kind: .storage, portName: "USB‑C 3", detail: "USB", allocatedMW: nil)]
-        try render(card(PowerFlowModel.make(withDevices), phase: 6), name: "pf-devices")
-        try render(card(PowerFlowModel.make(charging()), phase: 0, reduceMotion: true), name: "pf-reduce-motion")
+        var withDevice = charging(); withDevice.accessories = [usbDevice, monitor]
+        var twoDevices = charging()
+        twoDevices.accessories = [usbDevice,
+                                  PowerPortAccessory(id: "usb.2", name: "Portable SSD", kind: .storage, portName: "USB‑C 3", detail: "USB", allocatedMW: 4_500), monitor]
+        var fullDisplay = full(); fullDisplay.accessories = [monitor]
+        var lowBattery = onBattery(); lowBattery.level = 14
+        let cases: [(String, PowerFlowModel)] = [
+            ("full", PowerFlowModel.make(full())), ("charging", PowerFlowModel.make(charging())), ("battery", PowerFlowModel.make(onBattery())),
+            ("supplementing", PowerFlowModel.make(supplementing())), ("device", PowerFlowModel.make(withDevice)),
+            ("devices2", PowerFlowModel.make(twoDevices)), ("full-chip", PowerFlowModel.make(fullDisplay)), ("low", PowerFlowModel.make(lowBattery)),
+        ]
+        for (name, model) in cases {
+            for width in [CGFloat(344), 640] { try render(card(model, width: width, phase: 6), name: "pf2-\(name)-\(Int(width))") }
+        }
+        try render(card(PowerFlowModel.make(charging()), width: 344, phase: 0, reduceMotion: true), name: "pf2-reduce-motion-344")
     }
 
     /// 2 sn @ 30 fps = 60 kare: yalnız kenar Canvas'ının CPU çizimi (ImageRenderer ile). Gerçek ekrandaki GPU/CA commit maliyetini
@@ -72,14 +89,14 @@ final class PowerFlowPreviewTests: XCTestCase {
         r.accessories = [PowerPortAccessory(id: "usb.1", name: "iPhone", kind: .phone, portName: "USB‑C 2", detail: "Apple · USB", allocatedMW: 7_500)]
         let model = BatteryPanelModel.make(r, lastRefresh: .now)
         let blocks = VStack(alignment: .leading, spacing: 10) { BatteryInfoBlocks(model: model, actions: .inert) }
-            .padding(12).frame(width: 540).background(Color(white: 0.16)).environment(\.colorScheme, .dark)
-        try render(blocks, name: "pf-panel-info")
+            .padding(12).frame(width: 344).background(Color(white: 0.16)).environment(\.colorScheme, .dark)
+        try render(blocks, name: "pf2-panel-info")
         let page = ChartCard(title: "Güç akışı", symbol: "bolt.circle", trailing: { Text("Adaptör bağlı").font(.callout).foregroundStyle(.secondary) },
                              footer: "Adaptör Mac'e ve (şarj oluyorsa) pile dağılır; kalınlık ve hız watt ile orantılı.") {
             PowerFlowView(model: PowerFlowModel.make(r), forceAnimating: false, fixedPhase: 5)
         }
-        .padding(16).frame(width: 900).background(Color(white: 0.11)).environment(\.colorScheme, .dark)
-        try render(page, name: "pf-page-card")
+        .padding(16).frame(width: 640).background(Color(white: 0.11)).environment(\.colorScheme, .dark)
+        try render(page, name: "pf2-page-card")
     }
 
     /// Gerçek makinede (read-only IOKit): model üretilir, aksesuarlar listelenir.
@@ -105,7 +122,7 @@ final class PowerFlowPreviewTests: XCTestCase {
             clock.advance(to: t, edges: model.edges)
             let phases = clock.phases
             let view = Canvas { ctx, size in PowerFlowCanvas.draw(&ctx, size: size, model: model, phases: phases, motion: .dots, hovered: nil) }
-                .frame(width: 500, height: PowerFlowModel.height)
+                .frame(width: 500, height: PowerFlowGeometry.height(for: model))
             let renderer = ImageRenderer(content: view)
             renderer.scale = 1
             let start = DispatchTime.now().uptimeNanoseconds

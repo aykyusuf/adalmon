@@ -7,6 +7,7 @@ extension FlowTint {
         case .green: .green
         case .blue: .blue
         case .orange: .orange
+        case .red: .red
         case .teal: .teal
         case .gray: .gray
         }
@@ -39,37 +40,52 @@ struct FlowCurve: Equatable {
     }
 }
 
+/// Deterministik ızgara: sütunlar -1/0/1 (Adaptör · Mac · aygıtlar), satırlar 0/1 (Mac satırı · Pil satırı).
+/// Aygıt yoksa Adaptör–Mac–Pil grubu yatayda ortalanır. Kenarlar daire çevreleri arasında düz çizgilerdir.
 enum PowerFlowGeometry {
-    static let nodeRadius: CGFloat = 19
-    /// Düğüm halkasından kenarın başladığı boşluk.
+    static let nodeRadius: CGFloat = 26
     static let gap: CGFloat = 4
+    static let labelHeight: CGFloat = 30
+    static let singleLineLabelHeight: CGFloat = 18
+    static let labelSpacing: CGFloat = 3
+    static let rowGap: CGFloat = 100
+    static let edgeInset: CGFloat = 40
+    static let maxColumnSpacing: CGFloat = 150
 
-    static func center(_ n: FlowNode, width: CGFloat) -> CGPoint {
-        let half: CGFloat = 50
-        return CGPoint(x: min(max(n.x * width, half), max(half, width - half)), y: n.y)
+    static func rowY(_ row: Int) -> CGFloat { labelHeight + labelSpacing + nodeRadius + CGFloat(row) * rowGap }
+
+    static func height(for model: PowerFlowModel) -> CGFloat {
+        let bottomLabel = model.nodes.contains { $0.row == 1 && $0.id != .battery } ? labelHeight : singleLineLabelHeight
+        return rowY(1) + nodeRadius + labelSpacing + bottomLabel + 2
     }
 
-    /// Kenarın eğrisi: yatay komşular yatay teğetle, dikey komşular dikey teğetle bağlanır.
+    static func columnSpacing(width: CGFloat) -> CGFloat { min(maxColumnSpacing, max(60, (width - 2 * edgeInset) / 2)) }
+
+    static func center(_ n: FlowNode, in model: PowerFlowModel, width: CGFloat) -> CGPoint {
+        let shift: CGFloat = model.hasDeviceNodes ? 0 : 0.5 // aygıt yok: Adaptör–Mac grubu ortalanır
+        return CGPoint(x: width / 2 + (CGFloat(n.column) + shift) * columnSpacing(width: width), y: rowY(n.row))
+    }
+
     static func curve(for edge: FlowEdge, in model: PowerFlowModel, width: CGFloat) -> FlowCurve? {
         guard let a = model.node(edge.from), let b = model.node(edge.to) else { return nil }
-        let pa = center(a, width: width), pb = center(b, width: width)
+        let pa = center(a, in: model, width: width), pb = center(b, in: model, width: width)
+        let dx = pb.x - pa.x, dy = pb.y - pa.y
+        let len = max(0.001, (dx * dx + dy * dy).squareRoot())
         let r = nodeRadius + gap
-        if abs(pa.x - pb.x) < 2 {
-            let dir: CGFloat = pb.y > pa.y ? 1 : -1
-            let p0 = CGPoint(x: pa.x, y: pa.y + dir * r), p3 = CGPoint(x: pb.x, y: pb.y - dir * r)
-            let m = (p0.y + p3.y) / 2
-            return FlowCurve(p0: p0, c1: CGPoint(x: p0.x, y: m), c2: CGPoint(x: p3.x, y: m), p3: p3)
-        }
-        let dir: CGFloat = pb.x > pa.x ? 1 : -1
-        let p0 = CGPoint(x: pa.x + dir * r, y: pa.y), p3 = CGPoint(x: pb.x - dir * r, y: pb.y)
-        let m = (p0.x + p3.x) / 2
-        return FlowCurve(p0: p0, c1: CGPoint(x: m, y: p0.y), c2: CGPoint(x: m, y: p3.y), p3: p3)
+        let p0 = CGPoint(x: pa.x + dx / len * r, y: pa.y + dy / len * r)
+        let p3 = CGPoint(x: pb.x - dx / len * r, y: pb.y - dy / len * r)
+        let c1 = CGPoint(x: p0.x + (p3.x - p0.x) / 3, y: p0.y + (p3.y - p0.y) / 3)
+        let c2 = CGPoint(x: p0.x + (p3.x - p0.x) * 2 / 3, y: p0.y + (p3.y - p0.y) * 2 / 3)
+        return FlowCurve(p0: p0, c1: c1, c2: c2, p3: p3)
+    }
+
+    /// Etiket kenarın ortasında durur; dikey kenarda noktaların görünmesi için yanına (sola) kayar.
+    static func labelCenter(for curve: FlowCurve) -> CGPoint {
+        let mid = curve.point(0.5)
+        return abs(curve.p0.x - curve.p3.x) < 2 ? CGPoint(x: mid.x - 38, y: mid.y) : mid
     }
 }
 
-// MARK: Faz saati
-
-/// Kenar başına nokta fazını (pt) hızla İNTEGRE eder: hız değişince noktalar sıçramaz. Gözlemlenmez; yalnız Canvas çizerken yazılır.
 final class FlowClock: @unchecked Sendable {
     private var last: Date?
     private(set) var phases: [String: Double] = [:]
@@ -191,12 +207,9 @@ private struct WindowVisibilityReader: NSViewRepresentable {
 /// ≤ 30 fps çalışır; aksi halde TimelineView durur (CPU sıfır). Hareketi azalt açıkken durağan oklar çizilir.
 struct PowerFlowView: View {
     let model: PowerFlowModel
-    /// Test/önizleme: nil = normal geçit; true/false = geçidi atla.
     var forceAnimating: Bool?
-    /// Test/önizleme: tüm noktaları bu faza (pt) kilitler.
     var fixedPhase: Double?
     var showsHoverCaption = true
-    /// Test/önizleme: Hareketi azalt görünümünü zorla (durağan oklar).
     var forceReduceMotion = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -222,7 +235,7 @@ struct PowerFlowView: View {
     private var motion: PowerFlowCanvas.Motion { reduceMotion || forceReduceMotion ? .arrows : .dots }
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             GeometryReader { geo in
                 let width = geo.size.width
                 ZStack(alignment: .topLeading) {
@@ -231,7 +244,8 @@ struct PowerFlowView: View {
                     ForEach(model.nodes) { node in nodeView(node, width: width) }
                 }
             }
-            .frame(height: PowerFlowModel.height)
+            .frame(height: PowerFlowGeometry.height(for: model))
+            if !model.chips.isEmpty { chipRow }
             if showsHoverCaption {
                 Text(hoverText ?? "Ayrıntı için bir düğümün ya da değerin üzerine gel")
                     .font(.caption2).foregroundStyle(hoverText == nil ? .tertiary : .secondary)
@@ -253,10 +267,9 @@ struct PowerFlowView: View {
         guard let hover else { return nil }
         if let n = model.nodes.first(where: { "n." + String(describing: $0.id) == hover }) { return n.tooltip.replacingOccurrences(of: "\n", with: " · ") }
         if let e = model.edges.first(where: { "e." + $0.id == hover }) { return e.tooltip.replacingOccurrences(of: "\n", with: " · ") }
+        if let c = model.chips.first(where: { "c." + $0.id == hover }) { return c.tooltip.replacingOccurrences(of: "\n", with: " · ") }
         return nil
     }
-
-    // MARK: Kenarlar
 
     @ViewBuilder
     private var edgeLayer: some View {
@@ -278,7 +291,7 @@ struct PowerFlowView: View {
     private var edgeHover: String? { hover.flatMap { $0.hasPrefix("e.") ? String($0.dropFirst(2)) : nil } }
 
     private func edgeLabel(_ edge: FlowEdge, width: CGFloat) -> some View {
-        let mid = PowerFlowGeometry.curve(for: edge, in: model, width: width)?.point(0.5) ?? .zero
+        let mid = PowerFlowGeometry.curve(for: edge, in: model, width: width).map(PowerFlowGeometry.labelCenter) ?? .zero
         return Text(edge.label)
             .font(.system(size: 10.5, weight: .semibold, design: .rounded)).monospacedDigit()
             .foregroundStyle(edge.isActive ? edge.tint.color : .secondary)
@@ -290,20 +303,29 @@ struct PowerFlowView: View {
             .help(edge.tooltip)
     }
 
-    // MARK: Düğümler
-
     private func nodeView(_ node: FlowNode, width: CGFloat) -> some View {
-        let c = PowerFlowGeometry.center(node, width: width)
+        let c = PowerFlowGeometry.center(node, in: model, width: width)
         let key = "n." + String(describing: node.id)
-        let labelH: CGFloat = 30, circle = PowerFlowGeometry.nodeRadius * 2
-        let block = circle + 2 + labelH
-        let dy: CGFloat = node.labelSide == .below ? (block / 2 - circle / 2) : -(block / 2 - circle / 2)
-        let label = VStack(spacing: 0) {
-            Text(node.value).font(.system(.callout, design: .rounded, weight: .semibold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
-            Text(node.caption).font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        let singleLine = node.id == .battery
+        let labelH = singleLine ? PowerFlowGeometry.singleLineLabelHeight : PowerFlowGeometry.labelHeight
+        let spacing = PowerFlowGeometry.labelSpacing
+        let dy = (labelH + spacing) / 2 * (node.labelSide == .below ? 1 : -1)
+        let label = Group {
+            if singleLine {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(node.value).font(.system(.callout, design: .rounded, weight: .semibold)).monospacedDigit()
+                    Text("· " + node.caption).font(.caption2).foregroundStyle(.secondary)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    Text(node.value).font(.system(.callout, design: .rounded, weight: .semibold)).monospacedDigit().minimumScaleFactor(0.8)
+                    Text(node.caption).font(.caption2).foregroundStyle(.secondary).truncationMode(.middle)
+                }
+            }
         }
-        .frame(width: 96, height: labelH)
-        return VStack(spacing: 2) {
+        .lineLimit(1)
+        .frame(width: singleLine ? 150 : 100, height: labelH, alignment: node.labelSide == .above ? .bottom : .top)
+        return VStack(spacing: spacing) {
             if node.labelSide == .above { label }
             nodeDisc(node, highlighted: hover == key)
             if node.labelSide == .below { label }
@@ -317,19 +339,107 @@ struct PowerFlowView: View {
 
     private func nodeDisc(_ node: FlowNode, highlighted: Bool) -> some View {
         let tint = node.tint.color
+        let size = PowerFlowGeometry.nodeRadius * 2
         return ZStack {
             Circle().fill(tint.opacity(highlighted ? 0.26 : 0.15))
             if let level = node.level {
-                Circle().stroke(Color.primary.opacity(0.10), lineWidth: 3.5)
-                Circle().trim(from: 0, to: CGFloat(level) / 100)
-                    .stroke(tint, style: StrokeStyle(lineWidth: 3.5, lineCap: .round)).rotationEffect(.degrees(-90))
-                Image(systemName: node.isActive && node.tint == .green ? "bolt.fill" : "battery.100percent")
-                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(tint)
+                FlowBatteryGlyph(level: level, tint: tint, charging: node.isCharging)
             } else {
-                Image(systemName: node.symbol).font(.system(size: 16, weight: .medium)).foregroundStyle(tint)
+                Image(systemName: node.symbol).font(.system(size: 20, weight: .medium)).foregroundStyle(tint)
             }
         }
-        .frame(width: PowerFlowGeometry.nodeRadius * 2, height: PowerFlowGeometry.nodeRadius * 2)
+        .frame(width: size, height: size)
         .overlay(Circle().strokeBorder(tint.opacity(highlighted ? 0.8 : 0), lineWidth: 1.5))
+    }
+
+    private var chipRow: some View {
+        FlowChipWrap(spacing: 5) {
+            Text("Bağlı:").font(.caption2).foregroundStyle(.tertiary)
+            ForEach(model.chips) { chip in
+                let key = "c." + chip.id
+                Label(chip.title, systemImage: chip.symbol)
+                    .font(.caption2).foregroundStyle(hover == key ? .primary : .secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Color.primary.opacity(hover == key ? 0.12 : 0.07), in: .capsule)
+                    .onHover { hover = $0 ? key : (hover == key ? nil : hover) }
+                    .help(chip.tooltip)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// Yatay kapsül pil simgesi (uçta çıkıntı); seviyeye kadar dolu, şarjda şimşek bindirmeli.
+struct FlowBatteryGlyph: View {
+    let level: Int
+    let tint: Color
+    let charging: Bool
+
+    private let bodyW: CGFloat = 30, bodyH: CGFloat = 15
+
+    var body: some View {
+        let fraction = CGFloat(min(100, max(0, level))) / 100
+        let inset: CGFloat = 2
+        let fillW = level <= 0 ? 0 : max(3, (bodyW - 2 * inset) * fraction)
+        HStack(spacing: 1.5) {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 4.5, style: .continuous).strokeBorder(tint.opacity(0.85), lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: 2.5, style: .continuous).fill(tint)
+                    .frame(width: fillW, height: bodyH - 2 * inset - 1).padding(.leading, inset + 0.5)
+                if charging {
+                    Image(systemName: "bolt.fill").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.45), radius: 0.8)
+                        .frame(width: bodyW)
+                }
+            }
+            .frame(width: bodyW, height: bodyH)
+            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0, bottomTrailingRadius: 1.5, topTrailingRadius: 1.5)
+                .fill(tint.opacity(0.85)).frame(width: 2.5, height: 6)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Çipleri satır satır dizer, her satırı ortalar.
+private struct FlowChipWrap: Layout {
+    var spacing: CGFloat = 5
+
+    private func rows(_ width: CGFloat, _ subviews: Subviews) -> [[Int]] {
+        var rows: [[Int]] = [[]]
+        var x: CGFloat = 0
+        for (i, v) in subviews.enumerated() {
+            let w = v.sizeThatFits(.unspecified).width
+            if x > 0, x + w > width { rows.append([]); x = 0 }
+            rows[rows.count - 1].append(i)
+            x += w + spacing
+        }
+        return rows
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        let rs = rows(width, subviews)
+        var height: CGFloat = 0, maxW: CGFloat = 0
+        for r in rs {
+            let sizes = r.map { subviews[$0].sizeThatFits(.unspecified) }
+            height += (sizes.map(\.height).max() ?? 0) + (height > 0 ? spacing : 0)
+            maxW = max(maxW, sizes.map(\.width).reduce(0, +) + spacing * CGFloat(max(0, sizes.count - 1)))
+        }
+        return CGSize(width: width.isFinite ? width : maxW, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for r in rows(bounds.width, subviews) {
+            let sizes = r.map { subviews[$0].sizeThatFits(.unspecified) }
+            let rowH = sizes.map(\.height).max() ?? 0
+            var x = bounds.midX - (sizes.map(\.width).reduce(0, +) + spacing * CGFloat(max(0, sizes.count - 1))) / 2
+            for (k, i) in r.enumerated() {
+                subviews[i].place(at: CGPoint(x: x, y: y + (rowH - sizes[k].height) / 2), proposal: .unspecified)
+                x += sizes[k].width + spacing
+            }
+            y += rowH + spacing
+        }
     }
 }

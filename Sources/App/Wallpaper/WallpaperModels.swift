@@ -33,13 +33,13 @@ struct WallpaperMediaInfo: Codable, Equatable, Sendable {
         let longSide = max(width, height), shortSide = min(width, height)
         let label: String
         switch shortSide {
-        case 2160...: label = "4K"
+        // 4K: 3840x2160 ve sinematik kırpmalar (3840x1600 gibi, uzun kenar >= 3800) da 4K sayılır.
+        case _ where shortSide >= 2160 || longSide >= 3800: label = "4K"
         case 1440...: label = "1440p"
         case 1000...: label = "1080p"
         case 700...: label = "720p"
         default: label = "\(shortSide)p"
         }
-        _ = longSide
         return "\(label) \(codec)"
     }
 }

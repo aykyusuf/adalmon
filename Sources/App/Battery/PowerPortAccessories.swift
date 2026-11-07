@@ -21,6 +21,10 @@ struct PowerPortAccessory: Equatable, Sendable, Identifiable {
     var allocatedMW: Int?
     /// Veri yolu yok (yalnız DisplayPort/CC): Mac'ten güç çektiği bilinmiyor.
     var isDisplayOnly = false
+
+    /// Güç akışı diyagramında düğüm olur: Mac'ten ayrılan güç biliniyor ve yalnız görüntü bağlantısı değil.
+    /// Aksi halde (görüntü-yalnız ya da çekişi bilinmiyor) diyagramın altında çip olarak gösterilir.
+    var drawsKnownPower: Bool { !isDisplayOnly && allocatedMW != nil }
 }
 
 /// Saf: IORegistry sözlüklerinden aksesuar listesi. Testlerde sahte sözlüklerle beslenir.
