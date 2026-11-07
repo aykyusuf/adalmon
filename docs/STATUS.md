@@ -96,3 +96,9 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 - Kestirmeler: `Sources/App/Intents/` (Pil durumu, Cihaz pilleri, Mobil veri, Adalmon'u aç, Hız sınırı koy/kaldır, Mobilde engelle/kaldır) + `AdalmonShortcuts` Türkçe ifadeler. Ayarlar › Widget'lar (canlı önizleme + ekleme adımları) ve Kestirmeler.
 - URL yönlendirme: `SettingsRouter.handle(url:)`; Dock modu kapalıysa en yakın ayar bölümü açılır.
 - DOĞRULANMADI (kullanıcı gerekir): widget galerisinde görünme/yerleştirme, gerçek app group dosyası okuma (sandbox), Kestirmeler/Siri ifadeleri (geliştirme dili en; ifadeler Türkçe), widget yenileme bütçesi.
+
+## Faz 5 — metrik başına panel (2026-11-07) — kurulmadı, commit yok
+- Menü çubuğu öğesine tıklayınca birincil metriğin kendi paneli açılır (CPU, GPU, Bellek, Disk, Ağ, Sıcaklık, Pil); tek öğe (birleşik gösterim) modunda tıklanan x konumundaki bileşen seçilir. Ayarlar › Menü çubuğu › "Tıklayınca" (metriğin kendi paneli / birleşik panel); gelişmiş düzenleyicide bileşen başına "Tıklayınca açılacak panel". `PanelRouter`, `PanelToggle` (saf), `MenuBarConfig.clickMode`, `MenuBarComponent.panelKind`.
+- Tek `PanelController` penceresi + tek hosting view; `PanelSession.kind` ile içerik değişir (başka öğeye tıklayınca titremeden, aynı öğe/içerikte kapanır). Pil/cihaz örnekleme yalnızca Pil/Birleşik panelde; süreç örnekleyici (`PanelLiveSources`, kendi `LiveResourceSampler`ı) yalnızca CPU/GPU/Bellek panelleri açıkken, Disk "en çok yazanlar" 60 sn'de bir.
+- Kod: `Sources/App/UI/Panel/Metric/*`, `App/Panel/PanelKind|PanelRouter`. Testler: PanelRoutingTests, MetricPanelModelTests, PanelControllerTests, MetricPanelPreviewTests.
+- Açık: Esc için panel açılırken uygulama etkinleştirilir (ana pencere görünürken atlanır); başka uygulama önde iken gerçek tıklamayla elle doğrulanmadı. CPU frekansı yok (kaynak yok). Düşük güç modu anahtarı yalnızca yardımcı kurulu/açıkken değiştirilebilir.

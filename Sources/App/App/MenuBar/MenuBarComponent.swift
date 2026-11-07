@@ -24,6 +24,8 @@ struct MenuBarComponent: Codable, Equatable, Identifiable, Sendable {
     /// Sabitlenmiş cihaz (`DeviceBattery.id`); nil = Mac pili. Yalnızca `.batteryCapsule` görünümüyle anlamlıdır.
     var deviceID: String?
     var deviceName: String?
+    /// Tıklayınca açılacak panel; nil = otomatik (birincil alanın metriği). Gelişmiş düzenleyicide seçilir.
+    var panelKind: PanelKind?
 
     init(_ primary: DataField, _ secondary: DataField? = nil, tertiary: DataField? = nil, visual: ComponentVisual = .text,
          colorMode: ColorMode = .monochrome, colorTarget: ColorTarget = .visual,
@@ -49,7 +51,7 @@ struct MenuBarComponent: Codable, Equatable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, primary, secondary, tertiary, visual, colorMode, customColor, gradientStart, gradientEnd
-        case colorTarget, showLabel, showValue, unit, enabled, thresholds, layout, battery, deviceID, deviceName
+        case colorTarget, showLabel, showValue, unit, enabled, thresholds, layout, battery, deviceID, deviceName, panelKind
     }
 
     init(from decoder: any Decoder) throws {
@@ -73,6 +75,7 @@ struct MenuBarComponent: Codable, Equatable, Identifiable, Sendable {
         battery = (try? c.decodeIfPresent(BatteryGlyphOptions.self, forKey: .battery)) ?? BatteryGlyphOptions()
         deviceID = try? c.decodeIfPresent(String.self, forKey: .deviceID)
         deviceName = try? c.decodeIfPresent(String.self, forKey: .deviceName)
+        panelKind = try? c.decodeIfPresent(PanelKind.self, forKey: .panelKind)
         self = normalized()
     }
 
@@ -119,6 +122,7 @@ struct MenuBarComponent: Codable, Equatable, Identifiable, Sendable {
     func isEquivalent(to other: MenuBarComponent) -> Bool {
         var a = self
         a.id = other.id
+        a.panelKind = other.panelKind // tıklama paneli görünüm eşleştirmesini (preset) etkilemez
         return a == other
     }
 

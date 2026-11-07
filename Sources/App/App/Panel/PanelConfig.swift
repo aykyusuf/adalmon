@@ -11,6 +11,8 @@ struct PanelConfig: Codable, Equatable, Sendable {
     /// Başlığından daraltılmış bölümler.
     var collapsed: Set<PanelSection>
     var density: PanelDensity
+    /// Metrik panellerinde (pil ayrıntı bölümleri vb.) daraltılmış bölüm kimlikleri; hatırlanır.
+    var detailCollapsed: Set<String> = []
     var last60Rows: Int { didSet { last60Rows = Self.clamp(last60Rows) } }
     var todayRows: Int { didSet { todayRows = Self.clamp(todayRows) } }
 
@@ -23,7 +25,9 @@ struct PanelConfig: Codable, Equatable, Sendable {
          collapsed: Set<PanelSection> = [],
          density: PanelDensity = .compact,
          last60Rows: Int = 3,
-         todayRows: Int = 5) {
+         todayRows: Int = 5,
+         detailCollapsed: Set<String> = []) {
+        self.detailCollapsed = detailCollapsed
         self.sections = Self.normalized(sections)
         self.cards = Self.normalized(cards)
         self.collapsed = collapsed
@@ -33,7 +37,7 @@ struct PanelConfig: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case sections, cards, collapsed, density, last60Rows, todayRows
+        case sections, cards, collapsed, density, last60Rows, todayRows, detailCollapsed
     }
 
     /// Eksik ya da bilinmeyen alanlar varsayılana düşer; böylece eski kayıtlar yeni sürümde de açılır.
@@ -50,7 +54,8 @@ struct PanelConfig: Codable, Equatable, Sendable {
             collapsed: collapsed.map(Set.init) ?? d.collapsed,
             density: (try? c.decodeIfPresent(PanelDensity.self, forKey: .density)) ?? d.density,
             last60Rows: (try? c.decodeIfPresent(Int.self, forKey: .last60Rows)) ?? d.last60Rows,
-            todayRows: (try? c.decodeIfPresent(Int.self, forKey: .todayRows)) ?? d.todayRows
+            todayRows: (try? c.decodeIfPresent(Int.self, forKey: .todayRows)) ?? d.todayRows,
+            detailCollapsed: (try? c.decodeIfPresent(Set<String>.self, forKey: .detailCollapsed)) ?? []
         )
     }
 
@@ -68,6 +73,12 @@ struct PanelConfig: Codable, Equatable, Sendable {
     }
 
     func isCollapsed(_ section: PanelSection) -> Bool { collapsed.contains(section) }
+
+    func isDetailCollapsed(_ id: String) -> Bool { detailCollapsed.contains(id) }
+
+    mutating func toggleDetailCollapsed(_ id: String) {
+        if detailCollapsed.contains(id) { detailCollapsed.remove(id) } else { detailCollapsed.insert(id) }
+    }
 
     mutating func setVisible(_ section: PanelSection, _ visible: Bool) {
         guard let i = sections.firstIndex(where: { $0.section == section }) else { return }

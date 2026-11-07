@@ -10,6 +10,14 @@ struct PanelActions {
     var openApp: @MainActor () -> Void
     var openSettings: @MainActor () -> Void
     var quit: @MainActor () -> Void
+    /// Metrik panelleri: Dock modunda Süreçler sayfasını (sekme ile), değilse Etkinlik Monitörü'nü açar.
+    var openProcesses: @MainActor (_ tab: ProcessesTab) -> Void = { _ in }
+    var openActivityMonitor: @MainActor () -> Void = {}
+    var openRoute: @MainActor (_ route: AdalmonRoute) -> Void = { _ in }
+    /// "Birleşik görünüm" bağlantısı.
+    var showCombined: @MainActor () -> Void = {}
+    var refreshBattery: @MainActor () -> Void = {}
+    var setLowPowerMode: @MainActor (_ on: Bool) -> Void = { _ in }
 
     /// Hiçbir şey yapmayan eylemler (önizleme/test).
     static var inert: PanelActions {

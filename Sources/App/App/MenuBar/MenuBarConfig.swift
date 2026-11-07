@@ -9,9 +9,13 @@ struct MenuBarConfig: Codable, Equatable, Sendable {
     var spacing: Double = 6
     var labelOpacity: Double = 0.8
     var showUnits = true
+    /// Tıklayınca: metriğin kendi paneli (varsayılan) ya da birleşik panel.
+    var clickMode: PanelClickMode = .perMetric
 
     init(components: [MenuBarComponent], displayMode: MenuBarDisplayMode = .combined,
-         spacing: Double = 6, labelOpacity: Double = 0.8, showUnits: Bool = true) {
+         spacing: Double = 6, labelOpacity: Double = 0.8, showUnits: Bool = true,
+         clickMode: PanelClickMode = .perMetric) {
+        self.clickMode = clickMode
         self.components = components
         self.displayMode = displayMode
         self.spacing = spacing
@@ -19,7 +23,7 @@ struct MenuBarConfig: Codable, Equatable, Sendable {
         self.showUnits = showUnits
     }
 
-    private enum CodingKeys: String, CodingKey { case components, items, displayMode, spacing, labelOpacity, showUnits }
+    private enum CodingKeys: String, CodingKey { case components, items, displayMode, spacing, labelOpacity, showUnits, clickMode }
 
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -34,6 +38,7 @@ struct MenuBarConfig: Codable, Equatable, Sendable {
         spacing = try c.decodeIfPresent(Double.self, forKey: .spacing) ?? 6
         labelOpacity = try c.decodeIfPresent(Double.self, forKey: .labelOpacity) ?? 0.8
         showUnits = try c.decodeIfPresent(Bool.self, forKey: .showUnits) ?? true
+        clickMode = (try? c.decodeIfPresent(PanelClickMode.self, forKey: .clickMode)) ?? .perMetric
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -43,6 +48,7 @@ struct MenuBarConfig: Codable, Equatable, Sendable {
         try c.encode(spacing, forKey: .spacing)
         try c.encode(labelOpacity, forKey: .labelOpacity)
         try c.encode(showUnits, forKey: .showUnits)
+        try c.encode(clickMode, forKey: .clickMode)
     }
 
     var enabledComponents: [MenuBarComponent] { components.filter(\.enabled) }

@@ -10,4 +10,13 @@ final class PanelWindow: NSPanel {
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
     }
+
+    /// Esc, SwiftUI içeriği olayı yutsa bile pencere düzeyinde yakalanır (cancelOperation her zaman çağrılmıyor).
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 53, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty {
+            onCancel?()
+            return
+        }
+        super.sendEvent(event)
+    }
 }
