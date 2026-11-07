@@ -128,7 +128,7 @@ final class SaverContentStoreTests: XCTestCase {
         XCTAssertEqual(SaverSelection.resolve(settings: saver, wallpaper: wallpaper, items: items).map(\.name), ["a", "b"], "görüntü ve eksik dosya dışarıda")
         saver.source = .picked
         saver.pickedIDs = [b.id, gone.id, img.id, a.id]
-        XCTAssertEqual(SaverSelection.resolve(settings: saver, wallpaper: wallpaper, items: items).map(\.name), ["b", "a"])
+        XCTAssertEqual(SaverSelection.resolve(settings: saver, wallpaper: wallpaper, items: items).map(\.name), ["a", "b"], "elle seçimde kütüphane sırası")
         let src = SaverSelection.sources(from: [a])
         XCTAssertEqual(src.first?.width, 3840)
         XCTAssertTrue(SaverSelection.isStale(playlist: nil, selection: src))

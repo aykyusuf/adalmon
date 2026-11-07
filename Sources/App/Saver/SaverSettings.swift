@@ -10,8 +10,8 @@ enum SaverSource: String, Codable, CaseIterable, Identifiable, Sendable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .sameAsWallpaper: "Duvar kâğıdıyla aynı"
-        case .picked: "Seçtiklerim"
+        case .sameAsWallpaper: "Duvar kâğıdıyla aynı (önerilen)"
+        case .picked: "Farklı videolar"
         }
     }
 }

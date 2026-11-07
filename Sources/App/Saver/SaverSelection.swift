@@ -11,7 +11,9 @@ enum SaverSelection {
         let usable = eligible(items)
         switch settings.source {
         case .picked:
-            return settings.pickedIDs.compactMap { id in usable.first { $0.id == id } }
+            // Kütüphane sırası: ızgaradaki sıra ile oynatma sırası aynı olur (tıklama sırası önemsizdir).
+            let picked = Set(settings.pickedIDs)
+            return usable.filter { picked.contains($0.id) }
         case .sameAsWallpaper:
             switch wallpaper.playlistMode {
             case .single:
@@ -34,6 +36,6 @@ enum SaverSelection {
     /// Diskteki liste seçimle uyuşuyor mu (sıra ve kimlikler)?
     static func isStale(playlist: SaverPlaylist?, selection: [SaverContentStore.Source]) -> Bool {
         guard let playlist else { return !selection.isEmpty }
-        return Set(playlist.items.map(\.id)) != Set(selection.map(\.id))
+        return playlist.items.map(\.id) != selection.map(\.id)
     }
 }

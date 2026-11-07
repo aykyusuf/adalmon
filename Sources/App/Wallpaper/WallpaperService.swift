@@ -16,6 +16,10 @@ final class WallpaperService {
         var status: AerialStatus
         var busy = false
         var message: String?
+        /// Son kayıt denemesi başarısız oldu (`message` nedenini söyler).
+        var failed = false
+        /// Uyumluluk en az bir kez denetlendi (ilk denetimden önce yanlış hata göstermemek için).
+        var checked = false
     }
 
     var settings: WallpaperSettings {
@@ -30,24 +34,34 @@ final class WallpaperService {
     private(set) var conversions: [UUID: Conversion] = [:]
     var message: String?
     private(set) var aerial = Aerial(compatibility: .unsupported("Denetlenmedi"), status: .notInstalled)
+    /// En son sisteme kaydettiğimiz video (kalıcı): geçerli videoyla karşılaştırılarak yeniden kayıt gerekip gerekmediği anlaşılır.
+    private(set) var aerialRegistration: AerialRegistration?
 
     @ObservationIgnored let controller: WallpaperController
     @ObservationIgnored let directory: URL
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let installer: AerialInstaller
     @ObservationIgnored private var conversionTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var aerialTask: Task<Void, Never>?
+    @ObservationIgnored private var aerialFailed: AerialRegistration?
+    @ObservationIgnored private var aerialSource: AerialRegistration?
+    @ObservationIgnored private var aerialDirty = false
+    @ObservationIgnored let aerialDebounce: Duration
 
     private static let settingsKey = "wallpaper.settings"
+    private static let aerialRegistrationKey = "wallpaper.aerialRegistration"
 
     init(directory: URL = AppEnvironment.supportDirectory.appending(path: "Wallpapers", directoryHint: .isDirectory),
          defaults: UserDefaults = .standard, controller: WallpaperController = WallpaperController(),
-         installer: AerialInstaller? = nil) {
+         installer: AerialInstaller? = nil, aerialDebounce: Duration = .seconds(3)) {
+        self.aerialDebounce = aerialDebounce
         self.directory = directory
         self.defaults = defaults
         self.controller = controller
         self.installer = installer ?? AerialInstaller(supportDirectory: directory.deletingLastPathComponent())
         settings = defaults.data(forKey: Self.settingsKey).flatMap { try? JSONDecoder().decode(WallpaperSettings.self, from: $0) } ?? WallpaperSettings()
         items = Self.loadLibrary(directory)
+        aerialRegistration = defaults.data(forKey: Self.aerialRegistrationKey).flatMap { try? JSONDecoder().decode(AerialRegistration.self, from: $0) }
     }
 
     /// Uygulama açılışı: ayarlar açıksa denetleyiciyi kurar (kapalıysa hiçbir şey yapmaz).
@@ -55,6 +69,7 @@ final class WallpaperService {
 
     private func pushConfig() {
         controller.apply(.init(settings: settings, items: items, override: userOverride))
+        noteAerialSource()
     }
 
     // MARK: Kütüphane
@@ -163,7 +178,10 @@ final class WallpaperService {
 
     func cancelConversion(_ id: UUID) { conversionTasks[id]?.cancel() }
 
-    // MARK: Deneysel B: sistem duvar kâğıdı / kilit ekranı
+    // MARK: Deneysel: kilit ekranı / Sistem Ayarları (Aerial)
+    //
+    // Tek ilke: "göster" açıkken sistem listesinde HER ZAMAN tek kaydımız vardır ve o, geçerli duvar kâğıdı videosudur.
+    // Video değişince kayıt (bizimki) değiştirilir; Apple'ın kayıtlarına dokunulmaz. Kapatınca kayıt otomatik geri alınır.
 
     func refreshAerial() {
         guard !AppEnvironment.isRunningTests || installer.root != AerialInstaller.defaultRoot else { return }
@@ -172,52 +190,133 @@ final class WallpaperService {
             let (compat, status) = await Task.detached { (installer.compatibility(), installer.status()) }.value
             aerial.compatibility = compat
             aerial.status = status
+            aerial.checked = true
+            // Eski sürümde elle eklenmiş kayıt varsa anahtar açık görünsün (kayıt yeni ilkeye göre sessizce tazelenir).
+            if !settings.showInSystem, settings.experimentalAerialAcknowledged, case .installed = status { settings.showInSystem = true }
+            else if settings.showInSystem { scheduleAerialSync() }
         }
     }
 
-    func installToSystem(_ id: UUID) {
-        guard let source = item(id), source.kind == .video, !aerial.busy, aerial.compatibility.canInstall else { return }
+    /// Anahtar. Açarken kullanıcı onayı arayüzde alınır; kapatınca kayıt geri alınır.
+    func setShowInSystem(_ on: Bool) {
+        guard on != settings.showInSystem else { return }
+        settings.showInSystem = on
+        if on {
+            settings.experimentalAerialAcknowledged = true
+            aerialFailed = nil
+            aerialSource = nil
+            noteAerialSource()
+        } else {
+            aerialTask?.cancel()
+            aerialDirty = false
+            if !aerial.busy { uninstallFromSystem() }   // sürüyorsa kayıt bitince geri alınır
+        }
+    }
+
+    /// Geçerli video değişti mi? Değiştiyse (ve anahtar açıksa) kısa bir beklemeyle kaydı yeniler. Ağır iş (kodlama) art arda tetiklenmesin diye 3 sn bekler.
+    private func noteAerialSource() {
+        guard settings.showInSystem else { return }
+        let current = AerialAutoSync.currentItem(items: items, defaultID: settings.defaultItemID).map(AerialAutoSync.registration)
+        guard current != aerialSource else { return }
+        aerialSource = current
+        scheduleAerialSync()
+    }
+
+    func scheduleAerialSync() {
+        guard !AppEnvironment.isRunningTests || installer.root != AerialInstaller.defaultRoot else { return }
+        if aerial.busy { aerialDirty = true; return }   // süren kayıt bitince yeniden bakılır
+        aerialTask?.cancel()
+        let delay = aerialDebounce
+        aerialTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            await syncAerial()
+        }
+    }
+
+    private func syncAerial() async {
+        guard settings.showInSystem, !aerial.busy else { return }
+        let installer = installer
+        let (compat, status) = await Task.detached { (installer.compatibility(), installer.status()) }.value
+        aerial.compatibility = compat
+        aerial.status = status
+        aerial.checked = true
+        guard !Task.isCancelled else { return }
+        let item = AerialAutoSync.currentItem(items: items, defaultID: settings.defaultItemID)
+        let action = AerialAutoSync.action(enabled: true, canInstall: compat.canInstall, status: status, current: item.map(AerialAutoSync.registration),
+                                           registered: aerialRegistration, failed: aerialFailed)
+        guard case .register(let registration) = action, let item else { return }
+        await registerInSystem(item, registration: registration)
+    }
+
+    /// Videoyu HEVC Main10 (sessiz) kodlar ve tek kaydımız olarak sisteme yazar (öncekinin yerine).
+    private func registerInSystem(_ source: WallpaperItem, registration: AerialRegistration) async {
         aerial.busy = true
-        aerial.message = "Hazırlanıyor (HEVC Main10, ses yok)…"
+        aerial.message = "Hazırlanıyor…"
         let installer = installer
         let temp = directory.appending(path: ".aerial-tmp", directoryHint: .isDirectory)
         let sourceURL = source.url, name = source.name
-        Task {
-            do {
-                let video = temp.appending(path: "video.mov"), thumb = temp.appending(path: "thumb.png")
-                try await AerialEncoder.encode(source: sourceURL, videoDestination: video, thumbnailDestination: thumb) { [weak self] p in
-                    Task { @MainActor [weak self] in self?.aerial.message = "Kodlanıyor… %\(Int(p * 100))" }
-                }
-                let state = try await Task.detached { try installer.install([.init(name: name, videoFile: video, thumbnailFile: thumb)]) }.value
-                try? FileManager.default.removeItem(at: temp)
-                aerial.message = "Eklendi (\(state.assetIDs.count) kayıt). Sistem Ayarları > Duvar Kâğıdı > \"Adalmon\" kategorisinden seçin; gerekirse hizmeti yeniden başlatın."
-            } catch {
-                try? FileManager.default.removeItem(at: temp)
-                aerial.message = error.localizedDescription
+        do {
+            let video = temp.appending(path: "video.mov"), thumb = temp.appending(path: "thumb.png")
+            try await AerialEncoder.encode(source: sourceURL, videoDestination: video, thumbnailDestination: thumb) { [weak self] p in
+                Task { @MainActor [weak self] in self?.aerial.message = "Hazırlanıyor… %\(Int(p * 100))" }
             }
-            aerial.busy = false
-            refreshAerial()
+            try await Task.detached { try installer.install([.init(name: name, videoFile: video, thumbnailFile: thumb)]) }.value
+            try? FileManager.default.removeItem(at: temp)
+            setRegistration(registration)
+            aerialFailed = nil
+            aerial.failed = false
+            aerial.message = "Eklendi: \(name)"
+        } catch {
+            try? FileManager.default.removeItem(at: temp)
+            aerialFailed = registration
+            aerial.failed = true
+            aerial.message = error.localizedDescription
+        }
+        aerial.busy = false
+        if !settings.showInSystem {
+            await performUninstall()   // hazırlanırken anahtar kapatıldı
+        } else {
+            await refreshAerialState()
+            if aerialDirty { aerialDirty = false; scheduleAerialSync() }
         }
     }
 
     func uninstallFromSystem() {
         guard !aerial.busy else { return }
+        Task { await performUninstall() }
+    }
+
+    private func performUninstall() async {
         aerial.busy = true
         let installer = installer
-        Task {
-            do {
-                let method = try await Task.detached { try installer.uninstall() }.value
-                aerial.message = switch method {
-                case .restoredBackup: "Geri alındı: yedek birebir geri yüklendi."
-                case .removedOurEntries: "Geri alındı: yalnızca Adalmon kayıtları çıkarıldı."
-                case .nothingToDo: "Geri alınacak bir şey yok."
-                }
-            } catch {
-                aerial.message = error.localizedDescription
+        do {
+            let method = try await Task.detached { try installer.uninstall() }.value
+            aerial.message = switch method {
+            case .restoredBackup: "Geri alındı."
+            case .removedOurEntries: "Geri alındı: yalnızca Adalmon kaydı çıkarıldı."
+            case .nothingToDo: nil
             }
-            aerial.busy = false
-            refreshAerial()
+        } catch {
+            aerial.message = error.localizedDescription
         }
+        setRegistration(nil)
+        aerial.busy = false
+        await refreshAerialState()
+    }
+
+    private func refreshAerialState() async {
+        guard !AppEnvironment.isRunningTests || installer.root != AerialInstaller.defaultRoot else { return }
+        let installer = installer
+        let (compat, status) = await Task.detached { (installer.compatibility(), installer.status()) }.value
+        aerial.compatibility = compat
+        aerial.status = status
+        aerial.checked = true
+    }
+
+    private func setRegistration(_ value: AerialRegistration?) {
+        aerialRegistration = value
+        defaults.set(value.flatMap { try? JSONEncoder().encode($0) }, forKey: Self.aerialRegistrationKey)
     }
 
     /// Yalnızca kullanıcı onayıyla (UI onay iletişim kutusu). Testte / geliştirmede çağrılmaz.

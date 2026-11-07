@@ -19,7 +19,6 @@ struct WallpaperPage: View {
                 WallpaperPlaybackCard(service: service)
                 WallpaperPauseRulesCard(service: service)
                 WallpaperSaverCard(wallpaper: service, saver: saver)
-                WallpaperExperimentalCard(service: service)
             }
             .padding(24)
         }

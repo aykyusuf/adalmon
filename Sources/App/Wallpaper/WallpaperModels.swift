@@ -115,6 +115,8 @@ struct WallpaperSettings: Codable, Equatable, Sendable {
     var loop = LoopSettings()
     /// Deneysel B bölümü gösterilsin mi (kapalı gelir).
     var experimentalAerialAcknowledged = false
+    /// Kilit ekranında / Sistem Ayarları'nda da göster (deneysel): açıkken geçerli duvar kâğıdı videosu Aerial listesine kaydedilir.
+    var showInSystem = false
 
     static let rotationChoices = [5, 15, 30, 60, 180, 1_440]
 }
@@ -134,6 +136,7 @@ extension WallpaperSettings {
         frameRateCap = try c.decodeIfPresent(WallpaperFrameRateCap.self, forKey: .frameRateCap) ?? d.frameRateCap
         loop = (try? c.decodeIfPresent(LoopSettings.self, forKey: .loop)) ?? d.loop
         experimentalAerialAcknowledged = try c.decodeIfPresent(Bool.self, forKey: .experimentalAerialAcknowledged) ?? d.experimentalAerialAcknowledged
+        showInSystem = try c.decodeIfPresent(Bool.self, forKey: .showInSystem) ?? d.showInSystem
     }
 }
 
