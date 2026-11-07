@@ -131,3 +131,29 @@ struct FolderGrowth: Sendable, Equatable, Identifiable {
     var growthBytes: Int64
     var id: String { path }
 }
+
+/// "Uygulama geçmişi" tablosunun satırı: pencere boyunca toplamlar (bellek: tepe).
+struct AppHistoryRow: Sendable, Equatable, Identifiable {
+    var app: String
+    var cpuNs: Double
+    var gpuNs: Double
+    var writeBytes: Double
+    var energyNj: Double
+    var memoryPeak: Double
+    var networkBytes: Double
+    var id: String { app }
+
+    var hasActivity: Bool { cpuNs > 0 || gpuNs > 0 || writeBytes > 0 || energyNj > 0 || memoryPeak > 0 || networkBytes > 0 }
+}
+
+/// Tüm sistemin bir kovadaki toplamı (Performans sekmesi, kayıtlı geçmiş).
+struct ResourceTotalPoint: Sendable, Equatable, Identifiable {
+    var ts: Int
+    var cpuNs: Double = 0
+    var gpuNs: Double = 0
+    var writeBytes: Double = 0
+    var readBytes: Double = 0
+    /// Uygulama ayak izi toplamı (dakikalık kayıttaki ilk 15 + diğer); sistemin "kullanılan" belleğinden küçüktür.
+    var footprint: Double = 0
+    var id: Int { ts }
+}

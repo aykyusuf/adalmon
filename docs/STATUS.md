@@ -64,3 +64,10 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 - Geçmiş › Rapor (Dün / Son 7 gün / Bu ay, önceki döneme göre %, Kopyala); pencere ilk açılışta ekranın ~%85'i (`mainWindow.sizedV2`).
 - Süreçler sayfası (⌘6): Şu an / Geçmiş (1-6-12-24 sa, 7 gün; CPU, bellek, GPU, disk yazma, enerji) / Disk (boş alan, en çok yazanlar, büyüyen klasörler). Coalition API (dlsym) dakikada bir, ~2,3 ms/tarama; klasör taraması kademeli (1/3/6 sa), TCC korumalı klasörler taranmaz.
 - Ölçüm: kurulu build sabit durumda ~%0,48 CPU (pencere açık); açılıştan sonraki ilk dakikalarda watchdog + ilk tarama nedeniyle geçici yükselme.
+
+## Süreçler yeniden tasarım (2026-11-07, Görev Yöneticisi tarzı) — kurulmadı, commit yok
+- BUG kök sebebi: canlı `Table(of:rows:)` (DisclosureTableRow, ~80 satır) içeriğine göre yükseklik bildiriyordu (3004 pt); NavigationSplitView 3184 pt oldu, pencerede ortalanıp üst/alttan taştı → başlık ve kenar çubuğu satırları pencerenin üstünde kaldı. Düzeltme: sayfa içeriği `BoundedHeight` (GeometryReader) ile sunulan boyuta sabitlenir; tablo yerine List + özel hücreler. Regresyon: `ProcessesLayoutTests` (1400x900 ve 940x600).
+- Sekmeler (Süreçler sayfası başlığında): İşlemler | Performans | Uygulama geçmişi | Başlangıç | Disk. Seçili sekme `router.processesTab`.
+- GPU: canlı örnekleyici her turda AppUsage (IOAccelerator) farklarını pid → grup eşler; tüm satırlar GPU % gösterir (WindowServer, Warp, Safari doğrulandı).
+- Ağ sütunu: `UsageEngine.last60Bytes` (60 sn ortalama). CPU sütunu artık makinenin tamamına göre (çekirdek sayısına bölünmüş).
+- Açık: Ayrıntılar/Hizmetler sekmesi yok; thread sayısı ve CPU GHz yok (Apple Silicon'da ucuz kaynak yok); Ağ için 1 sa aralığı yok (yalnız saatlik toplam, 24 sa).

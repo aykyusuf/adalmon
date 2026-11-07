@@ -14,13 +14,15 @@ struct PanelCardModel: Identifiable {
     /// Geçmişi olmayan kartlar için çubuk (0...1).
     var fraction: Double?
     let spokenValue: String
+    /// Sesli okumada `caption` yerine kullanılır (örn. "GPU 41°" yerine "ekran kartı ortalama 41 derece").
+    var spokenCaption: String?
     var help = ""
 
     var id: PanelCardKind { kind }
     var title: String { kind.displayName }
 
     var accessibilityLabel: String {
-        [title, spokenValue, caption].filter { !$0.isEmpty }.joined(separator: ", ")
+        [title, spokenValue, spokenCaption ?? caption].filter { !$0.isEmpty }.joined(separator: ", ")
     }
 }
 
@@ -86,18 +88,28 @@ extension PanelCardModel {
         available ? "yüzde \(Int((min(1, max(0, fraction)) * 100).rounded()))" : "veri yok"
     }
 
+    /// Büyük değer: CPU ortalaması (PMU tdie). Altında GPU (Tg* / GPU MTR) ve pil ortalamaları tek satırda.
+    /// Hepsi `TemperatureStats` içinde zaten hesaplı; ek örnekleme yok.
     private static func temperature(_ data: PanelData) -> PanelCardModel {
         let t = data.snapshot?.temperature
         guard let current = t?.cpu ?? t?.cpuMax else {
             return PanelCardModel(kind: .temperature, value: "—", caption: "sensör yok", tint: .orange, spokenValue: "sensör okunamıyor")
         }
         let tint: Color = current >= 85 ? .red : .orange
-        let hottest = t?.cpuMax.map { "en sıcak \(Int($0.rounded()))°" } ?? ""
-        return PanelCardModel(kind: .temperature, value: "\(Int(current.rounded()))°", caption: hottest, tint: tint,
+        func deg(_ v: Double) -> String { "\(Int(v.rounded()))°" }
+        var parts: [(short: String, spoken: String, value: Double)] = []
+        if let gpu = t?.gpu { parts.append(("GPU", "ekran kartı ortalama", gpu)) }
+        if let battery = t?.battery { parts.append(("Pil", "pil", battery)) }
+        let caption = parts.map { "\($0.short) \(deg($0.value))" }.joined(separator: " · ")
+        let spokenCaption = parts.map { "\($0.spoken) \(Int($0.value.rounded())) derece" }.joined(separator: ", ")
+        var help = "İşlemci ortalama sıcaklığı"
+        if let max = t?.cpuMax { help += " (en sıcak çekirdek \(Int(max.rounded())) °C)" }
+        for p in parts { help += ", \(p.short == "Pil" ? "pil" : "GPU") ortalama \(Int(p.value.rounded())) °C" }
+        return PanelCardModel(kind: .temperature, value: deg(current), unit: "CPU", caption: caption, tint: tint,
                               valueTint: current >= 95 ? .red : (current >= 85 ? .orange : nil),
                               history: data.temperatureHistory, scale: .fitted(minSpan: 12),
-                              spokenValue: "\(Int(current.rounded())) derece",
-                              help: "İşlemci ortalama sıcaklığı" + (t?.cpuMax.map { ", en sıcak çekirdek \(Int($0.rounded())) °C" } ?? ""))
+                              spokenValue: "işlemci ortalama \(Int(current.rounded())) derece",
+                              spokenCaption: spokenCaption, help: help)
     }
 
     private static func network(_ kind: PanelCardKind, _ data: PanelData) -> PanelCardModel {

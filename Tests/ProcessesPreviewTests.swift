@@ -41,7 +41,6 @@ final class ProcessesPreviewTests: XCTestCase {
             FolderSnapshotEntry(path: NSHomeDirectory() + "/Library/Caches/Homebrew", depth: 1, bytes: 800_000_000)])
         model.mainWindowVisible = true
         let size = NSSize(width: 1180, height: 760)
-        try await render(ProcessLiveView(model: model).padding(24), name: "processes-live", dir: dir, size: size, wait: 4)
         try await render(ProcessHistoryView(store: store).padding(24), name: "processes-history", dir: dir, size: size, wait: 2)
         try await render(ProcessDiskView(model: model).padding(24), name: "processes-disk", dir: dir, size: NSSize(width: 1180, height: 1250), wait: 2)
         let router = SettingsRouter(isDockModeOn: { true })
@@ -84,5 +83,20 @@ final class ProcessesPreviewTests: XCTestCase {
         host.cacheDisplay(in: host.bounds, to: rep)
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appending(path: "\(name).png"))
         window.close()
+    }
+}
+
+/// Gerçek makinede canlı örnekleyicinin GPU yüzdelerini yazdırır (ADALMON_BENCH_GPU=1).
+@MainActor
+final class ProcessesGPUProbeTests: XCTestCase {
+    func testLiveSamplerGPU() async throws {
+        guard ProcessInfo.processInfo.environment["ADALMON_BENCH_GPU"] == "1" else { throw XCTSkip("ADALMON_BENCH_GPU=1 değil") }
+        let sampler = LiveResourceSampler()
+        _ = await sampler.sample()
+        try await Task.sleep(for: .seconds(3))
+        let snap = await sampler.sample()
+        let rows = snap.groups.map { ($0.key, Double($0.usage.gpuNs) / (snap.elapsed * 1e9) * 100, $0.usage.gpuNs) }.sorted { $0.1 > $1.1 }
+        for r in rows.prefix(8) { print("GPU_PROBE \(r.0) \(r.1)% coalition/appusage ns=\(r.2)") }
+        print("GPU_PROBE groups with gpu>0: \(rows.filter { $0.1 > 0 }.count) of \(rows.count)")
     }
 }

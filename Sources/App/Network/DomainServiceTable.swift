@@ -12,7 +12,7 @@ enum DomainServiceTable {
                     "doubleclick.net", "app-measurement.com", "withgoogle.com", "firebaseio.com", "firebase.google.com",
                     "gcr.io", "gmail.com", "goo.gl", "g.co"]),
         ("Apple", ["apple.com", "aaplimg.com", "mzstatic.com", "cdn-apple.com", "apple-dns.net", "apple.news", "itunes.com"]),
-        ("iCloud", ["icloud.com", "icloud-content.com", "apple-cloudkit.com", "me.com", "icloud.com.cn"]),
+        ("iCloud", ["icloud.com", "icloud-content.com", "content-storage-download.googleapis.com", "content-storage-upload.googleapis.com", "apple-cloudkit.com", "me.com", "icloud.com.cn"]),
         ("GitHub", ["github.com", "githubusercontent.com", "githubassets.com", "github.io", "ghcr.io", "githubapp.com",
                     "githubcopilot.com", "git.io"]),
         ("Cloudflare", ["cloudflare.com", "cloudflare-dns.com", "cloudflarestorage.com", "cloudflareinsights.com",
