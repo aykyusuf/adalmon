@@ -19,7 +19,9 @@ struct SMAppServiceRegistration: HelperRegistering {
         case .notRegistered: .notInstalled
         case .enabled: .enabled
         case .requiresApproval: .requiresApproval
-        case .notFound: .notFound
+        // Hiç kaydedilmemiş bir daemon için de .notFound döner; bu bir hata değil, "kurulmadı" demektir.
+        // Paket gerçekten eksikse register() hata fırlatır ve o zaman gösterilir.
+        case .notFound: .notInstalled
         @unknown default: .failed("bilinmeyen durum")
         }
     }
