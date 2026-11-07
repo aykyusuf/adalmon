@@ -18,6 +18,10 @@ struct MenuBarCardsForm: View {
                     ForEach(MenuBarDisplayMode.allCases) { Text($0.displayName).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                Picker("Tıklayınca", selection: $store.config.clickMode) {
+                    ForEach(PanelClickMode.allCases) { Text($0.displayName).tag($0) }
+                }
+                .help("Menü çubuğu öğesine tıklayınca o metriğin ayrıntı paneli ya da tüm metrikleri tek panelde gösteren birleşik panel açılır.")
                 LabeledContent("Aralık") {
                     HStack {
                         Slider(value: $store.config.spacing, in: MenuBarConfig.spacingRange, step: 1)

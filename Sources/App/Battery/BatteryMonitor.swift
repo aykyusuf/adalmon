@@ -20,6 +20,8 @@ final class BatteryMonitor {
     static let flushBatch = 5
 
     private(set) var reading: BatteryReading?
+    /// Son okuma zamanı (değişmeyen okumalarda da ilerler; panelde "son güncelleme").
+    private(set) var lastRefreshAt: Date?
     var energyApps: [BatteryEnergyApp] = []
     var lastFullCharge: Date?
     var hasBattery: Bool { reading != nil }
@@ -141,6 +143,14 @@ final class BatteryMonitor {
 
     // MARK: Okuma
 
+    /// Panelden "Şimdi yenile": canlı okuma + sağlık ve enerji listesi.
+    func refreshNow() {
+        guard started else { return }
+        lastRefreshAt = .now
+        refresh(isEvent: false, record: false)
+        Task { await refreshHistoryExtras() }
+    }
+
     private func powerSourceChanged() {
         refresh(isEvent: true, record: false)
     }
@@ -155,6 +165,7 @@ final class BatteryMonitor {
 
     private func refresh(isEvent: Bool, record: Bool) {
         guard var r = readProvider() else { return }
+        if visible || isEvent { lastRefreshAt = .now }
         r.temperatureC = temperatureC
         r.appleMaxCapacityPercent = appleMaxCapacity
         let stateChanged = (lastPlugged != nil && lastPlugged != r.isPluggedIn) || (lastCharging != nil && lastCharging != r.isCharging)

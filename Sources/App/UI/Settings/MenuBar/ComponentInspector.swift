@@ -29,6 +29,17 @@ struct ComponentInspector: View {
         }
         .help(component.visual.allowsSecondLine ? "İsteğe bağlı ikinci değer" : "\(component.visual.displayName) tek değer gösterir")
 
+        LabeledContent("Tıklayınca açılacak panel") {
+            Picker("Tıklayınca açılacak panel", selection: $component.panelKind) {
+                Text("Otomatik (\(PanelRouter.automaticKind(for: component).displayName))").tag(PanelKind?.none)
+                Divider()
+                ForEach(PanelKind.allCases) { Text($0.displayName).tag(PanelKind?.some($0)) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+        .help("Bu bileşene tıklayınca hangi panelin açılacağı. Otomatik: birinci satırdaki metriğin paneli.")
+
         VStack(alignment: .leading, spacing: 6) {
             Text("Görünüm")
             VisualChips(component: $component, config: config, values: values)

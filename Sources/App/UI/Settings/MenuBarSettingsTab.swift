@@ -76,6 +76,9 @@ struct MenuBarSettingsTab: View {
                     ForEach(MenuBarDisplayMode.allCases) { Text($0.displayName).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                Picker("Tıklayınca", selection: $store.config.clickMode) {
+                    ForEach(PanelClickMode.allCases) { Text($0.displayName).tag($0) }
+                }
                 LabeledContent("Aralık") {
                     HStack {
                         Slider(value: $store.config.spacing, in: MenuBarConfig.spacingRange, step: 1)

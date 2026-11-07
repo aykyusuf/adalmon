@@ -492,7 +492,7 @@ final class AppModel {
     @ObservationIgnored var mainWindowVisible = false {
         didSet {
             scheduleTimer()
-            battery.setVisible(mainWindowVisible || panelVisible)
+            applyBatteryVisibility()
             if mainWindowVisible && !oldValue { Task { await step() } }
         }
     }
@@ -500,10 +500,21 @@ final class AppModel {
     @ObservationIgnored var panelVisible = false {
         didSet {
             scheduleTimer()
-            battery.setVisible(mainWindowVisible || panelVisible)
-            devices.setPanelVisible(panelVisible)
+            applyBatteryVisibility()
             if panelVisible && !oldValue { Task { await step() } }
         }
+    }
+
+    /// Açık panelin içeriği. Pil okuması ve cihaz taraması yalnızca Pil/Birleşik panelde çalışır
+    /// (CPU paneli açılınca Bluetooth taranmaz); içerik değişince yeniden uygulanır.
+    @ObservationIgnored var panelKind: PanelKind = .combined {
+        didSet { if panelKind != oldValue { applyBatteryVisibility() } }
+    }
+
+    private func applyBatteryVisibility() {
+        let panelWantsBattery = panelVisible && panelKind.needsBatterySampling
+        battery.setVisible(mainWindowVisible || panelWantsBattery)
+        devices.setPanelVisible(panelWantsBattery)
     }
     @ObservationIgnored private var seconds = 0
     @ObservationIgnored private var lastStepSecond = 0
@@ -574,7 +585,7 @@ final class AppModel {
     func apply(_ s: SystemSnapshot) {
         snapshot = s
         battery.setTemperature(s.temperature?.battery)
-        systemHistory.append(s, notify: mainWindowVisible)
+        systemHistory.append(s, notify: mainWindowVisible || panelVisible)
         Self.push(&cpuHistory, s.cpu.total)
         Self.push(&gpuHistory, s.gpu?.displayLoad ?? 0)
         Self.push(&memHistory, s.memory.usedFraction)

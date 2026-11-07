@@ -20,7 +20,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let panel = PanelController(
             model: model,
             openApp: { prefs.showInDock ? mainWindow.show() : router.open() },
-            openSettings: { router.open() }
+            openSettings: { router.open() },
+            openRoute: { router.open(route: $0) },
+            openProcesses: { tab in
+                // Dock modunda Süreçler sayfası (sekme ile); değilse Etkinlik Monitörü.
+                if prefs.showInDock {
+                    router.processesTab = tab
+                    router.open(route: .processes)
+                } else {
+                    PanelController.openActivityMonitor()
+                }
+            }
         )
         let dockMode = DockModeController(
             prefs: prefs,
@@ -44,7 +54,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.panel = panel
         self.dockMode = dockMode
         AdalmonIntentHub.backend = LiveIntentBackend(model: model, openRoute: { router.open(route: $0) })
-        statusBar = StatusBarController(model: model) { [weak panel] button in panel?.toggle(relativeTo: button) }
+        let statusBar = StatusBarController(model: model) { [weak panel] button, route in panel?.click(on: button, route: route) }
+        panel.statusItemFrames = { [weak statusBar] in statusBar?.buttonFrames() ?? [] }
+        self.statusBar = statusBar
         model.start()
         ChargingModel.shared.startIfNeeded() // ana şalter kapalıysa hiçbir şey yapmaz
         dockMode.start()

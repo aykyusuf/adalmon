@@ -10,6 +10,10 @@ struct PanelData: Equatable {
     var upHistory: [Double] = []
     /// CPU ortalama sıcaklık geçmişi (°C); `TemperatureHistory` zaten menü çubuğu adımında doldurur.
     var temperatureHistory: [Double] = []
+    /// Zaman damgalı son ~60 sn (SystemHistoryBuffer): metrik panellerinin grafikleri ve imleç okuması.
+    var samples: [SystemSample] = []
+    /// Kaynak başına sıcaklık geçmişi (°C).
+    var temperatureSeries: [TemperatureSource: [Double]] = [:]
 
     var last60: [AppUsage] = []
     var today: [AppUsage] = []
@@ -55,6 +59,7 @@ extension PanelData {
     /// gövdeleri her ölçüm adımında değil, yalnızca gösterdikleri veri değişince yeniden çalışır (gözlem daralır).
     @MainActor
     init(model: AppModel, live: Bool = true) {
+        let temperatures = live ? TemperatureHistory.shared.record(model.snapshot) : [:]
         self.init(
             snapshot: live ? model.snapshot : nil,
             cpuHistory: live ? model.cpuHistory : [],
@@ -62,7 +67,9 @@ extension PanelData {
             memHistory: live ? model.memHistory : [],
             downHistory: live ? model.downHistory : [],
             upHistory: live ? model.upHistory : [],
-            temperatureHistory: live ? TemperatureHistory.shared.record(model.snapshot)[.cpu] ?? [] : [],
+            temperatureHistory: temperatures[.cpu] ?? [],
+            samples: live ? model.systemHistory.samples(window: 60) : [],
+            temperatureSeries: temperatures,
             last60: model.usage.last60,
             today: model.usage.today,
             downLast60: model.downLast60,

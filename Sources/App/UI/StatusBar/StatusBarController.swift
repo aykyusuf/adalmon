@@ -9,12 +9,15 @@ final class StatusBarController: NSObject {
     private static let combinedKey = "compact"
 
     private let model: AppModel
-    private let onClick: (NSStatusBarButton) -> Void
+    private let onClick: (NSStatusBarButton, PanelRoute) -> Void
     private var items: [String: NSStatusItem] = [:]
     /// Her öğenin son çizilen içeriği; değişmeyen öğe yeniden çizilmez (pil/CPU).
     private var lastKeys: [String: MenuBarRenderKey] = [:]
+    /// Her öğenin son çizilen bileşenleri ve görüntü genişliği (tıklama → panel eşlemesi için).
+    private var groupComponents: [String: [MenuBarComponent]] = [:]
+    private var imageWidths: [String: CGFloat] = [:]
 
-    init(model: AppModel, onClick: @escaping (NSStatusBarButton) -> Void) {
+    init(model: AppModel, onClick: @escaping (NSStatusBarButton, PanelRoute) -> Void) {
         self.model = model
         self.onClick = onClick
         super.init()
@@ -57,6 +60,7 @@ final class StatusBarController: NSObject {
         syncItems(keys: groups.map(\.key))
 
         for group in groups {
+            groupComponents[group.key] = group.items
             guard let button = items[group.key]?.button else { continue }
             let key = MenuBarRenderKey(components: group.items, config: config, values: values)
             guard lastKeys[group.key] != key else { continue }
@@ -70,6 +74,7 @@ final class StatusBarController: NSObject {
             let width = ceil(image.size.width) + 8
             if let item = items[group.key], abs(item.length - width) > 0.5 { item.length = width }
             button.image = image
+            imageWidths[group.key] = image.size.width
             // Tooltip/erişilebilirlik metni saniyelik değişmesin; yalnızca farklıysa ve seyrek güncelle.
             if tick % 5 == 0 || button.toolTip == nil {
                 let summary = MenuBarComposer.accessibilitySummary(for: group.items, values: values)
@@ -89,6 +94,8 @@ final class StatusBarController: NSObject {
             appearanceObservers[key] = nil
             appearanceNames[key] = nil
             lastKeys[key] = nil
+            groupComponents[key] = nil
+            imageWidths[key] = nil
         }
         // NSStatusBar yeni öğeyi solun en sonuna ekler; sırayı korumak için sağdan sola oluştur.
         for key in keys.reversed() where items[key] == nil {
@@ -118,5 +125,26 @@ final class StatusBarController: NSObject {
         return item
     }
 
-    @objc private func clicked(_ sender: NSStatusBarButton) { onClick(sender) }
+    /// Tüm öğelerin ekran dikdörtgenleri (panel dış-tıklama izlemesi bunları hariç tutar).
+    func buttonFrames() -> [NSRect] {
+        items.values.compactMap { item in
+            guard let button = item.button, let window = button.window else { return nil }
+            return window.convertToScreen(button.convert(button.bounds, to: nil))
+        }
+    }
+
+    @objc private func clicked(_ sender: NSStatusBarButton) {
+        guard let key = items.first(where: { $0.value.button === sender })?.key else { return }
+        let config = model.prefs.menuBar.config
+        let components = groupComponents[key] ?? []
+        var target = components
+        // Birleşik (tek öğe) modda tıklanan x konumundaki bileşenin paneli açılır.
+        if components.count > 1, config.clickMode == .perMetric, let event = NSApp.currentEvent {
+            let x = sender.convert(event.locationInWindow, from: nil).x - (sender.bounds.width - (imageWidths[key] ?? sender.bounds.width)) / 2
+            let frames = MenuBarComposer.frames(of: components, config: config, values: WidgetValues(model: model))
+            if let hit = PanelRouter.component(at: x, in: components, frames: frames) { target = [hit] }
+        }
+        let kind = PanelRouter.kind(for: target, clickMode: config.clickMode)
+        onClick(sender, PanelRoute(itemKey: key, kind: kind))
+    }
 }
