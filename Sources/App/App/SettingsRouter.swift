@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 /// Ayarlar isteklerini yönlendirir: Dock modu açıkken ana pencerede ilgili Ayarlar bölümünü seçer,
@@ -50,6 +51,24 @@ final class SettingsRouter {
     }
 
     /// Ana pencere şu an bir Ayarlar bölümünü gösteriyor mu?
+    /// `adalmon://battery`, widget dokunuşu ve "Adalmon'u aç" kestirmesi. Dock modunda ilgili sayfa, değilse en yakın ayar bölümü.
+    func open(route: AdalmonRoute) {
+        if isDockModeOn() {
+            selectedMainSection = route.mainSection.dockCanonical
+            showMainWindow()
+        } else {
+            open(route.settingsFallback)
+        }
+    }
+
+    /// Adalmon URL'sini yönlendirir; tanınmazsa `false`.
+    @discardableResult
+    func handle(url: URL) -> Bool {
+        guard let route = AdalmonRoute(url: url) else { return false }
+        open(route: route)
+        return true
+    }
+
     var mainSectionIsSettings: Bool {
         if case .settings = selectedMainSection { true } else { false }
     }

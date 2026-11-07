@@ -28,6 +28,9 @@ struct LiveRow: Identifiable, Hashable, Sendable {
     var isSuspended = false
     var isEfficient = false
 
+    /// Aynı adlı başka bir satır varsa ayırt edici yer ipucu ("DerivedData", "/Applications"); yoksa nil.
+    var pathHint: String?
+
     var isMember: Bool { pid != nil }
 
     struct Rates {
@@ -50,8 +53,10 @@ struct LiveRow: Identifiable, Hashable, Sendable {
 
     static func make(member: LiveMember, group: LiveRow, elapsed: Double, cores: Int) -> LiveRow {
         let r = Rates(usage: member.usage, elapsed: elapsed, cores: cores)
-        return LiveRow(id: "\(group.key)|\(member.pid)", key: group.key, name: member.name, pid: member.pid, processCount: 1,
-                       pids: [member.pid], category: group.category, path: group.path, cpu: r.cpu,
+        // Terminal üyeleri çalıştırılabilire göre gruplanır (kimlik: alt anahtar); tek süreç üyeleri pid ile.
+        let id = member.childKey.map { "\(group.key)|member|\($0)" } ?? "\(group.key)|\(member.pid)"
+        return LiveRow(id: id, key: group.key, name: member.name, pid: member.pid, processCount: member.pids.count,
+                       pids: member.pids, category: group.category, path: member.path ?? group.path, cpu: r.cpu,
                        memory: Double(member.usage.footprint), gpu: r.gpu, disk: r.disk, network: 0, energy: r.watts)
     }
 }

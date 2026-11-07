@@ -19,6 +19,7 @@ targets:
     sources:
       - Sources/App
       - Sources/Shared
+      - Sources/WidgetShared
     info:
       path: Sources/App/Info.plist
       properties:
@@ -31,6 +32,9 @@ targets:
         NSBluetoothAlwaysUsageDescription: Adalmon, bağlı aksesuarların (AirPods, klavye, fare, iPhone) pil düzeyini göstermek için Bluetooth'u kullanır.
         NSLocalNetworkUsageDescription: Adalmon, aynı Wi‑Fi ağındaki eşleşmiş iPhone ve iPad'lerin pil sağlığını okumak için yerel ağı kullanır.
         NSBonjourServices: [_apple-mobdev2._tcp]
+        CFBundleURLTypes:
+          - CFBundleURLName: com.yusufayik.adalmon
+            CFBundleURLSchemes: [adalmon]
     entitlements:
       path: Sources/App/Adalmon.entitlements
       properties:
@@ -50,6 +54,8 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - target: AdalmonFilter
+        embed: true
+      - target: AdalmonWidgets
         embed: true
       # libimobiledevice (LGPL-2.1+) ve bağımlılıkları: çalışma zamanında dlopen; Xcode takım kimliğiyle imzalar
       # (kitaplık doğrulaması açık kalır). Yeniden üretmek için: tools/vendor-libimobiledevice.sh
@@ -112,6 +118,33 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.yusufayik.adalmon.filter
         PRODUCT_NAME: com.yusufayik.adalmon.filter
         PRODUCT_MODULE_NAME: AdalmonFilter
+  AdalmonWidgets:
+    type: app-extension
+    platform: macOS
+    sources:
+      - Sources/Widgets
+      - Sources/WidgetShared
+    info:
+      path: Sources/Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Adalmon Widget'ları
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: "26.0"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Sources/Widgets/AdalmonWidgets.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups: [BC62U5TGCQ.com.yusufayik.adalmon]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yusufayik.adalmon.widgets
+        PRODUCT_NAME: AdalmonWidgets
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
+        ENABLE_APP_INTENTS_METADATA_GENERATION: YES
   AdalmonTests:
     type: bundle.unit-test
     platform: macOS

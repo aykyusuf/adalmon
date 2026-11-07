@@ -38,6 +38,17 @@ enum AppNaming {
         return AppIdentity(name: toolName(stem: stem, lowerPath: lower, path: path), kind: .commandLineTool, iconBundleID: nil)
     }
 
+    /// Çalıştırılabilir dosya yolundan araç adı ("…/xcodebuild" → "xcodebuild", "…/swift-frontend" → "Swift derleyici").
+    /// `identity(forApp:)`dan farkı: yol bir `.app` içinde olsa bile paketin adına çevrilmez (Xcode içindeki araçlar Xcode olmaz)
+    /// ve sistem yollarına "(sistem)" eki eklenmez. Terminal alt süreçleri ("Warp › xcodebuild") için.
+    static func executableName(_ path: String) -> String {
+        let last = (path as NSString).lastPathComponent
+        guard !last.isEmpty else { return path }
+        let lower = path.lowercased()
+        if lower.contains("/.local/share/claude/") || lower.contains("/claude/versions/") { return "Claude Code" }
+        return toolName(stem: last, lowerPath: lower, path: path)
+    }
+
     /// Başta/sonda boşluk ve görünmez yön işaretlerini (WhatsApp adı U+200E ile başlar) atar.
     private static func cleaned(_ name: String) -> String {
         let marks: Set<Unicode.Scalar> = ["\u{200E}", "\u{200F}", "\u{202A}", "\u{202B}", "\u{202C}", "\u{202D}", "\u{202E}"]

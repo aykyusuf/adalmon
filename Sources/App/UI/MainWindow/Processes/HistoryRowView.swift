@@ -5,10 +5,11 @@ struct HistoryRowView: View {
     let row: AppHistoryRow
     let maxima: [HistoryColumn: Double]
     let dark: Bool
+    var hint: String?
 
     var body: some View {
         HStack(spacing: 0) {
-            ResourceAppLabel(key: row.app, size: 20)
+            ResourceAppLabel(key: row.app, size: 20, hint: hint)
                 .padding(.leading, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(HistoryColumn.numeric) { column in

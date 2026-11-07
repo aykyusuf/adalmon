@@ -10,6 +10,8 @@ struct SettingsDetailView: View {
         case .menuBar: MenuBarCardsTab(model: model)
         case .panel: PanelSettingsPane(model: model)
         case .batteryAlerts: BatteryAlertsSettingsPane(model: model)
+        case .widgets: WidgetsSettingsPane(model: model)
+        case .shortcuts: ShortcutsSettingsPane()
         case .throttle: ThrottleSettingsPane(model: model)
         case .mobileData: MobileDataSettingsTab(model: model)
         case .filter: FilterSettingsTab(model: model)

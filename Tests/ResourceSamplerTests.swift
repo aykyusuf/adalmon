@@ -59,14 +59,14 @@ final class ResourceSamplerTests: XCTestCase {
         let live = LiveResourceSampler()
         let base = await live.sample()
         XCTAssertEqual(base.elapsed, 0, "ilk örnek taban çizgisi")
-        XCTAssertTrue(base.groups.allSatisfy { $0.members.isEmpty }, "açık satır yokken üye süreç okunmaz")
-        let mine = try XCTUnwrap(base.groups.first { $0.usage.footprint > 0 && $0.processCount > 0 && $0.key != ResourceKeys.system }?.key)
+        XCTAssertTrue(base.groups.allSatisfy { $0.members.isEmpty || TerminalApps.isTerminal(key: $0.key) }, "açık satır yokken üye süreç okunmaz (terminal kırılımı süpürmeden hazır gelir)")
+        let mine = try XCTUnwrap(base.groups.first { $0.usage.footprint > 0 && $0.processCount > 0 && $0.key != ResourceKeys.system && !TerminalApps.isTerminal(key: $0.key) }?.key)
         _ = await live.sample(expanded: [mine])
         var x = 0.0; for i in 0..<2_000_000 { x += sin(Double(i)) }
         XCTAssertTrue(x != 0)
         let snap = await live.sample(expanded: [mine])
         XCTAssertGreaterThan(snap.elapsed, 0)
         XCTAssertFalse(snap.groups.isEmpty)
-        XCTAssertEqual(snap.groups.filter { !$0.members.isEmpty }.map(\.key).filter { $0 != mine }, [], "yalnız açılan satırın üyeleri")
+        XCTAssertEqual(snap.groups.filter { !$0.members.isEmpty }.map(\.key).filter { $0 != mine && !TerminalApps.isTerminal(key: $0) }, [], "yalnız açılan satırın üyeleri")
     }
 }

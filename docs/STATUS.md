@@ -82,3 +82,17 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 - UI: panel Pil bölümünde "Cihazlar" satırları; Pil sayfasında Mac | Cihazlar | iPhone & iPad; menü çubuğuna cihaz sabitleme (`MenuBarComponent.deviceID`); Ayarlar › Genel › Lisanslar.
 - Kitaplıklar: `Vendor/libimobiledevice` (tools/vendor-libimobiledevice.sh ile üretilir, @rpath), Xcode takım kimliğiyle gömüp imzalar.
 - DOĞRULANMADI (kullanıcı gerekir): Bluetooth izni + gerçek AirPods/GATT, iPhone USB "Güven"/Wi‑Fi okuması, LifetimeData anahtar adları, reklam bayt düzeni.
+
+## Terminal alt süreçleri + aynı ad ipucu (2026-11-07) — kurulmadı, commit yok
+- Terminal/IDE coalition'ları (`TerminalApps`: Warp, Terminal, iTerm, Ghostty, Alacritty, kitty, WezTerm, VS Code, Cursor …) `ResourceSweeper.splitTerminals` ile süreç başına bölünür: anahtar `"<terminal .app yolu>|<çalıştırılabilir yol>"` (`TerminalChildKey`), görünen ad "Warp › xcodebuild"; terminal paketinin içinden çalışanlar terminalin kendi anahtarında kalır.
+- Kısa ömürlü süreçler: kalan = coalition toplamı − görülen süreçler (`TerminalSplit.split`), anahtar `…|__residual__`, ad "Warp › diğer (kısa ömürlü süreçler)". Aralıkta doğup hâlâ yaşayan süreç baştan sayılır (`TerminalChildTracker`). Kalan GPU süresi terminalin kendisine verilir (süpürme süreç başına GPU okumaz), kalan belleği 0.
+- Canlı İşlemler: terminal satırı toplam gösterir, açılınca çalıştırılabilire göre gruplanmış üyeler (+ kendi süreçleri + kalan). Geçmiş/Disk "En çok yazanlar"/Genel bakış alt anahtarları olduğu gibi gösterir. Şema değişmedi (`proc_app.key`).
+- Aynı görünen ad: `DuplicateNameHints` ("Adalmon · DerivedData", "· /Applications"); İşlemler, Uygulama geçmişi ve Disk yazanlar listesinde.
+- Ad: `AppNaming.executableName` (Xcode içindeki araç Xcode olmaz; swift-frontend → "Swift derleyici").
+
+## Pil Faz 3 — widget'lar + kestirmeler (2026-11-07) — kurulmadı, commit yok
+- `Sources/WidgetShared/` (app + eklentiye derlenir): `WidgetSnapshot` (JSON, app group `widget-snapshot.json`), `WidgetBatteryOptions` (cihaz seçimi/stil/kapasite), `AdalmonRoute` (`adalmon://battery` vb.), widget görünümleri (Tüm piller halka/liste/çubuk, Mac pili, Sistem, Mobil kota). `Sources/Widgets/` = WidgetKit eklentisi `AdalmonWidgets` (com.yusufayik.adalmon.widgets, sandbox + app group; `AllBatteriesIntent` yapılandırması).
+- Yazma: `AppModel.step()` → `WidgetPublisher.tick` → `WidgetPublishGate` (yazma ≥60 sn ve içerik değiştiyse, 10 dk nabız, tak/çıkar anında; `reloadTimelines` ≥5 dk, zorunluda ≥30 sn). Yeni zamanlayıcı yok. Eski veri (>15 dk) "Adalmon'dan veri gelmedi".
+- Kestirmeler: `Sources/App/Intents/` (Pil durumu, Cihaz pilleri, Mobil veri, Adalmon'u aç, Hız sınırı koy/kaldır, Mobilde engelle/kaldır) + `AdalmonShortcuts` Türkçe ifadeler. Ayarlar › Widget'lar (canlı önizleme + ekleme adımları) ve Kestirmeler.
+- URL yönlendirme: `SettingsRouter.handle(url:)`; Dock modu kapalıysa en yakın ayar bölümü açılır.
+- DOĞRULANMADI (kullanıcı gerekir): widget galerisinde görünme/yerleştirme, gerçek app group dosyası okuma (sandbox), Kestirmeler/Siri ifadeleri (geliştirme dili en; ifadeler Türkçe), widget yenileme bütçesi.

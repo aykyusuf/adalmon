@@ -71,5 +71,7 @@ enum AppNameTable {
         "claude": "Claude Code", "speedtest": "Speedtest", "nc": "netcat", "telnet": "telnet", "ftp": "FTP",
         "pod": "CocoaPods", "swift": "Swift", "xcodebuild": "xcodebuild", "flutter": "Flutter", "pip": "pip", "pip3": "pip",
         "dart": "Dart", "dartvm": "Dart VM",
+        "swift-frontend": "Swift derleyici", "swiftc": "Swift derleyici", "swift-driver": "Swift derleyici",
+        "clang": "Clang", "clang++": "Clang", "sourcekit-lsp": "SourceKit-LSP",
     ]
 }

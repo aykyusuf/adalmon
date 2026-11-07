@@ -151,6 +151,10 @@ final class ProcessLiveModel {
             out.append(row)
             if !g.members.isEmpty { mem[g.key] = memberRows(g.members, group: row, snap: snap) }
         }
+        let hints = DuplicateNameHints.hints(keys: out.map(\.key), name: { ResourceDisplay.name($0) })
+        if !hints.isEmpty {
+            for i in out.indices { out[i].pathHint = hints[out[i].key] }
+        }
         rows = out
         members = mem
         totals = ProcessTotals(snapshot: snapshot, rows: out)
@@ -185,7 +189,7 @@ final class ProcessLiveModel {
         list.map { member in
             var m = LiveRow.make(member: member, group: group, elapsed: snap.elapsed, cores: cores)
             if m.category != .system {
-                let state = ProcessActions.state(of: [member.pid])
+                let state = ProcessActions.state(of: member.pids)
                 m.isSuspended = state.isSuspended
                 m.isEfficient = state.isEfficient
             }

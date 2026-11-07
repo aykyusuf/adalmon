@@ -6,6 +6,7 @@ struct ProcessHistoryView: View {
     let store: UsageStore
     @State private var window: ResourceWindow = .hours6
     @State private var rows: [AppHistoryRow] = []
+    @State private var hints: [String: String] = [:]
     @State private var sortColumn: HistoryColumn = .cpu
     @State private var sortAscending = false
     @State private var selected: String?
@@ -46,7 +47,7 @@ struct ProcessHistoryView: View {
                 Divider()
                 List(selection: $selected) {
                     ForEach(sorted) { row in
-                        HistoryRowView(row: row, maxima: maxima, dark: scheme == .dark)
+                        HistoryRowView(row: row, maxima: maxima, dark: scheme == .dark, hint: hints[row.app])
                             .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
                     }
@@ -142,6 +143,7 @@ struct ProcessHistoryView: View {
         let all = await store.appHistoryRows(window: window)
         let range = await store.resourceTimeRange()
         rows = all
+        hints = DuplicateNameHints.hints(keys: all.map(\.app), name: { ResourceDisplay.name($0) })
         firstRecord = range?.first
         if let selected {
             series = await store.resourceSeries(app: selected, metric: chartMetric, window: window)

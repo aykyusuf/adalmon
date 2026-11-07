@@ -24,6 +24,8 @@ final class BatteryMonitor {
     var lastFullCharge: Date?
     var hasBattery: Bool { reading != nil }
 
+    /// Takılma/çıkarma ya da şarj durumu değişince (widget anlık görüntüsünü hemen yenilemek için).
+    @ObservationIgnored var onPowerStateChange: (() -> Void)?
     @ObservationIgnored private let store: UsageStore?
     @ObservationIgnored private let readProvider: () -> BatteryReading?
     @ObservationIgnored private let alertConfig: () -> BatteryAlertConfig
@@ -158,6 +160,7 @@ final class BatteryMonitor {
         let stateChanged = (lastPlugged != nil && lastPlugged != r.isPluggedIn) || (lastCharging != nil && lastCharging != r.isCharging)
         lastPlugged = r.isPluggedIn
         lastCharging = r.isCharging
+        defer { if stateChanged { onPowerStateChange?() } }
 
         var comparable = r
         if let old = reading { comparable.timestamp = old.timestamp }
