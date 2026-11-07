@@ -22,6 +22,8 @@ final class AppModel {
     private(set) var memHistory: [Double] = []
     private(set) var downHistory: [Double] = []
     private(set) var upHistory: [Double] = []
+    /// Zaman damgalı sistem metrik geçmişi (~10 dk, yalnızca sayı): Performans sekmesi açılır açılmaz çizer.
+    let systemHistory = SystemHistoryBuffer()
 
     /// Bugün mobil yolda fiziksel arayüzden geçen gerçek toplam (limit buna göre).
     private(set) var mobileToday: UInt64 = 0
@@ -539,6 +541,7 @@ final class AppModel {
     /// Yeni ölçümü yayınlar (testler/önizlemeler de gerçek bir ölçümü buradan verir).
     func apply(_ s: SystemSnapshot) {
         snapshot = s
+        systemHistory.append(s, notify: mainWindowVisible)
         Self.push(&cpuHistory, s.cpu.total)
         Self.push(&gpuHistory, s.gpu?.displayLoad ?? 0)
         Self.push(&memHistory, s.memory.usedFraction)

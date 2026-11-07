@@ -2,24 +2,29 @@ import SwiftUI
 
 /// Canlı geçmişten ve kayıtlı (dakikalık / saatlik) toplamlardan grafik serileri kurar. Saf mantık.
 enum PerformanceSeriesBuilder {
-    /// Canlı: son `capacity` örnek; en yeni nokta `anchor`da, öncekiler `interval` sn aralıkla geriye.
-    static func live(metric: PerformanceMetric, history h: PerformanceHistory, interval: Int, anchor: Date) -> [PerformanceChartSeries] {
-        func points(_ values: [Double], scale: Double = 1) -> [PerformanceChartPoint] {
-            let n = values.count
-            return values.enumerated().map { i, v in
-                PerformanceChartPoint(date: anchor.addingTimeInterval(-Double(n - 1 - i) * Double(interval)), value: v * scale)
-            }
+    /// Canlı: sistem geçmişi tamponundaki gerçek zaman damgalı örnekler (aralık 1 sn ile kullanıcı aralığı arasında değişebilir).
+    static func live(metric: PerformanceMetric, samples: [SystemSample]) -> [PerformanceChartSeries] {
+        func points(_ value: (SystemSample) -> Double) -> [PerformanceChartPoint] {
+            samples.map { PerformanceChartPoint(date: $0.time, value: value($0)) }
         }
         switch metric {
-        case .cpu: return [.init(name: "Kullanım", color: metric.color, points: points(h.cpu, scale: 100), unit: .percent)]
-        case .memory: return [.init(name: "Kullanılan", color: metric.color, points: points(h.memory, scale: 100), unit: .percent)]
-        case .gpu: return [.init(name: "Kullanım", color: metric.color, points: points(h.gpu, scale: 100), unit: .percent)]
+        case .cpu: return [.init(name: "Kullanım", color: metric.color, points: points { $0.cpu * 100 }, unit: .percent)]
+        case .memory: return [.init(name: "Kullanılan", color: metric.color, points: points { $0.memory * 100 }, unit: .percent)]
+        case .gpu: return [.init(name: "Kullanım", color: metric.color, points: points { $0.gpu * 100 }, unit: .percent)]
         case .disk:
-            return [.init(name: "Okuma", color: .green, points: points(h.diskRead), unit: .bytesPerSecond),
-                    .init(name: "Yazma", color: .mint, points: points(h.diskWrite), unit: .bytesPerSecond)]
+            return [.init(name: "Okuma", color: .green, points: points(\.diskRead), unit: .bytesPerSecond),
+                    .init(name: "Yazma", color: .mint, points: points(\.diskWrite), unit: .bytesPerSecond)]
         case .network:
-            return [.init(name: "İndirme", color: .orange, points: points(h.down), unit: .bytesPerSecond),
-                    .init(name: "Yükleme", color: .yellow, points: points(h.up), unit: .bytesPerSecond)]
+            return [.init(name: "İndirme", color: .orange, points: points(\.down), unit: .bytesPerSecond),
+                    .init(name: "Yükleme", color: .yellow, points: points(\.up), unit: .bytesPerSecond)]
+        }
+    }
+
+    /// Grafik değeri metni: yüzde (bir ondalık) ya da bayt/sn.
+    static func valueText(_ value: Double, unit: PerformanceChartSeries.Unit) -> String {
+        switch unit {
+        case .percent: "%" + max(0, value).formatted(.number.precision(.fractionLength(1)).locale(Locale(identifier: "tr_TR")))
+        case .bytesPerSecond: Format.rate(value)
         }
     }
 

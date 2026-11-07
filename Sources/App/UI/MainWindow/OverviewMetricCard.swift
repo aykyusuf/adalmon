@@ -3,6 +3,7 @@ import SwiftUI
 /// Kompakt canlı metrik kartı: başlık + büyük değer + ince geçmiş çizgisi.
 struct OverviewMetricCard: View {
     let metric: SystemMetric
+    var secondsPerPoint = 2
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -25,7 +26,7 @@ struct OverviewMetricCard: View {
                 .monospacedDigit()
                 .lineLimit(1)
             if let history = metric.history {
-                HistoryChart(values: history, tint: metric.tint)
+                HistoryChart(values: history, tint: metric.tint, secondsPerPoint: secondsPerPoint)
                     .frame(height: 44)
             } else {
                 UsageBar(fraction: metric.fraction, tint: metric.tint, height: 8)

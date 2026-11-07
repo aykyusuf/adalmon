@@ -3,6 +3,7 @@ import SwiftUI
 /// Canlı ağ hızı ve son 60 sn grafiği (kompakt).
 struct OverviewNetworkCard: View {
     let data: PanelData
+    var secondsPerPoint = 2
 
     var body: some View {
         let network = data.snapshot?.network
@@ -25,7 +26,7 @@ struct OverviewNetworkCard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
-            TrafficChart(down: data.downHistory, up: data.upHistory)
+            TrafficChart(down: data.downHistory, up: data.upHistory, secondsPerPoint: secondsPerPoint)
                 .frame(height: 90)
         }
         .padding(12)

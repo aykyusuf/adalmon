@@ -7,18 +7,19 @@ import XCTest
 @MainActor
 struct MainWindowHarness {
     let window: NSWindow
-    let hosting: NSHostingController<MainWindowView<SettingsDetailView>>
+    let hosting: NSHostingController<AnyView>
     let model: AppModel
     let router: SettingsRouter
 
-    init(size: NSSize, section: MainSection, dark: Bool = true, model: AppModel = AppModel()) {
+    /// `chartHover`: grafiklerde sanki imleç çizim alanının bu oranında (0...1) duruyormuş gibi ipucu gösterir (önizleme).
+    init(size: NSSize, section: MainSection, dark: Bool = true, model: AppModel = AppModel(), chartHover: Double? = nil) {
         model.mainWindowVisible = true
         let router = SettingsRouter(isDockModeOn: { true })
         router.selectedMainSection = section
         let view = MainWindowView(model: model, source: .fixed(.sample), actions: .inert, router: router) { settings in
             SettingsDetailView(section: settings, model: model)
         }
-        let hosting = NSHostingController(rootView: view)
+        let hosting = NSHostingController(rootView: AnyView(view.environment(\.chartPreviewHover, chartHover)))
         hosting.sizingOptions = [.minSize]
         let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: 40, y: 60), size: size),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -46,6 +47,19 @@ struct MainWindowHarness {
         for _ in 0..<count {
             try await Task.sleep(for: .milliseconds(300))
             model.apply(sampler.sample())
+        }
+    }
+
+    /// Önizleme için son 10 dakikalık sentetik sistem geçmişi (gerçek örneklerden ÖNCE çağrılmalı: tampon zamanla artan yazar).
+    static func seedSystemHistory(into model: AppModel, seconds: Int = 600, step: Int = 2) {
+        let now = Date.now.addingTimeInterval(-30)
+        for i in stride(from: seconds, to: 0, by: -step) {
+            let t = Double(i)
+            let wave = 0.5 + 0.5 * sin(t / 37)
+            let sample = SystemSample(time: now.addingTimeInterval(-t), cpu: 0.12 + 0.3 * wave * (0.6 + 0.4 * sin(t / 9)), memory: 0.58 + 0.04 * sin(t / 120),
+                                      gpu: 0.05 + 0.2 * max(0, sin(t / 55)), diskRead: 2e6 * (1 + sin(t / 17)) * wave, diskWrite: 6e6 * (1 + sin(t / 23)),
+                                      down: 1.2e6 * (1 + sin(t / 31)) * wave, up: 2e5 * (1 + sin(t / 13)))
+            model.systemHistory.append(sample, notify: false)
         }
     }
 

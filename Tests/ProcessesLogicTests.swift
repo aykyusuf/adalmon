@@ -44,18 +44,18 @@ final class ProcessesLogicTests: XCTestCase {
         live.apply(LiveSnapshot(groups: groups, elapsed: 1, totalProcessCount: 42), snapshot: nil, net: ["/Applications/Zed.app": 6_000])
         XCTAssertEqual(live.totalProcessCount, 42)
         XCTAssertEqual(live.rows.first { $0.key == "/Applications/Zed.app" }?.network ?? 0, 100, accuracy: 0.001, "60 sn toplamı / 60")
-        let sections = live.sections()
+        let sections = live.sections
         XCTAssertEqual(sections.last?.category, .system)
         let background = sections.first { $0.category == .background }?.rows.map(\.key)
         XCTAssertEqual(background, ["/Applications/Alpha.app", "/Applications/Zed.app"], "CPU azalan")
         live.sortColumn = .name
         live.sortAscending = true
-        XCTAssertEqual(live.sections().first { $0.category == .background }?.rows.map(\.key), ["/Applications/Alpha.app", "/Applications/Zed.app"])
+        XCTAssertEqual(live.sections.first { $0.category == .background }?.rows.map(\.key), ["/Applications/Alpha.app", "/Applications/Zed.app"])
         live.query = "zed"
-        XCTAssertEqual(live.sections().flatMap(\.rows).map(\.key), ["/Applications/Zed.app"])
+        XCTAssertEqual(live.sections.flatMap(\.rows).map(\.key), ["/Applications/Zed.app"])
         live.query = ""
         live.collapsed.insert(.background)
-        XCTAssertTrue(live.sections().first { $0.category == .background }?.rows.isEmpty ?? false, "katlanmış bölüm satır göstermez")
+        XCTAssertTrue(live.sections.first { $0.category == .background }?.rows.isEmpty ?? false, "katlanmış bölüm satır göstermez")
     }
 
     func testCategoryClassification() {
@@ -100,13 +100,6 @@ final class ProcessesLogicTests: XCTestCase {
     }
 
     // MARK: Performans
-
-    func testPerformanceHistorySeedKeepsSeriesAligned() {
-        var h = PerformanceHistory()
-        h.seed(cpu: [0.1, 0.2], memory: [0.5], gpu: [], down: [1, 2, 3], up: [])
-        XCTAssertEqual(h.count, 2)
-        XCTAssertEqual([h.memory.count, h.gpu.count, h.down.count, h.up.count, h.diskRead.count], [2, 2, 2, 2, 2], "seri uzunlukları eşit")
-    }
 
     func testNiceCeilingAndUptime() {
         XCTAssertEqual(PerformanceChartView.niceCeiling(1_300_000), 2_000_000)

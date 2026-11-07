@@ -1,10 +1,6 @@
 import SwiftUI
 
-struct PerformanceChartPoint: Identifiable, Equatable {
-    var date: Date
-    var value: Double
-    var id: Date { date }
-}
+typealias PerformanceChartPoint = ChartPoint
 
 /// Performans grafiğinin bir çizgisi (CPU için tek, Disk/Ağ için iki: okuma-yazma / indirme-yükleme).
 struct PerformanceChartSeries: Identifiable, Equatable {
@@ -20,6 +16,9 @@ struct PerformanceChartSeries: Identifiable, Equatable {
     var points: [PerformanceChartPoint]
     var unit: Unit
     var id: String { name }
+
+    /// Etkileşimli grafik bileşenleri için seri.
+    var line: ChartLine { ChartLine(name: name, color: color, points: points) }
 }
 
 extension PerformanceMetric {

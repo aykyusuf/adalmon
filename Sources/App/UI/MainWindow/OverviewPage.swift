@@ -27,7 +27,7 @@ struct OverviewPage: View {
                 }
                 OverviewTopAppsCard(rows: TopAppRow.top(data.today), showsFilterCallout: data.showsFilterCallout, router: router)
                 OverviewResourceCard(store: model.store, router: router)
-                OverviewLiveSection(data: data)
+                OverviewLiveSection(data: data, secondsPerPoint: model.prefs.updateInterval)
             }
             .padding(24)
         }

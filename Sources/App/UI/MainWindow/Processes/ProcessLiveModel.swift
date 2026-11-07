@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import SwiftUI
 
 /// Bir kategorinin tabloda görünen bölümü.
 struct ProcessSection: Identifiable {
@@ -13,24 +14,32 @@ struct ProcessSection: Identifiable {
 
 /// Süreçler sayfasının canlı durumu (İşlemler + Performans sekmeleri). Örnekleme yalnızca sayfa canlı bir sekmedeyken
 /// ve ana pencere görünürken çalışır; aralık kullanıcının güncelleme aralığıdır.
+///
+/// Tablo sırası kararlıdır: sıralama yalnızca sütun/arama/genişletme değişince ya da her `resortEvery`. ölçümde yenilenir;
+/// imleç listenin üstündeyken donar (satırlar imlecin altından kaymaz). Sıra yalnızca `apply` ve özellik gözlemcilerinde
+/// yazılır, `body`'de değil.
 @MainActor @Observable
 final class ProcessLiveModel {
+    /// Sıralamanın kaç ölçümde bir yenileneceği (kararlılık için).
+    static let resortEvery = 3
+
     private(set) var rows: [LiveRow] = []
     private(set) var members: [String: [LiveRow]] = [:]
     private(set) var totals = ProcessTotals()
-    private(set) var history = PerformanceHistory()
     private(set) var latest: SystemSnapshot?
     private(set) var totalProcessCount = 0
+    /// Kategorilere ayrılmış, sıralanmış, aramaya uyan görünür satırlar (açık gruplarda üyeler altlarında).
+    private(set) var sections: [ProcessSection] = []
     /// İlk örnek yalnız taban çizgisidir; oranlar bir sonraki örnekten sonra gelir.
     private(set) var isMeasuring = true
-    /// Örnekleme aralığı (sn): grafiğin zaman ekseni için.
+    /// Örnekleme aralığı (sn).
     private(set) var interval = 2
 
-    var expanded: Set<String> = []
-    var collapsed: Set<ProcessCategory> = []
-    var query = ""
-    var sortColumn: ProcessColumn = .cpu
-    var sortAscending = false
+    var expanded: Set<String> = [] { didSet { if expanded != oldValue { rebuildSections(resort: true) } } }
+    var collapsed: Set<ProcessCategory> = [] { didSet { if collapsed != oldValue { rebuildSections(resort: false) } } }
+    var query = "" { didSet { if query != oldValue { rebuildSections(resort: true) } } }
+    var sortColumn: ProcessColumn = .cpu { didSet { if sortColumn != oldValue { rebuildSections(resort: true) } } }
+    var sortAscending = false { didSet { if sortAscending != oldValue { rebuildSections(resort: true) } } }
     var selection: String?
 
     /// Sonlandırma akışı: önce onay, sonra SIGTERM, hâlâ yaşıyorsa "zorla" onayı.
@@ -50,10 +59,28 @@ final class ProcessLiveModel {
         var appPath: String?
     }
 
+    /// İmleç listenin üstündeyken sıra donar; çıkınca bir sonraki ölçümde yenilenir.
+    @ObservationIgnored var isPointerInside = false {
+        didSet { if oldValue && !isPointerInside { resortPending = true } }
+    }
     @ObservationIgnored private var isSampling = false
-    @ObservationIgnored private(set) weak var host: AppModel?
+    @ObservationIgnored private var pendingMembers = false
+    @ObservationIgnored private weak var host: AppModel?
     @ObservationIgnored private var statusTask: Task<Void, Never>?
     @ObservationIgnored private let cores = ProcessInfo.processInfo.activeProcessorCount
+    /// Son sıralamadaki sıra numarası (satır kimliği → sıra); sıralama yenilenmeyen ölçümlerde bu korunur.
+    @ObservationIgnored private var orderRank: [String: Int] = [:]
+    @ObservationIgnored private var applyCount = 0
+    @ObservationIgnored private var resortPending = true
+
+    /// Sistem "Hareketi azalt" ayarı açıksa animasyon yok.
+    private var motion: Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .smooth(duration: 0.3)
+    }
+
+    private var expandMotion: Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .spring(duration: 0.28)
+    }
 
     // MARK: Döngü
 
@@ -61,7 +88,6 @@ final class ProcessLiveModel {
         host = model
         await service.live.reset()
         isMeasuring = true
-        history.seed(cpu: model.cpuHistory, memory: model.memHistory, gpu: model.gpuHistory, down: model.downHistory, up: model.upHistory)
         var first = true
         while !Task.isCancelled {
             let visible = model.mainWindowVisible
@@ -74,18 +100,32 @@ final class ProcessLiveModel {
         }
     }
 
-    /// Tek uçuşlu: üst üste biniyorsa atlanır.
-    func refresh(service: ResourceService, model: AppModel) async {
-        guard !isSampling else { return }
+    /// Tek uçuşlu: üst üste biniyorsa atlanır. `membersOnly`: yalnızca yeni açılan grupların üyelerini al (satır oranları
+    /// kısa pencereyle bozulmasın); uçuştaki ölçüm bitince hemen yeniden çalışır (açma bir aralık beklemesin).
+    func refresh(service: ResourceService, model: AppModel, membersOnly: Bool = false) async {
+        guard !isSampling else {
+            if membersOnly { pendingMembers = true }
+            return
+        }
         isSampling = true
         defer { isSampling = false }
         let snap = await service.live.sample(expanded: expanded)
-        apply(snap, snapshot: model.snapshot, net: model.usage.last60Bytes)
+        if membersOnly {
+            applyMembers(snap)
+        } else {
+            apply(snap, snapshot: model.snapshot, net: model.usage.last60Bytes)
+        }
+        if pendingMembers {
+            pendingMembers = false
+            applyMembers(await service.live.sample(expanded: expanded))
+        }
     }
 
     func setExpanded(_ key: String, _ value: Bool, service: ResourceService, model: AppModel) {
-        if value { expanded.insert(key) } else { expanded.remove(key); members[key] = nil }
-        Task { await refresh(service: service, model: model) }
+        withAnimation(expandMotion) {
+            if value { expanded.insert(key) } else { expanded.remove(key); members[key] = nil }
+        }
+        if value { Task { await refresh(service: service, model: model, membersOnly: true) } }
     }
 
     func apply(_ snap: LiveSnapshot, snapshot: SystemSnapshot?, net: [String: UInt64]) {
@@ -109,35 +149,62 @@ final class ProcessLiveModel {
                 row.isEfficient = state.isEfficient
             }
             out.append(row)
-            if !g.members.isEmpty {
-                mem[g.key] = g.members.map { member in
-                    var m = LiveRow.make(member: member, group: row, elapsed: snap.elapsed, cores: cores)
-                    if m.category != .system {
-                        let state = ProcessActions.state(of: [member.pid])
-                        m.isSuspended = state.isSuspended
-                        m.isEfficient = state.isEfficient
-                    }
-                    return m
-                }
-            }
+            if !g.members.isEmpty { mem[g.key] = memberRows(g.members, group: row, snap: snap) }
         }
         rows = out
         members = mem
         totals = ProcessTotals(snapshot: snapshot, rows: out)
-        if let snapshot {
-            latest = snapshot
-            history.append(snapshot)
+        if let snapshot { latest = snapshot }
+        applyCount += 1
+        // Sıra yalnızca seyrek yenilenir ve imleç listedeyken donar; yalnızca gerçek yeniden sıralama animasyonlu.
+        let reorder = resortPending || (applyCount % Self.resortEvery == 0 && !isPointerInside)
+        if reorder {
+            withAnimation(motion) { rebuildSections(resort: true) }
+        } else {
+            rebuildSections(resort: false)
+        }
+    }
+
+    /// Yeni açılan grupların üyelerini ekler (zaten gösterilenlerin oranlarına dokunmaz); animasyonlu.
+    private func applyMembers(_ snap: LiveSnapshot) {
+        var changed = false
+        var next = members
+        for g in snap.groups where expanded.contains(g.key) && next[g.key] == nil && !g.members.isEmpty {
+            guard let row = rows.first(where: { $0.key == g.key }) else { continue }
+            next[g.key] = memberRows(g.members, group: row, snap: snap)
+            changed = true
+        }
+        guard changed else { return }
+        withAnimation(expandMotion) {
+            members = next
+            rebuildSections(resort: false)
+        }
+    }
+
+    private func memberRows(_ list: [LiveMember], group: LiveRow, snap: LiveSnapshot) -> [LiveRow] {
+        list.map { member in
+            var m = LiveRow.make(member: member, group: group, elapsed: snap.elapsed, cores: cores)
+            if m.category != .system {
+                let state = ProcessActions.state(of: [member.pid])
+                m.isSuspended = state.isSuspended
+                m.isEfficient = state.isEfficient
+            }
+            return m
         }
     }
 
     // MARK: Görünüm verisi
 
-    /// Aramaya uyan, sıralanmış, kategoriye ayrılmış bölümler (açık gruplarda üyeler altlarında).
-    func sections() -> [ProcessSection] {
+    /// Aramaya uyan, sıralanmış, kategoriye ayrılmış bölümleri kurar. `resort` false ise önceki sıra korunur
+    /// (yeni satırlar sıralı konumlarına eklenir, kaybolanlar düşer).
+    private func rebuildSections(resort: Bool) {
+        let doResort = resort || resortPending
+        resortPending = false
         let needle = query.trimmingCharacters(in: .whitespaces)
         let filtered = needle.isEmpty ? rows : rows.filter { $0.name.localizedStandardContains(needle) }
-        let ordered = sorted(filtered)
-        return ProcessCategory.allCases.compactMap { category in
+        if doResort { orderRank = [:] }
+        let ordered = stableOrder(filtered, resort: doResort)
+        sections = ProcessCategory.allCases.compactMap { category in
             let groups = ordered.filter { $0.category == category }
             guard !groups.isEmpty else { return nil }
             var flat: [LiveRow] = []
@@ -145,12 +212,36 @@ final class ProcessLiveModel {
                 for g in groups {
                     flat.append(g)
                     if expanded.contains(g.key) {
-                        flat.append(contentsOf: sorted(members[g.key] ?? []))
+                        flat.append(contentsOf: stableOrder(members[g.key] ?? [], resort: doResort))
                     }
                 }
             }
             return ProcessSection(category: category, rows: flat, groupCount: groups.count)
         }
+    }
+
+    private func stableOrder(_ list: [LiveRow], resort: Bool) -> [LiveRow] {
+        let fresh = sorted(list)
+        var result: [LiveRow]
+        if resort {
+            result = fresh
+        } else {
+            let rank = orderRank
+            let known = list.filter { rank[$0.id] != nil }.sorted { rank[$0.id, default: 0] < rank[$1.id, default: 0] }
+            let unknown = Set(list.lazy.filter { rank[$0.id] == nil }.map(\.id))
+            result = known
+            if !unknown.isEmpty {
+                // Yeni satır, sıralı listede kendinden önce gelen bilinen satır sayısı kadar yere girer.
+                let knownIDs = Set(known.map(\.id))
+                var seenKnown = 0
+                for row in fresh {
+                    if unknown.contains(row.id) { result.insert(row, at: min(seenKnown, result.count)) }
+                    else if knownIDs.contains(row.id) { seenKnown += 1 }
+                }
+            }
+        }
+        for (i, r) in result.enumerated() { orderRank[r.id] = i }
+        return result
     }
 
     func canExpand(_ row: LiveRow) -> Bool { !row.isMember && row.processCount > 1 }
