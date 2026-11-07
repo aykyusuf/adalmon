@@ -118,7 +118,7 @@ final class WallpaperService {
     }
 
     func thumbnail(for item: WallpaperItem) async -> NSImage? {
-        let cache = thumbsURL.appending(path: "\(item.id.uuidString).jpg")
+        let cache = thumbsURL.appending(path: "\(item.id.uuidString)-v2.jpg") // v2: kare artık sürenin ~%15inden; eski siyah küçük resimler yenilenir
         if let data = try? Data(contentsOf: cache), let image = NSImage(data: data) { return image }
         guard let cg = await WallpaperMedia.frameImage(item.url, kind: item.kind, maxPixel: 640), let data = WallpaperMedia.jpegData(cg) else { return nil }
         try? FileManager.default.createDirectory(at: thumbsURL, withIntermediateDirectories: true)

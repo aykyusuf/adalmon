@@ -111,10 +111,30 @@ struct WallpaperSettings: Codable, Equatable, Sendable {
     var playlistMode: PlaylistMode = .single
     var rotationMinutes = 30
     var frameRateCap: WallpaperFrameRateCap = .fps30
+    /// Döngü: baştan atla / sondan kes / çapraz geçiş. Ekran koruyucu da aynı değerleri kullanır.
+    var loop = LoopSettings()
     /// Deneysel B bölümü gösterilsin mi (kapalı gelir).
     var experimentalAerialAcknowledged = false
 
     static let rotationChoices = [5, 15, 30, 60, 180, 1_440]
+}
+
+extension WallpaperSettings {
+    /// Eski kayıtlarda olmayan anahtarlar varsayılana düşer: yeni alan eklemek kayıtlı ayarları SİLMEZ.
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = WallpaperSettings()
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+        rules = try c.decodeIfPresent(WallpaperPauseRules.self, forKey: .rules) ?? d.rules
+        sameOnAllScreens = try c.decodeIfPresent(Bool.self, forKey: .sameOnAllScreens) ?? d.sameOnAllScreens
+        defaultItemID = try c.decodeIfPresent(UUID.self, forKey: .defaultItemID)
+        perScreen = try c.decodeIfPresent([String: UUID].self, forKey: .perScreen) ?? d.perScreen
+        playlistMode = try c.decodeIfPresent(PlaylistMode.self, forKey: .playlistMode) ?? d.playlistMode
+        rotationMinutes = try c.decodeIfPresent(Int.self, forKey: .rotationMinutes) ?? d.rotationMinutes
+        frameRateCap = try c.decodeIfPresent(WallpaperFrameRateCap.self, forKey: .frameRateCap) ?? d.frameRateCap
+        loop = (try? c.decodeIfPresent(LoopSettings.self, forKey: .loop)) ?? d.loop
+        experimentalAerialAcknowledged = try c.decodeIfPresent(Bool.self, forKey: .experimentalAerialAcknowledged) ?? d.experimentalAerialAcknowledged
+    }
 }
 
 // MARK: Dosya incelemesi
@@ -167,14 +187,22 @@ enum WallpaperMedia {
     }
 
     /// Videodan (ya da görüntüden) bir kare: küçük resim ve duraklatılmış poster için.
-    static func frameImage(_ url: URL, kind: WallpaperKind, maxPixel: Int, at seconds: Double = 1) async -> CGImage? {
+    /// `loop`: verilirse ve video kırpılıyorsa kare tam kırpma başlangıcından alınır (soğuk açılışta poster = ilk oynayan kare).
+    static func frameImage(_ url: URL, kind: WallpaperKind, maxPixel: Int, at seconds: Double = 1, loop: LoopTiming? = nil) async -> CGImage? {
         switch kind {
         case .image: return downsampledImage(url, maxPixel: maxPixel)
         case .video:
             let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
             gen.appliesPreferredTrackTransform = true
             gen.maximumSize = CGSize(width: maxPixel, height: maxPixel)
-            for t in [seconds, 0] {
+            // Videoların başı çoğu zaman siyah ya da kararmayla açılır: kareyi sürenin ~%15'inden (en az 3 sn, en çok 60 sn) al.
+            let duration = (try? await AVURLAsset(url: url).load(.duration).seconds) ?? 0
+            var smart = duration.isFinite && duration > 0 ? min(60, max(3, duration * 0.15)) : seconds
+            if let loop {
+                let range = loop.range(duration: duration)
+                if range.isTrimmed { smart = range.start }
+            }
+            for t in [min(smart, max(0, duration - 0.5)), seconds, 0] {
                 if let image = try? await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image { return image }
             }
             return nil

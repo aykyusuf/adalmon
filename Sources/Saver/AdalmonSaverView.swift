@@ -128,8 +128,8 @@ final class AdalmonSaverView: ScreenSaverView {
 
     private func applyMode() {
         guard started else { return }
-        showPoster()
-        if resolved.isEmpty {
+        guard !resolved.isEmpty else {
+            showPoster(preferring: nil)
             playback.stop()
             showMessage(playlist == nil ? "Adalmon Video: oynatma listesi okunamadı.\nAdalmon > Duvar kâğıdı > Ekran koruyucu'dan videoları hazırlayın."
                                         : "Adalmon Video: listedeki videolar bulunamadı.")
@@ -137,16 +137,22 @@ final class AdalmonSaverView: ScreenSaverView {
         }
         messageLayer.isHidden = true
         if effectivePreview {
+            showPoster(preferring: nil)
             playback.stop()                 // küçük önizleme: 4K çözme yok, yalnızca poster
         } else if !playback.isActive {
             var rng = SystemRandomNumberGenerator()
-            let order = (playlist ?? SaverPlaylist(appVersion: "", updatedAt: .now, shuffle: false, items: [])).order(resolved, using: &rng)
-            playback.start(urls: order.map(\.videoURL))
+            let list = playlist ?? SaverPlaylist(appVersion: "", updatedAt: .now, shuffle: false, items: [])
+            let order = list.order(resolved, using: &rng)
+            // Poster ANINDA görünür (siyah ekran yok); video katmanı ilk kare hazır olunca üstünde belirir.
+            showPoster(preferring: order.first)
+            playback.start(sources: order.map { LoopSource(url: $0.videoURL, duration: $0.item.duration) }, timing: list.timing)
         }
     }
 
-    private func showPoster() {
-        guard rootLayer.contents == nil, let url = resolved.first(where: { $0.posterURL != nil })?.posterURL,
+    /// İlk oynayacak videonun posteri (kırpma başlangıcındaki kare); yoksa herhangi bir poster.
+    private func showPoster(preferring first: SaverPlaylist.Resolved?) {
+        guard rootLayer.contents == nil,
+              let url = first?.posterURL ?? resolved.first(where: { $0.posterURL != nil })?.posterURL,
               let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
         rootLayer.contents = image

@@ -24,20 +24,20 @@ final class WallpaperWindow: NSWindow {
 }
 
 /// Düz NSView + katmanlar (NSHostingView içine AVPlayerLayer eklemek macOS 26+'da desteklenmiyor).
+/// `videoHost`: döngü motorunun katmanı; içinde (geçiş sırasında iki) AVPlayerLayer bulunur.
 final class WallpaperContentView: NSView {
     let stillLayer = CALayer()
-    let playerLayer = AVPlayerLayer()
+    let videoHost: VideoHostLayer
 
-    override init(frame: NSRect) {
+    init(frame: NSRect, videoHost: VideoHostLayer) {
+        self.videoHost = videoHost
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
         stillLayer.contentsGravity = .resizeAspectFill
         stillLayer.masksToBounds = true
-        playerLayer.videoGravity = .resizeAspectFill
         layer?.addSublayer(stillLayer)
-        layer?.addSublayer(playerLayer)
-        playerLayer.isHidden = true
+        layer?.addSublayer(videoHost)
     }
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
@@ -47,7 +47,7 @@ final class WallpaperContentView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         stillLayer.frame = bounds
-        playerLayer.frame = bounds
+        videoHost.frame = bounds
         CATransaction.commit()
     }
 

@@ -24,7 +24,14 @@ final class SaverViewSmokeTests: XCTestCase {
         try? FileManager.default.removeItem(at: tmp)
     }
 
-    private func playerLayer(of view: NSView) -> AVPlayerLayer? { view.layer?.sublayers?.compactMap { $0 as? AVPlayerLayer }.first }
+    /// Oynatıcı katmanı döngü motorunun kap katmanının içindedir (geçiş sırasında iki tane olabilir).
+    private func playerLayers(in layer: CALayer?) -> [AVPlayerLayer] {
+        (layer?.sublayers ?? []).flatMap { sub -> [AVPlayerLayer] in
+            if let p = sub as? AVPlayerLayer { return [p] }
+            return playerLayers(in: sub)
+        }
+    }
+    private func playerLayer(of view: NSView) -> AVPlayerLayer? { playerLayers(in: view.layer).first }
 
     private func prepare(videos: Int, hostExit: Bool = false) async throws {
         var sources: [SaverContentStore.Source] = []
@@ -51,16 +58,16 @@ final class SaverViewSmokeTests: XCTestCase {
         view.layoutSubtreeIfNeeded()
         view.startAnimation()
         let layer = try XCTUnwrap(playerLayer(of: view))
-        let player = try XCTUnwrap(layer.player as? AVQueuePlayer, "tam boyutlu örnekte AVQueuePlayer olmalı")
+        let player = try XCTUnwrap(layer.player, "tam boyutlu örnekte oynatıcı olmalı")
         XCTAssertTrue(player.isMuted)
         XCTAssertEqual(layer.videoGravity, .resizeAspectFill)
         await waitUntil { player.currentItem != nil && player.rate > 0 }
         XCTAssertGreaterThan(player.rate, 0, "oynatmalı")
-        XCTAssertEqual(player.items().count >= 1, true)
+        XCTAssertNotNil(player.currentItem)
 
         view.stopAnimation()
         XCTAssertNil(layer.player, "stopAnimation oynatıcıyı bırakmalı")
-        XCTAssertTrue(player.items().isEmpty)
+        XCTAssertNil(player.currentItem, "çözücü oturumu serbest kalmalı")
         view.stopAnimation()               // tekrar çağrı zararsız
         view.startAnimation()              // yeniden başlatılabilir
         XCTAssertNotNil(playerLayer(of: view)?.player)

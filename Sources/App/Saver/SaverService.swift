@@ -30,6 +30,7 @@ final class SaverService {
     @ObservationIgnored let store: SaverContentStore
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var posterTask: Task<Void, Never>?
     private static let settingsKey = "saver.settings"
 
     var isBusy: Bool { task != nil }
@@ -63,6 +64,8 @@ final class SaverService {
         playlist = result.1
         plan = result.2
         storedBytes = result.3
+        // Eski ya da bayat oynatma listesi (döngü anahtarları yok / farklı): sessizce güncel ayara getir.
+        if let list = result.1, list.timing != wallpaper.settings.loop.timing { syncLoop(wallpaper.settings.loop.timing) }
     }
 
     // MARK: Eylemler
@@ -76,7 +79,7 @@ final class SaverService {
             return
         }
         run(wallpaper: wallpaper, openSettingsAfter: true) { [self] in
-            try await copyContent()
+            try await copyContent(loop: wallpaper.settings.loop.timing)
             try installer.install()
         }
     }
@@ -86,7 +89,7 @@ final class SaverService {
         guard task == nil else { return }
         guard !selection.isEmpty else { message = "Seçili video yok."; return }
         if let plan, !plan.fits { message = "Disk alanı yetersiz (\(plan.bytesToWrite.formatted(.byteCount(style: .file))) gerekiyor)."; return }
-        run(wallpaper: wallpaper, openSettingsAfter: false) { [self] in try await copyContent() }
+        run(wallpaper: wallpaper, openSettingsAfter: false) { [self] in try await copyContent(loop: wallpaper.settings.loop.timing) }
     }
 
     func uninstall(wallpaper: WallpaperService) {
@@ -109,6 +112,25 @@ final class SaverService {
 
     func cancel() { task?.cancel() }
 
+    /// Duvar kâğıdındaki döngü ayarı değişti: kurulu oynatma listesine yazılır (video kopyalanmaz).
+    func syncLoop(_ timing: LoopTiming) {
+        guard let existing = playlist ?? store.currentPlaylist() else { return }
+        let trimChanged = existing.timing.trimStart != timing.sanitized.trimStart
+        try? store.rewritePlaylistLoop(timing)
+        playlist = store.currentPlaylist()
+        guard trimChanged else { return }
+        // Poster = kırpma başlangıcındaki kare: kaydırıcı sürülürken art arda üretmemek için kısa gecikme.
+        posterTask?.cancel()
+        let store = store, sources = selection
+        posterTask = Task {
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !Task.isCancelled else { return }
+            await store.refreshPosters(sources, makePoster: { source in
+                await WallpaperMedia.frameImage(source.url, kind: .video, maxPixel: 960, loop: timing).flatMap { WallpaperMedia.jpegData($0) }
+            })
+        }
+    }
+
     func openSystemSettings() {
         guard !AppEnvironment.isRunningTests, let url = URL(string: SaverPaths.settingsURLString) else { return }
         NSWorkspace.shared.open(url)
@@ -116,12 +138,13 @@ final class SaverService {
 
     // MARK: İç
 
-    private func copyContent() async throws {
+    private func copyContent(loop: LoopTiming) async throws {
         let options = SaverContentStore.SyncOptions(shuffle: settings.shuffle, hostExitOnStop: settings.hostExitOnStop,
-                                                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?")
+                                                    appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
+                                                    loop: loop)
         let sources = selection
         _ = try await store.sync(sources, options: options, makePoster: { source in
-            await WallpaperMedia.frameImage(source.url, kind: .video, maxPixel: 960).flatMap { WallpaperMedia.jpegData($0) }
+            await WallpaperMedia.frameImage(source.url, kind: .video, maxPixel: 960, loop: loop).flatMap { WallpaperMedia.jpegData($0) }
         }, progress: { [weak self] p in Task { @MainActor [weak self] in self?.progress = p } })
     }
 

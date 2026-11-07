@@ -11,8 +11,11 @@ struct WallpaperTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            preview
+            // Sabit oranlı kutu: önizleme bunun içine sığdırılır ve kırpılır; aksi halde "fill" resim komşu karoların üstüne taşıyordu.
+            Color.clear
                 .aspectRatio(16.0 / 10.0, contentMode: .fit)
+                .overlay { preview }
+                .clipped()
                 .overlay(alignment: .topTrailing) {
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")

@@ -126,7 +126,7 @@ final class WallpaperController {
                 slot = Slot(key: entry.info.key, frame: entry.frame, headless: isHeadless)
                 slots[entry.info.key] = slot
             }
-            slot.update(frame: entry.frame, scale: entry.info.scale, pixelSize: entry.info.pixelSize)
+            slot.update(frame: entry.frame, scale: entry.info.scale, pixelSize: entry.info.pixelSize, timing: config.settings.loop.timing)
             slot.assign(item)
         }
         for key in slots.keys where !seen.contains(key) {
@@ -345,20 +345,20 @@ final class WallpaperController {
 
 // MARK: - Ekran dilimi
 
-/// Bir ekranın penceresi + oynatıcısı. Aynı anda yalnızca BİR AVPlayer tutulur (asset değişiminde sızıntı raporu).
+/// Bir ekranın penceresi + oynatıcısı. Normalde yalnızca BİR AVPlayer tutulur (asset değişiminde sızıntı raporu);
+/// çapraz geçiş sırasında kısa süre ikinci bir oynatıcı vardır (bkz. `LoopingVideoEngine`).
 @MainActor
 private final class Slot {
     let key: String
     let headless: Bool
     private var window: WallpaperWindow?
     private var content: WallpaperContentView?
+    private let engine = LoopingVideoEngine()
     private(set) var itemID: UUID?
     private var item: WallpaperItem?
-    private var player: AVQueuePlayer?
-    private var looper: AVPlayerLooper?
-    private var readyObservation: NSKeyValueObservation?
     private var scale: CGFloat = 2
     private var pixelSize = CGSize(width: 3000, height: 2000)
+    private var timing = LoopTiming.default
     private var token = UUID()
     private var lastDecision: WallpaperDecision?
 
@@ -369,44 +369,61 @@ private final class Slot {
         self.headless = headless
         guard !headless else { return }
         let w = WallpaperWindow(frame: frame)
-        let c = WallpaperContentView(frame: NSRect(origin: .zero, size: frame.size))
+        let c = WallpaperContentView(frame: NSRect(origin: .zero, size: frame.size), videoHost: engine.hostLayer)
         c.autoresizingMask = [.width, .height]
         w.contentView = c
         window = w
         content = c
     }
 
-    func update(frame: NSRect, scale: CGFloat, pixelSize: CGSize) {
+    func update(frame: NSRect, scale: CGFloat, pixelSize: CGSize, timing newTiming: LoopTiming) {
         self.scale = scale
         self.pixelSize = pixelSize
+        if newTiming != timing {
+            timing = newTiming
+            // Kırpma / geçiş ayarı değişti: oynatıcı yeni ayarla yeniden kurulur (bir sonraki .play kararında).
+            if engine.isActive { engine.stop(); lastDecision = nil }
+        }
         guard let window, window.frame != frame else { return }
         window.setFrame(frame, display: true)
     }
 
     func assign(_ newItem: WallpaperItem) {
         if let item, item.id == newItem.id, item.path == newItem.path { self.item = newItem; return }
+        // Oynatılan video başka bir videoyla değişiyorsa: sert kesme yerine çapraz geçiş.
+        if newItem.kind == .video, item?.kind == .video, engine.transition(to: LoopSource(url: newItem.url, duration: newItem.info?.duration)) {
+            item = newItem
+            itemID = newItem.id
+            token = UUID()
+            loadStill(for: newItem)
+            return
+        }
         stopPlayback()
         item = newItem
         itemID = newItem.id
         token = UUID()
         lastDecision = nil
-        guard let content else { return }
-        content.playerLayer.isHidden = true
+        guard content != nil else { return }
+        loadStill(for: newItem)
+        window?.orderBack(nil)
+    }
+
+    /// Poster / sabit görüntü: arka planda yüklenir (ana iş parçacığını bloklamaz), ekran boyutuna indirilir.
+    private func loadStill(for newItem: WallpaperItem) {
+        guard content != nil else { return }
         let myToken = token
         let maxPixel = Int(max(pixelSize.width, pixelSize.height))
-        let url = newItem.url, kind = newItem.kind
-        // Poster / sabit görüntü: arka planda yüklenir (ana iş parçacığını bloklamaz), ekran boyutuna indirilir.
+        let url = newItem.url, kind = newItem.kind, loop = timing
         Task { [weak self] in
             let image: CGImage?
             if kind == .image {
                 image = await Task.detached(priority: .utility) { WallpaperMedia.downsampledImage(url, maxPixel: maxPixel) }.value
             } else {
-                image = await WallpaperMedia.frameImage(url, kind: kind, maxPixel: maxPixel, at: 1)
+                image = await WallpaperMedia.frameImage(url, kind: kind, maxPixel: maxPixel, at: 1, loop: loop)   // kırpma başlangıcındaki kare
             }
             guard let self, self.token == myToken else { return }
             self.crossfadeStill(image)
         }
-        window?.orderBack(nil)
     }
 
     private func crossfadeStill(_ image: CGImage?) {
@@ -421,52 +438,24 @@ private final class Slot {
         defer { lastDecision = decision }
         guard let item, item.kind == .video else { return }
         if case .pause(let reason) = lastDecision, decision == .play, reason == .displayAsleep || reason == .locked {
-            content?.playerLayer.player = nil   // uyku / kilit sonrası katmanı yeniden bağla (siyah kare önlemi)
-            content?.playerLayer.player = player
+            engine.reattach()   // uyku / kilit sonrası katmanı yeniden bağla (siyah kare önlemi)
         }
         switch decision {
         case .play:
             ensurePlayer(item)
-            player?.play()
+            engine.setPaused(false)
         case .pause:
-            player?.pause()
+            if engine.isActive { engine.setPaused(true) }
         }
     }
 
     private func ensurePlayer(_ item: WallpaperItem) {
-        guard player == nil, let content else { return }
-        let queue = AVQueuePlayer()
-        queue.isMuted = true
-        queue.preventsDisplaySleepDuringVideoPlayback = false
-        queue.automaticallyWaitsToMinimizeStalling = false
-        let template = AVPlayerItem(url: item.url)
-        looper = AVPlayerLooper(player: queue, templateItem: template)   // güçlü referans şart
-        content.playerLayer.player = queue
-        player = queue
-        readyObservation = content.playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] layer, _ in
-            guard layer.isReadyForDisplay else { return }
-            MainActor.assumeIsolated { self?.revealPlayer() }
-        }
-    }
-
-    private func revealPlayer() {
-        guard let content, content.playerLayer.isHidden else { return }
-        content.playerLayer.opacity = 0
-        content.playerLayer.isHidden = false
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 0; fade.toValue = 1; fade.duration = 0.6
-        content.playerLayer.opacity = 1
-        content.playerLayer.add(fade, forKey: "fade")
+        guard !engine.isActive, content != nil else { return }
+        engine.start(sources: [LoopSource(url: item.url, duration: item.info?.duration)], timing: timing)
     }
 
     private func stopPlayback() {
-        readyObservation = nil
-        looper?.disableLooping()
-        looper = nil
-        player?.pause()
-        player?.removeAllItems()
-        content?.playerLayer.player = nil
-        player = nil
+        engine.stop()
     }
 
     func teardown() {

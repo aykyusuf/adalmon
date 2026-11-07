@@ -73,7 +73,8 @@ enum AerialManifest {
             asset["shotID"] = "ADALMON_\(e.assetID.suffix(12))"
             asset["previewImage"] = e.thumbnailURL.absoluteString
             asset["url-4K-SDR-240FPS"] = e.videoURL.absoluteString
-            asset["showInTopLevel"] = false
+            // Ayarlar yalnız "showInTopLevel" olanları listeliyor (Apple'ın 165 öğesinin 125'i true); false iken video hiç görünmüyordu.
+            asset["showInTopLevel"] = true
             asset["includeInShuffle"] = false
             asset["preferredOrder"] = i
             asset["pointsOfInterest"] = [String: Any]()

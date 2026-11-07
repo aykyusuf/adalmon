@@ -12,6 +12,10 @@ struct SaverPlaylistItem: Codable, Equatable, Identifiable, Sendable {
 }
 
 /// Uygulamanın yazdığı, ekran koruyucunun okuduğu küçük JSON. Sürümlü: bilinmeyen yeni şema reddedilir.
+///
+/// Sürüm kuralı: `schema` yalnızca GERİ UYUMSUZ değişikliklerde artar. `trimStart` / `trimEnd` / `crossfade` EKLEMELİDİR:
+/// eski ekran koruyucu bu anahtarları yok sayar (şema 1 kalır; yoksa kurulu eski paket listeyi okuyamazdı),
+/// yeni ekran koruyucu eksik anahtarlarda varsayılanları kullanır (`LoopTiming.default`).
 struct SaverPlaylist: Codable, Equatable, Sendable {
     static let currentSchema = 1
 
@@ -25,7 +29,19 @@ struct SaverPlaylist: Codable, Equatable, Sendable {
     var shuffle: Bool
     /// Ekran koruyucu bitince ana süreci (legacyScreenSaver) kapat: sızıntı çaresi. Sorun çıkarsa uygulamadan kapatılabilir.
     var hostExitOnStop: Bool = true
+    /// Baştan atlanacak saniye (siyah / soluk giriş).
+    var trimStart: Double = LoopTiming.default.trimStart
+    /// Sondan kesilecek saniye.
+    var trimEnd: Double = LoopTiming.default.trimEnd
+    /// Çapraz geçiş süresi (sn); 0 = kapalı.
+    var crossfade: Double = LoopTiming.default.crossfade
     var items: [SaverPlaylistItem]
+
+    /// Üç alanın birleşik, düzeltilmiş görünümü.
+    var timing: LoopTiming {
+        get { LoopTiming(trimStart: trimStart, trimEnd: trimEnd, crossfade: crossfade).sanitized }
+        set { trimStart = newValue.trimStart; trimEnd = newValue.trimEnd; crossfade = newValue.crossfade }
+    }
 
     func encoded() throws -> Data {
         let enc = JSONEncoder()
@@ -74,5 +90,27 @@ struct SaverPlaylist: Codable, Equatable, Sendable {
         var list = resolved.shuffled(using: &generator)
         if let last, list.first?.item.id == last { list.swapAt(0, list.count - 1) }
         return list
+    }
+}
+
+// MARK: Hoşgörülü kod çözme
+
+extension SaverPlaylist {
+    /// Eski dosyalarda olmayan alanlar varsayılana düşer; bozuk değerler düzeltilir. (Uzantıda: üye bazlı `init` korunur.)
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try c.decode(Int.self, forKey: .schema)
+        appVersion = try c.decode(String.self, forKey: .appVersion)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        shuffle = try c.decode(Bool.self, forKey: .shuffle)
+        hostExitOnStop = try c.decodeIfPresent(Bool.self, forKey: .hostExitOnStop) ?? true
+        let fallback = LoopTiming.default
+        let decoded = LoopTiming(trimStart: (try? c.decodeIfPresent(Double.self, forKey: .trimStart)) ?? fallback.trimStart,
+                                 trimEnd: (try? c.decodeIfPresent(Double.self, forKey: .trimEnd)) ?? fallback.trimEnd,
+                                 crossfade: (try? c.decodeIfPresent(Double.self, forKey: .crossfade)) ?? fallback.crossfade).sanitized
+        trimStart = decoded.trimStart
+        trimEnd = decoded.trimEnd
+        crossfade = decoded.crossfade
+        items = try c.decode([SaverPlaylistItem].self, forKey: .items)
     }
 }

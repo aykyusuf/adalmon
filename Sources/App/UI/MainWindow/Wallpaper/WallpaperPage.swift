@@ -16,6 +16,7 @@ struct WallpaperPage: View {
                 WallpaperLibraryCard(service: service)
                 WallpaperDisplaysCard(service: service)
                 WallpaperPlaylistCard(service: service)
+                WallpaperPlaybackCard(service: service)
                 WallpaperPauseRulesCard(service: service)
                 WallpaperSaverCard(wallpaper: service, saver: saver)
                 WallpaperExperimentalCard(service: service)

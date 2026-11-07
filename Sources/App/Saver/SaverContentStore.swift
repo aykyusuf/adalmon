@@ -84,6 +84,8 @@ struct SaverContentStore: Sendable {
         var shuffle: Bool
         var hostExitOnStop: Bool
         var appVersion: String
+        /// Baştan atla / sondan kes / çapraz geçiş (duvar kâğıdı ayarlarıyla aynı).
+        var loop: LoopTiming = .default
     }
 
     /// Seçili videoları klasöre getirir (klon/kopya), poster üretir, listeyi atomik yazar, listede olmayan eski dosyaları siler.
@@ -96,6 +98,8 @@ struct SaverContentStore: Sendable {
         let totalBytes = max(1, sources.reduce(Int64(0)) { $0 + $1.byteSize })
         var doneBytes: Int64 = 0
         var items: [SaverPlaylistItem] = []
+        // Kırpma başlangıcı değiştiyse posterler (ilk oynayan kare) yeniden üretilir.
+        let regeneratePosters = currentPlaylist().map { $0.timing.trimStart != options.loop.sanitized.trimStart } ?? false
         for s in sources {
             try Task.checkCancellation()
             let dest = directory.appending(path: s.storedName)
@@ -109,11 +113,12 @@ struct SaverContentStore: Sendable {
             progress(min(1, Double(doneBytes) / Double(totalBytes)))
             var poster: String?
             let posterURL = directory.appending(path: s.posterName)
-            if fm.fileExists(atPath: posterURL.path) { poster = s.posterName }
+            if fm.fileExists(atPath: posterURL.path), !regeneratePosters { poster = s.posterName }
             else if let data = await makePoster(s) { try data.write(to: posterURL, options: .atomic); poster = s.posterName }
             items.append(SaverPlaylistItem(id: s.id, name: s.name, file: s.storedName, poster: poster, width: s.width, height: s.height, duration: s.duration))
         }
-        let playlist = SaverPlaylist(appVersion: options.appVersion, updatedAt: .now, shuffle: options.shuffle, hostExitOnStop: options.hostExitOnStop, items: items)
+        let playlist = SaverPlaylist(appVersion: options.appVersion, updatedAt: .now, shuffle: options.shuffle, hostExitOnStop: options.hostExitOnStop,
+                                    trimStart: options.loop.trimStart, trimEnd: options.loop.trimEnd, crossfade: options.loop.crossfade, items: items)
         try playlist.encoded().write(to: playlistURL, options: .atomic)
         prune(keeping: Set(items.flatMap { [$0.file, $0.poster].compactMap { $0 } } + [SaverPaths.playlistFileName]))
         return playlist
@@ -127,6 +132,31 @@ struct SaverContentStore: Sendable {
         list.hostExitOnStop = hostExitOnStop
         list.updatedAt = .now
         try list.encoded().write(to: playlistURL, options: .atomic)
+    }
+
+    /// Yalnızca döngü ayarlarını yeniden yazar (video kopyalamaz). Değer aynıysa dosyaya dokunmaz.
+    func rewritePlaylistLoop(_ loop: LoopTiming) throws {
+        guard var list = currentPlaylist() else { return }
+        let wanted = loop.sanitized
+        guard list.timing != wanted else { return }
+        list.timing = wanted
+        list.updatedAt = .now
+        try list.encoded().write(to: playlistURL, options: .atomic)
+    }
+
+    /// Mevcut öğelerin posterlerini yeniden üretir (kırpma başlangıcı değişince). Videoları kopyalamaz.
+    func refreshPosters(_ sources: [Source], makePoster: @Sendable (Source) async -> Data?) async {
+        guard var list = currentPlaylist() else { return }
+        var changed = false
+        for source in sources {
+            guard !Task.isCancelled, let index = list.items.firstIndex(where: { $0.id == source.id }) else { continue }
+            guard let data = await makePoster(source) else { continue }
+            if (try? data.write(to: directory.appending(path: source.posterName), options: .atomic)) != nil, list.items[index].poster != source.posterName {
+                list.items[index].poster = source.posterName
+                changed = true
+            }
+        }
+        if changed { try? list.encoded().write(to: playlistURL, options: .atomic) }
     }
 
     /// Klasörü tamamen siler (kopyalanan videolar dahil). Kullanıcının özgün dosyalarına dokunmaz.

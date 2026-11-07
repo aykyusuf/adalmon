@@ -19,6 +19,13 @@ struct WallpaperSaverCard: View {
         RefreshKey(settings: saver.settings, itemIDs: wallpaper.items.map(\.id), defaultID: wallpaper.settings.defaultItemID, mode: wallpaper.settings.playlistMode)
     }
 
+    /// Oynatma kartındaki ayarların özeti (ekran koruyucu aynısını kullanır).
+    private var loopSummary: String {
+        let loop = wallpaper.settings.loop
+        let transition = loop.transition == .crossfade ? "\(WallpaperPlaybackCard.label(loop.crossfadeSeconds)) çapraz geçiş" : "geçiş kapalı"
+        return "Oynatma (Oynatma kartıyla aynı): baştan \(WallpaperPlaybackCard.label(loop.trimStart)) atlanır, sondan \(WallpaperPlaybackCard.label(loop.trimEnd)) kesilir, \(transition)."
+    }
+
     private var eligible: [WallpaperItem] { SaverSelection.eligible(wallpaper.items) }
 
     var body: some View {
@@ -32,6 +39,7 @@ struct WallpaperSaverCard: View {
             .frame(maxWidth: 360)
             if saver.settings.source == .picked { pickList }
             Toggle("Karışık sırayla oynat", isOn: $saver.settings.shuffle)
+            Label(loopSummary, systemImage: "repeat").font(.caption).foregroundStyle(.secondary)
             summary
             actions
             if let progress = saver.progress {
@@ -46,6 +54,7 @@ struct WallpaperSaverCard: View {
             notes
         }
         .task(id: refreshKey) { await saver.refresh(wallpaper: wallpaper) }
+        .onChange(of: wallpaper.settings.loop) { _, new in saver.syncLoop(new.timing) }
         .confirmationDialog("Videolar kopyalansın mı?", isPresented: $confirmInstall) {
             Button(saver.isInstalled ? "Güncelle" : "Kur") { saver.install(wallpaper: wallpaper) }
             Button("Vazgeç", role: .cancel) {}
