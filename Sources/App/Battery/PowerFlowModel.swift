@@ -7,7 +7,7 @@ enum FlowNodeID: Hashable, Sendable {
 }
 
 /// Renk anlamı (görünüm `Color`'a çevirir; model SwiftUI'dan bağımsız kalır).
-enum FlowTint: Equatable, Sendable { case green, blue, orange, teal, gray }
+enum FlowTint: Equatable, Sendable { case green, blue, orange, red, teal, gray }
 
 struct FlowNode: Equatable, Identifiable, Sendable {
     enum LabelSide: Sendable { case above, below }
@@ -20,13 +20,24 @@ struct FlowNode: Equatable, Identifiable, Sendable {
     var caption: String
     var symbol: String
     var isActive: Bool
-    /// Yalnız pil düğümü: halka doluluğu (0...100).
+    /// Yalnız pil düğümü: simge doluluğu (0...100).
     var level: Int?
-    /// Yatay konum 0...1 (genişliğe oranlı), dikey konum `PowerFlowModel.height` içinde puan.
-    var x: Double
-    var y: Double
-    var labelSide: LabelSide = .below
+    /// Izgara konumu: sütun -1 (sol) / 0 (orta) / 1 (sağ); satır 0 (üst) / 1 (alt).
+    var column: Int
+    var row: Int
+    var isCharging = false
     var tint: FlowTint
+    var tooltip: String
+
+    /// Üst satırda etiket dairenin üstünde, alt satırda altında durur.
+    var labelSide: LabelSide { row == 0 ? .above : .below }
+}
+
+/// Güç akışı düğümü olmayan (görüntü-yalnız ya da çekişi bilinmeyen) bağlı aksesuar: diyagramın altında küçük çip.
+struct FlowChip: Equatable, Identifiable, Sendable {
+    var id: String
+    var symbol: String
+    var title: String
     var tooltip: String
 }
 
@@ -84,7 +95,6 @@ struct PowerFlowModel: Equatable, Sendable {
         case onBattery
     }
 
-    static let height: Double = 204
     /// Bu eşiğin altı (W) "boşta" sayılır; pil kenarı titremesin.
     static let idleWatts = 0.3
     static let maxDevices = 2
@@ -92,9 +102,12 @@ struct PowerFlowModel: Equatable, Sendable {
     var mode: Mode
     var nodes: [FlowNode]
     var edges: [FlowEdge]
+    /// Düğüm olmayan bağlı aksesuarlar (diyagramın altında çip).
+    var chips: [FlowChip] = []
     /// VoiceOver özeti.
     var summary: String
 
+    var hasDeviceNodes: Bool { nodes.contains { $0.column > 0 } }
     var hasMotion: Bool { edges.contains { $0.isActive } }
     func node(_ id: FlowNodeID) -> FlowNode? { nodes.first { $0.id == id } }
     func edge(_ kind: FlowEdge.Kind) -> FlowEdge? { edges.first { $0.kind == kind } }
@@ -168,35 +181,38 @@ struct PowerFlowModel: Equatable, Sendable {
         }
 
         // Aksesuarlar: ölçülemez; ayrılan güç varsa "≈". Pozisyon: sağ sütun.
-        let shown = Array(r.accessories.prefix(maxDevices))
-        let extra = r.accessories.count - shown.count
+        // Yalnız Mac'ten ayrılan gücü bilinen aygıtlar düğüm olur; görüntü-yalnız ya da çekişi bilinmeyenler çip olur ("?" kenarı yok).
+        let sinks = r.accessories.filter(\.drawsKnownPower)
+        let shown = Array(sinks.prefix(maxDevices))
+        let extra = sinks.count - shown.count
         var deviceNodes: [FlowNode] = []
         for (i, a) in shown.enumerated() {
             let w = a.allocatedMW.map { Double($0) / 1000 }
             let id = FlowNodeID.device(a.id)
-            let y: Double = shown.count == 1 ? 102 : (i == 0 ? 52 : 152)
             let level = deviceLevels.first { $0.kind == .iPhone || $0.kind == .iPad }.flatMap { a.kind == .phone ? $0.level : nil }
             var tip = "\(a.name) · \(a.portName)"
             if !a.detail.isEmpty { tip += "\n\(a.detail)" }
             if let w { tip += "\nAyrılan güç ≈ \(BatteryFormat.watts(w)) (USB ayrılan akım × 5 V). Gerçek çekiş değil." }
-            else if a.isDisplayOnly { tip += "\nYalnız görüntü bağlantısı: Mac'ten güç çektiği bilinmiyor." }
-            else { tip += "\nApple Silicon bu portun çektiği gücü göstermiyor." }
             if a.kind == .phone, let level { tip += "\nPil: %\(level)" }
-            let known = w != nil
-            let flowing = known && !a.isDisplayOnly
-            deviceNodes.append(FlowNode(
-                id: id, title: a.name, value: known ? "≈" + BatteryFormat.watts(w) : "—",
-                caption: (a.kind == .phone && level != nil ? "%\(level!) · " : "") + a.portName + (i == shown.count - 1 && extra > 0 ? " +\(extra)" : ""),
-                symbol: deviceSymbol(a.kind), isActive: flowing, level: nil, x: 0.9, y: y, tint: flowing ? .teal : .gray, tooltip: tip))
-            var e = edge(.macToDevice, .mac, id, w, .teal, tip, approx: known, id: "device." + a.id)
-            if !known { e.label = "?"; e.isActive = false; e.tint = .gray }
+            let e = edge(.macToDevice, .mac, id, w, .teal, tip, approx: true, id: "device." + a.id)
             edges.append(e)
+            deviceNodes.append(FlowNode(
+                id: id, title: a.name, value: "≈" + BatteryFormat.watts(w),
+                caption: (a.kind == .phone && level != nil ? "%\(level!) · " : "") + a.portName + (i == shown.count - 1 && extra > 0 ? " +\(extra)" : ""),
+                symbol: deviceSymbol(a.kind), isActive: e.isActive, level: nil, column: 1, row: i, tint: e.isActive ? .teal : .gray, tooltip: tip))
+        }
+
+        let chips: [FlowChip] = r.accessories.filter { !$0.drawsKnownPower }.map { a in
+            var tip = "\(a.name) · \(a.portName)"
+            if !a.detail.isEmpty { tip += "\n\(a.detail)" }
+            tip += a.isDisplayOnly ? "\nYalnız görüntü bağlantısı: Mac'ten güç çektiği bilinmiyor." : "\nApple Silicon bu portun çektiği gücü göstermiyor."
+            return FlowChip(id: a.id, symbol: deviceSymbol(a.kind), title: a.name + " · " + a.portName, tooltip: tip)
         }
 
         let nodes = [adapterNode(r, mode: mode, out: adapterOut), macNode(r, load: load, adapterOut: adapterOut),
                      batteryNode(r, batt: batt, mode: mode)] + deviceNodes
-        let summary = Self.summary(mode: mode, adapterOut: adapterOut, load: load, batt: batt, level: r.level, devices: shown.count)
-        return PowerFlowModel(mode: mode, nodes: nodes, edges: edges, summary: summary)
+        let summary = Self.summary(mode: mode, adapterOut: adapterOut, load: load, batt: batt, level: r.level, devices: shown.count, chips: chips)
+        return PowerFlowModel(mode: mode, nodes: nodes, edges: edges, chips: chips, summary: summary)
     }
 
     static func deviceSymbol(_ k: PowerPortAccessory.Kind) -> String {
@@ -237,7 +253,7 @@ struct PowerFlowModel: Equatable, Sendable {
         }
         return FlowNode(id: .adapter, title: "Adaptör", value: plugged ? (rated.map { "\($0) W" } ?? "—") : "—",
                         caption: plugged ? r.cable.title : "Fiş yok", symbol: symbol, isActive: plugged, level: nil,
-                        x: 0.1, y: 102, tint: plugged ? .green : .gray, tooltip: tip)
+                        column: -1, row: 0, tint: plugged ? .green : .gray, tooltip: tip)
     }
 
     private static func macNode(_ r: BatteryReading, load: Double?, adapterOut: Double?) -> FlowNode {
@@ -247,7 +263,7 @@ struct PowerFlowModel: Equatable, Sendable {
         }
         if !r.accessories.isEmpty { tip += "\nBağlı USB aksesuarların çektiği güç bu değerin içindedir." }
         return FlowNode(id: .mac, title: "Mac", value: load.map { BatteryFormat.watts($0) } ?? "—", caption: "Mac", symbol: "laptopcomputer",
-                        isActive: (load ?? 0) >= idleWatts, level: nil, x: 0.5, y: 52, labelSide: .above, tint: .orange, tooltip: tip)
+                        isActive: (load ?? 0) >= idleWatts, level: nil, column: 0, row: 0, tint: .orange, tooltip: tip)
     }
 
     private static func batteryNode(_ r: BatteryReading, batt: Double, mode: Mode) -> FlowNode {
@@ -262,7 +278,16 @@ struct PowerFlowModel: Equatable, Sendable {
         if let v = r.voltageMV { tip += "\nVoltaj: \(volts(v))" }
         if let a = r.amperageMA { tip += " · Akım: \(BatteryFormat.int(abs(a))) mA" }
         return FlowNode(id: .battery, title: "Pil", value: "%\(r.level)", caption: state, symbol: "battery.100percent",
-                        isActive: abs(batt) >= idleWatts, level: r.level, x: 0.5, y: 152, tint: batt < -idleWatts ? .orange : .green, tooltip: tip)
+                        isActive: abs(batt) >= idleWatts, level: r.level, column: 0, row: 1, isCharging: mode == .pluggedCharging,
+                        tint: batteryTint(level: r.level, charging: mode == .pluggedCharging, full: r.state == .full), tooltip: tip)
+    }
+
+    /// Pil rengi: şarj olurken/doluyken yeşil; düşükte turuncu; kritikte kırmızı; aksi halde yeşil.
+    static func batteryTint(level: Int, charging: Bool, full: Bool) -> FlowTint {
+        if charging || full { return .green }
+        if level <= 10 { return .red }
+        if level <= 20 { return .orange }
+        return .green
     }
 
     static func volts(_ mV: Int) -> String {
@@ -273,7 +298,7 @@ struct PowerFlowModel: Equatable, Sendable {
         (Double(mA) / 1000).formatted(.number.precision(.fractionLength(2)).locale(Locale(identifier: "tr_TR"))) + " A"
     }
 
-    private static func summary(mode: Mode, adapterOut: Double?, load: Double?, batt: Double, level: Int, devices: Int) -> String {
+    private static func summary(mode: Mode, adapterOut: Double?, load: Double?, batt: Double, level: Int, devices: Int, chips: [FlowChip]) -> String {
         let mac = BatteryFormat.watts(load)
         var s: String
         switch mode {
@@ -283,6 +308,7 @@ struct PowerFlowModel: Equatable, Sendable {
         case .onBattery: s = "Mac pilden \(mac) çekiyor, pil %\(level)."
         }
         if devices > 0 { s += " \(devices) bağlı aksesuar." }
+        if !chips.isEmpty { s += " Bağlı: " + chips.map(\.title).joined(separator: ", ") + "." }
         return s
     }
 }

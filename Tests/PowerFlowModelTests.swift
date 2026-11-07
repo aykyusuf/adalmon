@@ -92,32 +92,123 @@ final class PowerFlowModelTests: XCTestCase {
         XCTAssertEqual(m.edge(.batteryToMac)?.tint, .orange)
     }
 
-    func testDevicesDrawFromMacNotAdapter() throws {
+    func testPowerSinkingDeviceIsNodeAndDisplayOnlyIsChip() throws {
         var r = charging
         r.accessories = [phone, PowerPortAccessory(id: "port.USB‑C 4", name: "Harici ekran", kind: .display, portName: "USB‑C 4",
                                                     detail: "Realtek · DisplayPort", allocatedMW: nil, isDisplayOnly: true)]
         let m = PowerFlowModel.make(r)
+        // Yalnız ayrılan gücü bilinen aygıt düğüm + kenar olur; "?" kenarı yok.
         let dev = m.deviceEdges
-        XCTAssertEqual(dev.count, 2)
+        XCTAssertEqual(dev.count, 1)
         XCTAssertTrue(dev.allSatisfy { $0.from == .mac })
-        // Ayrılan güç olan: yaklaşık ve aktif; olmayan: bilinmiyor, durağan gri.
         let known = try XCTUnwrap(dev.first { $0.to == .device("usb.1") })
         XCTAssertTrue(known.isApproximate); XCTAssertTrue(known.isActive)
         XCTAssertEqual(known.label, "≈2,5 W")
-        let unknown = try XCTUnwrap(dev.first { $0.to == .device("port.USB‑C 4") })
-        XCTAssertNil(unknown.watts); XCTAssertFalse(unknown.isActive); XCTAssertEqual(unknown.label, "?"); XCTAssertEqual(unknown.tint, .gray)
-        XCTAssertTrue(unknown.tooltip.contains("Yalnız görüntü"))
+        XCTAssertFalse(m.edges.contains { $0.label == "?" })
+        XCTAssertNil(m.node(.device("port.USB‑C 4")), "görüntü-yalnız aksesuar düğüm değil")
+        XCTAssertEqual(m.nodes.count, 4)
+        // Görüntü-yalnız aksesuar diyagramın altında çip.
+        let chip = try XCTUnwrap(m.chips.first)
+        XCTAssertEqual(m.chips.count, 1)
+        XCTAssertEqual(chip.title, "Harici ekran · USB‑C 4")
+        XCTAssertEqual(chip.symbol, "display")
+        XCTAssertTrue(chip.tooltip.contains("Yalnız görüntü"))
+        XCTAssertTrue(m.summary.contains("Harici ekran"))
         // Mac düğümü aksesuar gücünü yeniden saymaz.
         XCTAssertEqual(m.edge(.adapterToMac)?.watts ?? 0, 13.9, accuracy: 0.01)
-        XCTAssertEqual(m.nodes.count, 5)
+    }
+
+    func testDeviceWithUnknownDrawIsChipNotNode() {
+        var r = charging
+        r.accessories = [PowerPortAccessory(id: "usb.9", name: "Portable SSD", kind: .storage, portName: "USB", detail: "USB", allocatedMW: nil)]
+        let m = PowerFlowModel.make(r)
+        XCTAssertTrue(m.deviceEdges.isEmpty)
+        XCTAssertEqual(m.nodes.count, 3)
+        XCTAssertEqual(m.chips.map(\.title), ["Portable SSD · USB"])
+        XCTAssertFalse(m.edges.contains { $0.label == "?" })
+        XCTAssertFalse(m.hasDeviceNodes)
     }
 
     func testDeviceLimitAndOverflowCaption() {
         var r = charging
-        r.accessories = (0..<4).map { PowerPortAccessory(id: "usb.\($0)", name: "Aygıt \($0)", kind: .other, portName: "USB", detail: "", allocatedMW: nil) }
+        r.accessories = (0..<4).map { PowerPortAccessory(id: "usb.\($0)", name: "Aygıt \($0)", kind: .other, portName: "USB", detail: "", allocatedMW: 1_500) }
         let m = PowerFlowModel.make(r)
         XCTAssertEqual(m.deviceEdges.count, PowerFlowModel.maxDevices)
         XCTAssertTrue(m.nodes.last?.caption.contains("+2") == true)
+        XCTAssertTrue(m.chips.isEmpty)
+    }
+
+    // MARK: Pil rengi ve düzen
+
+    func testBatteryTintByState() {
+        XCTAssertEqual(PowerFlowModel.make(charging).node(.battery)?.tint, .green)
+        XCTAssertEqual(PowerFlowModel.make(charging).node(.battery)?.isCharging, true)
+        XCTAssertEqual(PowerFlowModel.make(full).node(.battery)?.tint, .green)
+        XCTAssertEqual(PowerFlowModel.make(full).node(.battery)?.isCharging, false)
+        var low = onBattery; low.level = 18
+        XCTAssertEqual(PowerFlowModel.make(low).node(.battery)?.tint, .orange)
+        var critical = onBattery; critical.level = 6
+        XCTAssertEqual(PowerFlowModel.make(critical).node(.battery)?.tint, .red)
+        XCTAssertEqual(PowerFlowModel.make(onBattery).node(.battery)?.tint, .green)
+        XCTAssertEqual(PowerFlowModel.make(full).node(.battery)?.value, "%100")
+        XCTAssertEqual(PowerFlowModel.make(full).node(.battery)?.caption, "dolu")
+    }
+
+    private func modelWithDevices(_ count: Int, base: BatteryReading? = nil) -> PowerFlowModel {
+        var r = base ?? charging
+        r.accessories = (0..<count).map { PowerPortAccessory(id: "usb.\($0)", name: "Aygıt \($0)", kind: .other, portName: "USB‑C \($0 + 2)", detail: "", allocatedMW: 4_000) }
+        return PowerFlowModel.make(r)
+    }
+
+    func testGridLayoutIsBalanced() throws {
+        for width in [CGFloat(320), 344, 640] {
+            let m = modelWithDevices(2)
+            func c(_ id: FlowNodeID) throws -> CGPoint { PowerFlowGeometry.center(try XCTUnwrap(m.node(id)), in: m, width: width) }
+            let adapter = try c(.adapter), mac = try c(.mac), bat = try c(.battery), d0 = try c(.device("usb.0")), d1 = try c(.device("usb.1"))
+            XCTAssertEqual(mac.x, width / 2, accuracy: 0.01)
+            XCTAssertLessThan(adapter.x, mac.x); XCTAssertEqual(adapter.y, mac.y)
+            XCTAssertEqual(bat.x, mac.x, "pil Mac'in hemen altında"); XCTAssertGreaterThan(bat.y, mac.y)
+            XCTAssertGreaterThan(d0.x, mac.x); XCTAssertEqual(d0.x, d1.x); XCTAssertEqual(d0.y, mac.y); XCTAssertEqual(d1.y, bat.y)
+            XCTAssertEqual(mac.x - adapter.x, d0.x - mac.x, accuracy: 0.01, "simetrik")
+            let r = PowerFlowGeometry.nodeRadius
+            for p in [adapter, mac, bat, d0, d1] { XCTAssertGreaterThanOrEqual(p.x - r, 0); XCTAssertLessThanOrEqual(p.x + r, width) }
+        }
+    }
+
+    func testGroupIsCenteredWithoutDevices() throws {
+        for width in [CGFloat(320), 344, 640] {
+            let m = PowerFlowModel.make(charging)
+            let xs = try [FlowNodeID.adapter, .mac, .battery].map { PowerFlowGeometry.center(try XCTUnwrap(m.node($0)), in: m, width: width).x }
+            let r = PowerFlowGeometry.nodeRadius
+            XCTAssertEqual(((xs.min() ?? 0) - r + (xs.max() ?? 0) + r) / 2, width / 2, accuracy: 0.01)
+            XCTAssertEqual(xs[1], xs[2], accuracy: 0.01, "pil Mac'in altında")
+        }
+    }
+
+    /// Hiçbir kenar etiketi bir düğümün dairesine ya da başka bir etikete binmez (tüm modlar, panel ve sayfa genişliği).
+    func testEdgeLabelsNeverOverlapNodes() throws {
+        var supp = charging
+        supp.isCharging = false; supp.amperageMA = -1_800
+        supp.systemPowerMW = 30_000; supp.batteryPowerMW = -12_000; supp.systemLoadMW = 42_000
+        let models = [PowerFlowModel.make(charging), PowerFlowModel.make(full), PowerFlowModel.make(onBattery), PowerFlowModel.make(supp),
+                      modelWithDevices(1), modelWithDevices(2), modelWithDevices(2, base: onBattery), modelWithDevices(2, base: supp)]
+        for width in [CGFloat(320), 344, 640] {
+            for m in models {
+                var boxes: [CGRect] = []
+                for e in m.edges {
+                    let curve = try XCTUnwrap(PowerFlowGeometry.curve(for: e, in: m, width: width))
+                    let p = PowerFlowGeometry.labelCenter(for: curve)
+                    let box = CGRect(x: p.x - 27, y: p.y - 9, width: 54, height: 18)
+                    for n in m.nodes {
+                        let c = PowerFlowGeometry.center(n, in: m, width: width), r = PowerFlowGeometry.nodeRadius
+                        XCTAssertFalse(box.intersects(CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), "\(e.id) etiketi \(n.id) üstüne biniyor (w=\(width))")
+                    }
+                    for o in boxes { XCTAssertFalse(box.intersects(o), "etiketler çakışıyor (w=\(width))") }
+                    boxes.append(box)
+                    XCTAssertGreaterThanOrEqual(box.minX, 0); XCTAssertLessThanOrEqual(box.maxX, width)
+                }
+            }
+        }
     }
 
     // MARK: Yedekler
@@ -215,6 +306,7 @@ final class PowerFlowModelTests: XCTestCase {
         XCTAssertGreaterThan(toMac.tangent(0.5).dx, 0)
         let toBat = try XCTUnwrap(PowerFlowGeometry.curve(for: try XCTUnwrap(m.edge(.adapterToBattery)), in: m, width: 500))
         XCTAssertGreaterThan(toBat.p3.y, toBat.p0.y, "pil adaptörün altında")
+        XCTAssertGreaterThan(toBat.p3.x, toBat.p0.x, "adaptör → pil: aşağı ve sağa")
         let b = PowerFlowModel.make(onBattery)
         let up = try XCTUnwrap(PowerFlowGeometry.curve(for: try XCTUnwrap(b.edge(.batteryToMac)), in: b, width: 500))
         XCTAssertLessThan(up.tangent(0.5).dy, 0, "pil → Mac yukarı")

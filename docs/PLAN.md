@@ -64,5 +64,13 @@ Hepsi `Sources/App`; `Sources/Filter` ve `Sources/Shared` (XPC, `FilterConfig`) 
 - Kullanıcı: "her metrik ayrı olsun, tıklayınca onun hakkında ayrı detaylar yer alsın; bataryada da Juicy gibi detaylı bir panel açılsın". Seçim: "Her metrik ayrı panel" (iStat tarzı). Mevcut tek panel ayarlarda "Tek panelde birleştir" seçeneği olarak kalsın.
 
 ## Faz 7 (2026-11-07) — canlı duvar kâğıdı
-- Araştırma: crew-chief-reports/wallpaper-research-202409.md. Karar: **A (masaüstü seviyesinde video penceresi, `.desktopWindow` tam seviye) varsayılan + B deneysel** (Apple Aerial `entries.json` enjeksiyonu, kapalı gelir, geri alınabilir, HEVC Main10 hvc1 AVAssetWriter). Ekran koruyucu (.saver) yok.
+- Araştırma: crew-chief-reports/wallpaper-research-202409.md. Karar: **A (masaüstü seviyesinde video penceresi, `.desktopWindow` tam seviye) varsayılan + B deneysel** (Apple Aerial `entries.json` enjeksiyonu, kapalı gelir, geri alınabilir, HEVC Main10 hvc1 AVAssetWriter). Ekran koruyucu: ilk karar "yok"du; sonradan `AdalmonSaver.saver` eklendi (aşağıdaki "Ekran koruyucu" notu).
 - Duraklatma: pildeyken, Düşük Güç Modunda, masaüstü görünmüyorken (örtülme/tam ekran/kilit/ekran uykusu) dur — hepsi varsayılan açık, kullanıcı her birini kapatabilmeli ("istersem açabileyim, kesin dur olmasın, devam et diyebileyim").
+
+## Ekran koruyucu "Adalmon Video" (2026-11-07)
+- Hedef `AdalmonSaver` (`type: bundle`, `.saver`, `NSPrincipalClass=AdalmonSaverView`), uygulamanın `Contents/Library/Screen Savers/` içine gömülü ve imzalı. Uygulamadaki "Ekran koruyucuyu kur" bunu `~/Library/Screen Savers/`a kopyalar (yönetici gerekmez) ve Sistem Ayarları > Ekran Koruyucu'yu açar; "Kaldır" yalnızca bize ait paketi siler.
+- Video konumu: `/Users/Shared/Adalmon/Saver/` (0700) = videolar (APFS klonu, aynı birimde ek alan yok) + posterler + `playlist.json`. Gerekçe: legacyScreenSaver ana sürecinin yetkisinde `files.absolute-path.read-only = ["/"]` var (macOS 27.2'de `codesign -d --entitlements -` ile doğrulandı); `~`/`NSHomeDirectory()` konteynere yönlenir, o yüzden ekran koruyucu YALNIZCA mutlak yol kullanır. Başka uygulamanın konteynerine yazılmaz.
+- Ortak kod: `Sources/SaverShared` (uygulama + saver). Saver: `Sources/Saver`. Uygulama: `Sources/App/Saver`, kart: `WallpaperSaverCard`.
+- Yaşam döngüsü: statik kayıt (aynı ekranda yeni örnek eskisini ezer), `willstop`/`didstop` dağıtık bildirimi, gecikmeli `exit(0)` (yalnızca tam çalıştırma sonrası, önizleme yokken, `hostExitOnStop` ile kapatılabilir), `isPreview` ya da küçük/0x0 çerçeve = yalnızca poster.
+- Gerçek ana süreçte (legacyScreenSaver) çalıştırılarak DOĞRULANMADI; testler paketi test sürecine yükleyip uçtan uca oynatır (SaverViewSmokeTests).
+

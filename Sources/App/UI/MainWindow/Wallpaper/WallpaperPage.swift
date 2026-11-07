@@ -3,6 +3,7 @@ import SwiftUI
 /// Duvar kâğıdı: canlı video / sabit görüntü masaüstü arka planı. Ana şalter kapalıyken hiçbir pencere ya da zamanlayıcı yoktur.
 struct WallpaperPage: View {
     @Bindable var service: WallpaperService
+    var saver: SaverService = .shared
 
     var body: some View {
         ScrollView {
@@ -16,6 +17,7 @@ struct WallpaperPage: View {
                 WallpaperDisplaysCard(service: service)
                 WallpaperPlaylistCard(service: service)
                 WallpaperPauseRulesCard(service: service)
+                WallpaperSaverCard(wallpaper: service, saver: saver)
                 WallpaperExperimentalCard(service: service)
             }
             .padding(24)

@@ -21,6 +21,7 @@ targets:
       - Sources/Shared
       - Sources/WidgetShared
       - Sources/HelperShared
+      - Sources/SaverShared
       # SMAppService.daemon: launchd plist'i Contents/Library/LaunchDaemons altinda olmali (BundleProgram -> Contents/MacOS/AdalmonHelper)
       - path: Sources/HelperLaunchd/com.example.adalmon.helper.plist
         buildPhase:
@@ -64,6 +65,13 @@ targets:
         embed: true
       - target: AdalmonWidgets
         embed: true
+      # Ekran koruyucu (.saver): Contents/Library/Screen Savers; uygulamadaki düğme ~/Library/Screen Savers'a kopyalar
+      - target: AdalmonSaver
+        embed: true
+        codeSign: true
+        copy:
+          destination: wrapper
+          subpath: Contents/Library/Screen Savers
       # Ayricalikli sarj yardimcisi (SMAppService.daemon): Contents/MacOS/AdalmonHelper
       - target: AdalmonHelper
         embed: true
@@ -158,6 +166,35 @@ targets:
         SKIP_INSTALL: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
         ENABLE_APP_INTENTS_METADATA_GENERATION: YES
+  AdalmonSaver:
+    type: bundle
+    platform: macOS
+    sources:
+      - Sources/Saver
+      - Sources/SaverShared
+    info:
+      path: Sources/Saver/Info.plist
+      properties:
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleName: Adalmon Video
+        CFBundleDisplayName: Adalmon Video
+        CFBundlePackageType: BNDL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: "26.0"
+        NSPrincipalClass: AdalmonSaverView
+    dependencies:
+      - sdk: ScreenSaver.framework
+      - sdk: AVFoundation.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.adalmon.saver
+        PRODUCT_NAME: AdalmonSaver
+        WRAPPER_EXTENSION: saver
+        MACH_O_TYPE: mh_bundle
+        SKIP_INSTALL: YES
+        GENERATE_INFOPLIST_FILE: NO
+        # Ana süreç (legacyScreenSaver) kitaplık doğrulamasını kapatmış; yine de takım kimliğiyle imzalanır.
   AdalmonHelper:
     type: tool
     platform: macOS
