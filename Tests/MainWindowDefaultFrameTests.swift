@@ -27,15 +27,38 @@ final class MainWindowDefaultFrameTests: XCTestCase {
         XCTAssertEqual(tiny.size, NSSize(width: 800, height: 500))
     }
 
-    func testMigrationAppliesOnceThenRespectsUserFrame() throws {
+    func testMigrationEnlargesSmallSavedFrameOnceThenRespectsUserFrame() throws {
         let suite = "adalmon.windowframe.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
+        let small = NSSize(width: 940, height: 652)
+        let large = NSSize(width: 1_300, height: 800)
         XCTAssertTrue(MainWindowController.needsDefaultFrame(restored: false, defaults: defaults))
         // Eski küçük çerçeve kayıtlı ama geçiş yapılmadı: bir kez büyük boyuta çekilir.
-        XCTAssertTrue(MainWindowController.needsDefaultFrame(restored: true, defaults: defaults))
+        XCTAssertTrue(MainWindowController.needsDefaultFrame(restored: true, savedSize: small, defaults: defaults))
+        XCTAssertTrue(MainWindowController.needsDefaultFrame(restored: true, savedSize: NSSize(width: 1_400, height: 700), defaults: defaults))
+        // Zaten büyük kayıtlı çerçeve korunur.
+        XCTAssertFalse(MainWindowController.needsDefaultFrame(restored: true, savedSize: large, defaults: defaults))
         defaults.set(true, forKey: MainWindowController.sizedKey)
-        XCTAssertFalse(MainWindowController.needsDefaultFrame(restored: true, defaults: defaults))
+        // Geçişten sonra kullanıcı küçültse bile dokunulmaz.
+        XCTAssertFalse(MainWindowController.needsDefaultFrame(restored: true, savedSize: small, defaults: defaults))
         XCTAssertTrue(MainWindowController.needsDefaultFrame(restored: false, defaults: defaults))
+        XCTAssertEqual(MainWindowController.sizedKey, "mainWindow.sizedV3")
+    }
+
+    func testShowAndReopenKeepWindowFrame() {
+        let model = AppModel()
+        let router = SettingsRouter(isDockModeOn: { true })
+        let controller = MainWindowController(model: model, router: router)
+        let wanted = NSRect(x: 80, y: 80, width: 1_380, height: 820)
+        controller.frame = wanted
+        controller.show()
+        XCTAssertEqual(controller.frame.size.width, wanted.width, accuracy: 1, "içerik atanınca pencere en küçük boyuta inmemeli")
+        XCTAssertEqual(controller.frame.size.height, wanted.height, accuracy: 1)
+        controller.close()
+        controller.show()
+        XCTAssertEqual(controller.frame.size.width, wanted.width, accuracy: 1, "yeniden açılışta da korunmalı")
+        XCTAssertEqual(controller.frame.size.height, wanted.height, accuracy: 1)
+        controller.close()
     }
 }

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Pil sayfasının üst bölmesi: Mac | Cihazlar | iPhone & iPad | Şarj.
-enum BatteryTab: String, CaseIterable, Identifiable, Sendable {
+enum BatteryTab: String, CapsuleTabItem, Sendable {
     case mac, devices, ios, charging
 
     var id: String { rawValue }
@@ -15,12 +15,12 @@ enum BatteryTab: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var symbol: String {
+    var systemImage: String {
         switch self {
         case .mac: "laptopcomputer"
-        case .devices: "airpods"
+        case .devices: "headphones"
         case .ios: "iphone"
-        case .charging: "bolt.badge.clock"
+        case .charging: "bolt.batteryblock"
         }
     }
 }

@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// Süreçler sayfasının ortalanmış, kapsül biçimli sekme seçicisi. Dar alanda yalnızca simgelere düşer.
+/// Ortalanmış, kapsül biçimli sekme seçicisi (Süreçler ve Pil sayfaları). Dar alanda yalnızca simgelere düşer.
 /// Tek bir odak noktasıdır: odaktayken ←/→ sekme değiştirir. Hareketi azalt açıkken seçili kapsül kaymaz.
-struct ProcessesTabBar: View {
-    @Binding var selection: ProcessesTab
+struct CapsuleTabBar<Tab: CapsuleTabItem>: View {
+    @Binding var selection: Tab
+    var accessibilityLabel: LocalizedStringKey = "Görünüm"
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var namespace
-    @State private var hovered: ProcessesTab?
+    @State private var hovered: Tab?
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -19,15 +20,15 @@ struct ProcessesTabBar: View {
         .onKeyPress(.leftArrow) { move(-1) }
         .onKeyPress(.rightArrow) { move(1) }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Görünüm")
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(.isTabBar)
     }
 
     private func bar(showsLabels: Bool) -> some View {
         HStack(spacing: 2) {
-            ForEach(ProcessesTab.allCases) { tab in
-                ProcessesTabButton(tab: tab, isSelected: selection == tab, showsLabel: showsLabels,
-                                   isHovered: hovered == tab, namespace: namespace) { select(tab) }
+            ForEach(Array(Tab.allCases)) { tab in
+                CapsuleTabButton(title: tab.title, systemImage: tab.systemImage, isSelected: selection == tab,
+                                 showsLabel: showsLabels, isHovered: hovered == tab, namespace: namespace) { select(tab) }
                     .onHover { inside in
                         if inside { hovered = tab } else if hovered == tab { hovered = nil }
                     }
@@ -38,7 +39,7 @@ struct ProcessesTabBar: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
     }
 
-    private func select(_ tab: ProcessesTab) {
+    private func select(_ tab: Tab) {
         guard tab != selection else { return }
         if reduceMotion {
             selection = tab

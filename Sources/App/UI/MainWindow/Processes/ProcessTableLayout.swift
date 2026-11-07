@@ -5,8 +5,12 @@ import CoreGraphics
 /// çok genişte Tür / Süreç / PID sütunları eklenir. Artan boşluk tablonun sağında kalır (Etkinlik Monitörü gibi),
 /// böylece sayılar adın hemen yanında durur. Toplam hiçbir zaman verilen genişliği aşmaz.
 enum ProcessTableLayout {
-    static let nameMinWidth: CGFloat = 190
+    static let nameMinWidth: CGFloat = 220
     static let nameIdealWidth: CGFloat = 300
+    /// Dar genişlikte ad en az tablonun bu oranını alır (en çok `nameIdealWidth`'e kadar); ölçüt sütunları küçülür.
+    static let nameMinShare: CGFloat = 0.32
+    /// Ölçüt sütunlarının dar genişlikte inebileceği en küçük çarpan (sayılar sığmaya devam eder).
+    static let minMetricScale: CGFloat = 0.8
     static let nameMaxWidth: CGFloat = 460
     /// Ad bu genişliğin altına yalnızca aşırı darlıkta iner.
     static let nameFloorWidth: CGFloat = 120
@@ -44,12 +48,14 @@ enum ProcessTableLayout {
         let w = max(0, width)
         let metrics = numericColumns + extraColumnThresholds.filter { w >= $0.minWidth }.map(\.column)
         let baseSum = metrics.reduce(0) { $0 + baseWidth($1) }
+        // Adın asgari payı: tablonun ~%32'si, ama en az `nameMinWidth`, en çok `nameIdealWidth`.
+        let nameFloor = min(nameIdealWidth, max(nameMinWidth, w * nameMinShare))
 
         var scale: CGFloat = 1
-        var name = nameMinWidth
-        if w - baseSum >= nameMinWidth {
-            var spare = w - baseSum - nameMinWidth
-            let nameGrow = min(spare, nameIdealWidth - nameMinWidth)
+        var name = nameFloor
+        if w - baseSum >= nameFloor {
+            var spare = w - baseSum - nameFloor
+            let nameGrow = min(spare, nameIdealWidth - nameFloor)
             name += nameGrow
             spare -= nameGrow
             let scaleGrow = min(spare, baseSum * (maxMetricScale - 1))
@@ -57,8 +63,9 @@ enum ProcessTableLayout {
             spare -= scaleGrow
             name += min(spare, nameMaxWidth - name)
         } else {
-            // Dar: sütunlar en çok %20 küçülür, ad kalanı alır; o da yetmezse sütunlar toplamı sığacak kadar küçülür.
-            scale = max(0.8, min(1, (w - nameFloorWidth) / baseSum))
+            // Dar: önce ölçüt sütunları küçülür (en çok %20) ki ad `nameFloor`'u bulsun; o da yetmezse ad kalanı alır,
+            // yetmezse sütunlar toplamı sığacak kadar küçülür.
+            scale = max(minMetricScale, min(1, (w - nameFloor) / baseSum))
             name = w - baseSum * scale
             if name < 0 {
                 scale = w / baseSum

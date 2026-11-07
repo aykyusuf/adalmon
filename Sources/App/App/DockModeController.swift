@@ -11,6 +11,8 @@ final class DockModeController {
     private let closeMainWindow: @MainActor () -> Void
     private let closeSettingsWindow: @MainActor () -> Void
     private var observation: Task<Void, Never>?
+    /// Bizim kurduğumuz ana menü; AppKit'in açılışta kendiliğinden koyduğu (yalnızca Apple + uygulama) varsayılan menüden ayırt etmek için.
+    private(set) var installedMenu: NSMenu?
 
     /// Açılışta (tercihlerden) kullanılacak politika; Dock simgesi titremesin diye `main()` içinde okunur.
     static var launchPolicy: NSApplication.ActivationPolicy {
@@ -37,7 +39,14 @@ final class DockModeController {
 
     func apply(_ show: Bool) {
         if show {
-            if NSApp.mainMenu == nil { NSApp.mainMenu = makeMenu() }
+            // AppKit, nib'siz uygulamada da açılışta varsayılan bir menü (Apple + Adalmon) kurar; `mainMenu == nil`
+            // denetimi bu yüzden hiç çalışmıyordu (Görünüm/Düzen yoktu, ⌘1…⌘7 ve ⌘C/⌘V çalışmıyordu).
+            // Bizim menümüz kurulu değilse (ya da başkası değiştirdiyse) yeniden kur.
+            if installedMenu == nil || NSApp.mainMenu !== installedMenu {
+                let menu = makeMenu()
+                installedMenu = menu
+                NSApp.mainMenu = menu
+            }
             if NSApp.activationPolicy() != .regular {
                 NSApp.setActivationPolicy(.regular)
                 NSApp.activate()
@@ -47,6 +56,7 @@ final class DockModeController {
         } else {
             closeMainWindow()
             NSApp.mainMenu = nil
+            installedMenu = nil
             guard NSApp.activationPolicy() != .accessory else { return }
             NSApp.setActivationPolicy(.accessory)
             NSApp.activate()

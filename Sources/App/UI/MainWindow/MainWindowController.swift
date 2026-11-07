@@ -11,7 +11,10 @@ final class MainWindowController: NSObject, NSWindowDelegate {
 
     private static let frameName = "AdalmonMainWindow"
     /// Büyük varsayılan boyut bir kez uygulandı mı? (Önceden kaydedilmiş küçük çerçeve bir kez ezilir, sonra kullanıcıya bırakılır.)
-    static let sizedKey = "mainWindow.sizedV2"
+    /// V3: V2 bayrağı eski çalıştırmalarda küçük çerçeveyi büyütmeden kalmıştı; bu sürüm yeniden dener.
+    static let sizedKey = "mainWindow.sizedV3"
+    /// Kayıtlı çerçeve bunun altındaysa (genişlik ya da yükseklik) bir kez büyük varsayılana çekilir.
+    static let enlargeBelow = NSSize(width: 1_100, height: 750)
     static let minContentSize = NSSize(width: 940, height: 600)
 
     /// Ekranın görünür alanının ~%85'i (en çok 1600x1050, en az `minContent`; görünür alanı aşmaz), ortalanmış.
@@ -22,9 +25,13 @@ final class MainWindowController: NSObject, NSWindowDelegate {
                       width: width.rounded(), height: height.rounded())
     }
 
-    /// Büyük varsayılan çerçeve uygulanmalı mı: kayıtlı çerçeve yoksa ya da V2 geçişi henüz yapılmadıysa.
-    static func needsDefaultFrame(restored: Bool, defaults: UserDefaults = .standard) -> Bool {
-        !restored || !defaults.bool(forKey: sizedKey)
+    /// Büyük varsayılan çerçeve uygulanmalı mı: kayıtlı çerçeve yoksa ya da (V3 geçişi henüz yapılmadıysa ve) kayıtlı çerçeve
+    /// `enlargeBelow`'dan küçükse. Geçiş yapıldıktan sonra kullanıcının boyutu hep korunur.
+    static func needsDefaultFrame(restored: Bool, savedSize: NSSize? = nil, defaults: UserDefaults = .standard) -> Bool {
+        guard restored else { return true }
+        guard !defaults.bool(forKey: sizedKey) else { return false }
+        guard let savedSize else { return true }
+        return savedSize.width < enlargeBelow.width || savedSize.height < enlargeBelow.height
     }
 
     init(model: AppModel, router: SettingsRouter) {
@@ -39,27 +46,39 @@ final class MainWindowController: NSObject, NSWindowDelegate {
         window.contentMinSize = Self.minContentSize
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.setFrameAutosaveName(Self.frameName)
-        let restored = window.setFrameUsingName(Self.frameName)
+        // Testler uygulamayı host olarak başlatır; gerçek kullanıcının kayıtlı çerçevesine dokunulmasın.
+        let restored = !AppEnvironment.isRunningTests && window.setFrameAutosaveName(Self.frameName) && window.setFrameUsingName(Self.frameName)
         // Kayıtlı çerçeve yoksa ya da büyük varsayılan henüz uygulanmadıysa ekranı büyük ölçüde dolduran boyutla aç.
         // Bayrak sonrasında kullanıcının yeniden boyutlandırmasına dokunmaz.
         // Testler uygulamayı host olarak başlatır; gerçek kullanıcı ayarlarına/çerçevesine dokunulmaz.
-        if !AppEnvironment.isRunningTests, Self.needsDefaultFrame(restored: restored) {
-            if let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
-                window.setFrame(Self.defaultFrame(visible: visible), display: false)
-                window.saveFrame(usingName: Self.frameName)
-            } else if !restored {
-                window.center()
+        if !AppEnvironment.isRunningTests {
+            if Self.needsDefaultFrame(restored: restored, savedSize: restored ? window.frame.size : nil) {
+                if let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame {
+                    window.setFrame(Self.defaultFrame(visible: visible), display: false)
+                    window.saveFrame(usingName: Self.frameName)
+                } else if !restored {
+                    window.center()
+                }
             }
             UserDefaults.standard.set(true, forKey: Self.sizedKey)
         }
+    }
+
+    /// Pencere çerçevesi (testler için).
+    var frame: NSRect {
+        get { window.frame }
+        set { window.setFrame(newValue, display: false) }
     }
 
     func show() {
         if window.contentViewController == nil {
             let hosting = NSHostingController(rootView: MainWindowRoot(model: model, router: router))
             hosting.sizingOptions = [.minSize]
+            // `contentViewController` atanınca AppKit pencereyi içeriğin tercih ettiği (en küçük) boyuta çeker; her açılışta
+            // büyük varsayılan/kullanıcı boyutu böylece 940x652'ye iniyordu. Atamadan önceki çerçeve geri konur.
+            let frame = window.frame
             window.contentViewController = hosting
+            window.setFrame(frame, display: false)
         }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)

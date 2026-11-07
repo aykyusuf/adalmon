@@ -78,12 +78,7 @@ struct BatteryPage: View {
     }
 
     private var tabPicker: some View {
-        Picker("Bölüm", selection: $tab) {
-            ForEach(BatteryTab.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
+        CapsuleTabBar(selection: $tab, accessibilityLabel: "Bölüm")
     }
 
     @ViewBuilder

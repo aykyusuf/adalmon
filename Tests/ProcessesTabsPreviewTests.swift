@@ -36,8 +36,8 @@ final class ProcessesTabsPreviewTests: XCTestCase {
             @State var tab: ProcessesTab = .history
             var body: some View {
                 VStack(spacing: 24) {
-                    ProcessesTabBar(selection: $tab).frame(width: 620)
-                    ProcessesTabBar(selection: $tab).frame(width: 300)
+                    CapsuleTabBar(selection: $tab).frame(width: 620)
+                    CapsuleTabBar(selection: $tab).frame(width: 300)
                 }.padding(24).background(Color(nsColor: .windowBackgroundColor))
             }
         }
