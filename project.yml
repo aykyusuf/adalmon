@@ -20,6 +20,13 @@ targets:
       - Sources/App
       - Sources/Shared
       - Sources/WidgetShared
+      - Sources/HelperShared
+      # SMAppService.daemon: launchd plist'i Contents/Library/LaunchDaemons altinda olmali (BundleProgram -> Contents/MacOS/AdalmonHelper)
+      - path: Sources/HelperLaunchd/com.yusufayik.adalmon.helper.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchDaemons
     info:
       path: Sources/App/Info.plist
       properties:
@@ -57,6 +64,12 @@ targets:
         embed: true
       - target: AdalmonWidgets
         embed: true
+      # Ayricalikli sarj yardimcisi (SMAppService.daemon): Contents/MacOS/AdalmonHelper
+      - target: AdalmonHelper
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
       # libimobiledevice (LGPL-2.1+) ve bağımlılıkları: çalışma zamanında dlopen; Xcode takım kimliğiyle imzalar
       # (kitaplık doğrulaması açık kalır). Yeniden üretmek için: tools/vendor-libimobiledevice.sh
       - framework: Vendor/libimobiledevice/libimobiledevice-1.0.6.dylib
@@ -145,6 +158,31 @@ targets:
         SKIP_INSTALL: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
         ENABLE_APP_INTENTS_METADATA_GENERATION: YES
+  AdalmonHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/Helper
+      - Sources/HelperShared
+    info:
+      path: Sources/Helper/Info.plist
+      properties:
+        CFBundleName: AdalmonHelper
+        CFBundleIdentifier: com.yusufayik.adalmon.helper
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yusufayik.adalmon.helper
+        PRODUCT_NAME: AdalmonHelper
+        SKIP_INSTALL: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        # Imza kimligi (identifier) istemci kuralindaki ile ayni olmali
+        OTHER_CODE_SIGN_FLAGS: "-i com.yusufayik.adalmon.helper"
+        # Kok sureci debugger/task_for_pid kapisi (get-task-allow) ve uygulama kimligi yetkisi tasimasin
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        CODE_SIGN_ENTITLEMENTS: Sources/Helper/AdalmonHelper.entitlements
   AdalmonTests:
     type: bundle.unit-test
     platform: macOS

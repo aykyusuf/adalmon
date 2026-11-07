@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AdalmonIntentHub.backend = LiveIntentBackend(model: model, openRoute: { router.open(route: $0) })
         statusBar = StatusBarController(model: model) { [weak panel] button in panel?.toggle(relativeTo: button) }
         model.start()
+        ChargingModel.shared.startIfNeeded() // ana şalter kapalıysa hiçbir şey yapmaz
         dockMode.start()
         if model.prefs.showInDock { mainWindow.show() }
     }
