@@ -184,6 +184,69 @@ extension UsageStore {
         return Array(out.prefix(max(0, limit)))
     }
 
+    /// "Uygulama geçmişi" tablosu: pencere boyunca uygulama başına tüm ölçütler (`__other__` hariç).
+    /// Ağ baytları saatlik kullanım tablosundan gelir (saat çözünürlüğü; pencere başı saate yuvarlanır).
+    func appHistoryRows(window: ResourceWindow, now: Date = .now) -> [AppHistoryRow] {
+        let from = Int(now.timeIntervalSince1970) - window.seconds
+        var rows: [String: AppHistoryRow] = [:]
+        run("""
+            SELECT a.key, SUM(u.cpu_ns), SUM(u.gpu_ns), SUM(u.wr_b), SUM(u.energy_nj), MAX(u.fp_max)
+            FROM (\(Self.unionSQL.replacingOccurrences(of: ":from", with: "?"))) u JOIN proc_app a ON a.id = u.app
+            WHERE a.key != '__other__' GROUP BY u.app
+            """, [.int(from), .int(from)]) { s in
+            let key = Self.text(s, 0)
+            rows[key] = AppHistoryRow(app: key, cpuNs: Self.d(s, 1), gpuNs: Self.d(s, 2), writeBytes: Self.d(s, 3),
+                                      energyNj: Self.d(s, 4), memoryPeak: Self.d(s, 5), networkBytes: 0)
+        }
+        run("""
+            SELECT app, SUM(bytes_in + bytes_out) FROM usage_hourly WHERE hour >= ? AND app != ? GROUP BY app
+            """, [.int(from / 3_600 * 3_600), .text(Self.interfaceAppKey)]) { s in
+            let key = Self.text(s, 0)
+            let bytes = Self.d(s, 1)
+            guard bytes > 0 else { return }
+            var row = rows[key] ?? AppHistoryRow(app: key, cpuNs: 0, gpuNs: 0, writeBytes: 0, energyNj: 0, memoryPeak: 0, networkBytes: 0)
+            row.networkBytes = bytes
+            rows[key] = row
+        }
+        return Array(rows.values.filter { $0.hasActivity })
+    }
+
+    /// Tüm uygulamaların (`__other__` dahil, yani sistemin tamamı) kova başına toplamı: Performans sekmesinin 1 sa / 24 sa grafikleri.
+    /// Kayıt olmayan kovalar 0. Bellek: kova içindeki dakikalık "uygulama ayak izi" toplamlarının ortalaması.
+    func resourceTotalSeries(window: ResourceWindow, now: Date = .now) -> [ResourceTotalPoint] {
+        let nowTs = Int(now.timeIntervalSince1970)
+        let from = nowTs - window.seconds
+        let bucket = window.bucketSeconds
+        var byBucket: [Int: ResourceTotalPoint] = [:]
+        var minuteCount: [Int: Int] = [:]
+        run("""
+            SELECT t, SUM(cpu_ns), SUM(gpu_ns), SUM(wr_b), SUM(rd_b), SUM(fp_max) FROM (
+              SELECT ts AS t, cpu_ns, gpu_ns, wr_b, rd_b, fp_b AS fp_max FROM proc_min WHERE ts >= ?
+              UNION ALL
+              SELECT ts_hour AS t, cpu_ns, gpu_ns, wr_b, rd_b, fp_max FROM proc_hour WHERE ts_hour + 3600 > ?
+            ) GROUP BY t
+            """, [.int(from), .int(from)]) { s in
+            let t = Int(sqlite3_column_int64(s, 0)) / bucket * bucket
+            var p = byBucket[t] ?? ResourceTotalPoint(ts: t)
+            p.cpuNs += Self.d(s, 1)
+            p.gpuNs += Self.d(s, 2)
+            p.writeBytes += Self.d(s, 3)
+            p.readBytes += Self.d(s, 4)
+            p.footprint += Self.d(s, 5)
+            byBucket[t] = p
+            minuteCount[t, default: 0] += 1
+        }
+        var points: [ResourceTotalPoint] = []
+        var t = from / bucket * bucket
+        while t <= nowTs {
+            var p = byBucket[t] ?? ResourceTotalPoint(ts: t)
+            if let n = minuteCount[t], n > 1 { p.footprint /= Double(n) }
+            points.append(p)
+            t += bucket
+        }
+        return points
+    }
+
     /// Dakikalık kaydın en eskisi / en yenisi (boşsa nil); boş durum metinleri için.
     func resourceTimeRange() -> (first: Int, last: Int)? {
         var result: (Int, Int)?

@@ -35,3 +35,19 @@ enum GPUClientUsage {
         return Int32(digits)
     }
 }
+
+/// Süreç başına birikimli GPU süresinden (ns) örnekler arası farkı çıkarır. Yeni görülen süreç ve geri giden sayaç
+/// (istemci kapandı / pid yeniden kullanıldı) için fark 0'dır.
+struct GPUDeltaTracker: Sendable {
+    private var previous: [pid_t: UInt64] = [:]
+
+    mutating func update(_ current: [pid_t: UInt64]) -> [pid_t: UInt64] {
+        var deltas: [pid_t: UInt64] = [:]
+        deltas.reserveCapacity(current.count)
+        for (pid, value) in current {
+            if let before = previous[pid], value >= before { deltas[pid] = value - before }
+        }
+        previous = current
+        return deltas
+    }
+}

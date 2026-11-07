@@ -63,4 +63,21 @@ final class MobileQuotaSummaryTests: XCTestCase {
         let empty = PanelCardModel.make(.temperature, PanelData())
         XCTAssertEqual(empty.value, "—")
     }
+
+    func testTemperatureCardShowsCPUGPUBatteryAverages() {
+        let card = PanelCardModel.make(.temperature, .sample)
+        XCTAssertEqual(card.value, "54°")
+        XCTAssertEqual(card.unit, "CPU")
+        XCTAssertEqual(card.caption, "GPU 48° · Pil 31°")
+        XCTAssertEqual(card.accessibilityLabel,
+                       "Sıcaklık, işlemci ortalama 54 derece, ekran kartı ortalama 48 derece, pil 31 derece")
+
+        var noGPU = PanelData.sample
+        noGPU.snapshot?.temperature?.gpu = nil
+        XCTAssertEqual(PanelCardModel.make(.temperature, noGPU).caption, "Pil 31°")
+        noGPU.snapshot?.temperature?.battery = nil
+        let bare = PanelCardModel.make(.temperature, noGPU)
+        XCTAssertEqual(bare.caption, "")
+        XCTAssertEqual(bare.accessibilityLabel, "Sıcaklık, işlemci ortalama 54 derece")
+    }
 }

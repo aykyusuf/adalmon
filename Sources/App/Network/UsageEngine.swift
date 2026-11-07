@@ -20,6 +20,8 @@ struct AppUsage: Identifiable, Sendable, Equatable {
 final class UsageEngine {
     /// Son 60 saniyede en çok harcayanlar.
     private(set) var last60: [AppUsage] = []
+    /// Son 60 saniyede uygulama başına toplam byte (sınırsız; Süreçler tablosunun "Ağ" sütunu için).
+    private(set) var last60Bytes: [String: UInt64] = [:]
     /// Bugün en çok harcayanlar.
     private(set) var today: [AppUsage] = []
     /// Bugün uygulamalara yazılan mobil trafik.
@@ -114,6 +116,8 @@ final class UsageEngine {
         // @Observable her atamada bildirir; değişmediyse atama yapma (gözlemci görünümler boşuna yeniden çizilmesin).
         let newLast60 = Self.summaries(window, limit: 6)
         if newLast60 != last60 { last60 = newLast60 }
+        let newBytes = window.mapValues(\.bytes)
+        if newBytes != last60Bytes { last60Bytes = newBytes }
         if !buckets.isEmpty {
             let newToday = Self.summaries(todayTotals, limit: 30)
             if newToday != today { today = newToday }

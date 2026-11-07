@@ -536,7 +536,8 @@ final class AppModel {
         onStep?()
     }
 
-    private func apply(_ s: SystemSnapshot) {
+    /// Yeni ölçümü yayınlar (testler/önizlemeler de gerçek bir ölçümü buradan verir).
+    func apply(_ s: SystemSnapshot) {
         snapshot = s
         Self.push(&cpuHistory, s.cpu.total)
         Self.push(&gpuHistory, s.gpu?.displayLoad ?? 0)

@@ -15,6 +15,8 @@ final class SettingsRouter {
     var selectedSettingsSection: SettingsSection = .general
     /// Genel bakıştan "Ağ kullanımı"na derin bağlantı: seçilecek uygulama anahtarı (sayfa tüketince nil yapar).
     var selectedAppID: String? = nil
+    /// Süreçler sayfasının seçili sekmesi (oturum boyunca korunur; derin bağlantılar da kullanabilir).
+    var processesTab: ProcessesTab = .processes
 
     /// Kayıtlı ana pencere sayfası bu oturumda bir kez geri yüklendi mi (`MainWindowRoot` kullanır).
     @ObservationIgnored var didRestoreMainSection = false

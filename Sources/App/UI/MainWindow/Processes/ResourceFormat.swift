@@ -17,7 +17,7 @@ enum ResourceFormat {
         return m == 0 ? "\(h) sa" : "\(h) sa \(m) dk"
     }
 
-    /// Çekirdek başına yüzde (birden çok çekirdekte %100'ü aşabilir). 10'un altında bir ondalık.
+    /// Yüzde; 10'un altında bir ondalık. (Geçmiş/diğer sayfalarda çekirdek başına olabilir; "İşlemler" tablosunda makinenin tamamına göre.)
     static func percent(_ p: Double) -> String {
         let v = max(0, p)
         if v < 0.05 { return "%0" }
