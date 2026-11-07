@@ -8,7 +8,7 @@ final class PanelConfigTests: XCTestCase {
         XCTAssertEqual(c.last60Rows, 3)
         XCTAssertEqual(c.todayRows, 5)
         XCTAssertTrue(c.collapsed.isEmpty)
-        XCTAssertEqual(c.visibleSections, [.system, .mobileCap, .blockedApps, .last60, .today])
+        XCTAssertEqual(c.visibleSections, [.system, .battery, .mobileCap, .blockedApps, .last60, .today])
         XCTAssertEqual(c.visibleCards, [.cpu, .gpu, .memory, .temperature, .download, .upload])
         XCTAssertEqual(c.cards.map(\.kind), [.cpu, .gpu, .memory, .temperature, .download, .upload, .disk])
         XCTAssertFalse(c.isVisible(PanelCardKind.disk))
@@ -28,7 +28,7 @@ final class PanelConfigTests: XCTestCase {
         let data = try JSONEncoder().encode(c)
         let decoded = try JSONDecoder().decode(PanelConfig.self, from: data)
         XCTAssertEqual(decoded, c)
-        XCTAssertEqual(decoded.visibleSections, [.system, .blockedApps, .today, .last60])
+        XCTAssertEqual(decoded.visibleSections, [.system, .battery, .blockedApps, .today, .last60])
         XCTAssertEqual(decoded.visibleCards, [.cpu, .memory, .temperature, .upload, .download, .disk])
     }
 
@@ -85,7 +85,7 @@ final class PanelConfigTests: XCTestCase {
         c.move(.system, by: -1)
         XCTAssertEqual(c.sections.first?.section, .system)
         c.move(.system, by: 1)
-        XCTAssertEqual(c.sections.map(\.section).prefix(2), [.mobileCap, .system])
+        XCTAssertEqual(c.sections.map(\.section).prefix(2), [.battery, .system])
         c.toggleCollapsed(.today)
         XCTAssertTrue(c.isCollapsed(.today))
         c.toggleCollapsed(.today)

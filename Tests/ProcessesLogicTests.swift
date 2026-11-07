@@ -167,3 +167,16 @@ final class ProcessesLogicTests: XCTestCase {
         XCTAssertEqual(totals.reduce(0) { $0 + $1.readBytes }, 15)
     }
 }
+
+final class ShellComponentPermissionTests: XCTestCase {
+    func testFinderAndDockCannotBeKilledOrSuspendedButCanRestart() {
+        for key in ["/System/Library/CoreServices/Finder.app", "/System/Library/CoreServices/Dock.app"] {
+            let p = ProcessPermissions.evaluate(category: .app, key: key, isMember: false, ownedCount: 1, totalCount: 1)
+            XCTAssertFalse(p.canControl, key)
+            XCTAssertTrue(p.canRestart, key)
+            XCTAssertNotNil(p.reason)
+        }
+        let other = ProcessPermissions.evaluate(category: .app, key: "/Applications/Warp.app", isMember: false, ownedCount: 1, totalCount: 1)
+        XCTAssertTrue(other.canControl)
+    }
+}

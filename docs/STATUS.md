@@ -71,3 +71,8 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 - GPU: canlı örnekleyici her turda AppUsage (IOAccelerator) farklarını pid → grup eşler; tüm satırlar GPU % gösterir (WindowServer, Warp, Safari doğrulandı).
 - Ağ sütunu: `UsageEngine.last60Bytes` (60 sn ortalama). CPU sütunu artık makinenin tamamına göre (çekirdek sayısına bölünmüş).
 - Açık: Ayrıntılar/Hizmetler sekmesi yok; thread sayısı ve CPU GHz yok (Apple Silicon'da ucuz kaynak yok); Ağ için 1 sa aralığı yok (yalnız saatlik toplam, 24 sa).
+
+## Pil Faz 1 (2026-11-07) — Mac pili, kök yok; kurulmadı, commit yok
+- `Sources/App/Battery/` (BatteryMonitor: IOPS olayı + 60 sn zamanlayıcı tol. 15 sn, panel/pencere görünürken 5 sn; parser, health, rollup, alert motoru), `UsageStore+Battery` (battery_min 14 gün, battery_daily 400 gün), menü çubuğu `.batteryCapsule` bileşeni, panel "Pil" bölümü, Dock ⌘7 Pil sayfası, Ayarlar › Pil uyarıları (balon/kenar parlaması/ses/bildirim).
+- Sağlık: Apple "Maksimum kapasite" (system_profiler, 6 sa önbellek) + ham/tasarım ikisi birlikte. Sıcaklık: mevcut HID örnekleyici (bu Mac'te 27,1 °C okundu).
+- Açık: pil sıcaklığı canlı uygulamada izlenmeli; uyarı balonu tıklanabilir (tam click-through değil, kapat düğmesi için); uygulama kapanırken bekleyen ≤5 dakikalık örnek flush edilmiyor.

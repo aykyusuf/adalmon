@@ -39,6 +39,9 @@ struct PanelData: Equatable {
     /// Dişli çark Dock modunda ana pencereyi (true), değilse Ayarlar penceresini açar; yalnızca ipucu metnini belirler.
     var opensMainWindow = false
 
+    var battery: BatteryReading?
+    var batteryApps: [BatteryEnergyApp] = []
+
     /// Uygulama bazlı ölçüm yoksa listeler yerine kurulum çağrısı gösterilir.
     var showsFilterCallout: Bool { installerState != .active && !filterConnected }
 
@@ -78,7 +81,9 @@ extension PanelData {
             proxyPorts: model.proxy.ports,
             proxyOwnerPaths: model.proxy.ownerPaths,
             toast: model.toast,
-            opensMainWindow: model.prefs.showInDock
+            opensMainWindow: model.prefs.showInDock,
+            battery: model.battery.reading,
+            batteryApps: model.battery.energyApps
         )
     }
 }

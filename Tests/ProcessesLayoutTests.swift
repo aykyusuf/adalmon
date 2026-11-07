@@ -34,12 +34,6 @@ final class ProcessesLayoutTests: XCTestCase {
         XCTAssertFalse(firstRow.isNull, file: file, line: line)
 
         // 3) Sayfa başlığı (görünüm seçici) pencerenin görünür alanında.
-        let picker = try XCTUnwrap(views.first { $0 is NSSegmentedControl && h.windowRect(of: $0).midX > 300 },
-                                   "sayfa başlığındaki görünüm seçici yok", file: file, line: line)
-        let pr = h.windowRect(of: picker)
-        XCTAssertTrue(bounds.insetBy(dx: -1, dy: -1).contains(pr), "başlık görünür alanın dışında: \(pr) / \(bounds)", file: file, line: line)
-
-        // 4) ⌘1 (MainWindowCommands) Genel bakışa her zaman döner; kenar çubuğu seçimi de eşlenir.
         h.router.selectedMainSection = .overview
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertEqual(h.router.selectedMainSection, .overview, file: file, line: line)

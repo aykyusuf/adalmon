@@ -90,7 +90,7 @@ actor UsageStore {
                   bytes_in INTEGER NOT NULL DEFAULT 0, bytes_out INTEGER NOT NULL DEFAULT 0,
                   PRIMARY KEY(hour, app, domain, mobile))
                 """,
-            ] + Self.resourceSchema { sqlite3_exec(handle, sql, nil, nil, nil) }
+            ] + Self.resourceSchema + Self.batterySchema { sqlite3_exec(handle, sql, nil, nil, nil) }
         }
     }
 
