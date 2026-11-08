@@ -82,6 +82,12 @@ final class OfficeActor {
     /// Yönetici: beyaz tahtaya gidiyor/orada (`toBoard`) ve tahtanın önünde ayakta (`atBoard`).
     var toBoard = false
     var atBoard = false
+    /// Yönetici volta döngüsü açık (yürüyüş + duraklamalar); boşta 60 sn sonra kapanır.
+    var strolling = false
+    /// Boşa geçişte kurulan volta bitiş anı (nil: volta yok); mod hesabı `OfficeExecutive.mode`.
+    var strollUntil: Date?
+    var strollCount = 0
+    var lookCount = 0
     /// Konuşma balonu: istenen metin (nil: yok), süresi doldu mu, süre sayacının dayandığı etkinlik anı, sayaç çalışıyor mu.
     var textBubble: OfficeTextBubble?
     var bubbleText: String?
@@ -90,6 +96,8 @@ final class OfficeActor {
     var bubbleTimer = false
 
     var isExecutive: Bool { seat.kind == .executive }
+    /// Ayakta (tahta önünde ya da voltada): oturma çökmesi yok.
+    var upright: Bool { atBoard || strolling }
 
     init(member: OfficeMember, appearance: OfficeAppearance, seat: OfficeSeat, texture: SKTexture) {
         self.member = member; self.appearance = appearance; self.seat = seat; self.tile = seat.tile
@@ -103,7 +111,7 @@ final class OfficeActor {
     }
 
     var isAnimating: Bool {
-        moving || hopping || leaving || bubbleTimer || (!away && (behavior.pose == .typing || behavior.bubble == .alert || behavior.pcOn))
+        moving || hopping || leaving || bubbleTimer || strolling || (!away && (behavior.pose == .typing || behavior.bubble == .alert || behavior.pcOn))
     }
 }
 
@@ -123,6 +131,8 @@ final class OfficeRoomNode {
     let tier: OfficeRoomTier
     let assets: OfficeAssets
     let kit: OfficeRoomKit
+    /// Yalnızca yönetici bölgesinin karolarının yürünür olduğu ızgara: volta rotaları bölgeden çıkmaz.
+    private let zoneGrid: OfficeGrid?
     let root = SKNode()
     private let content = SKNode()
 
@@ -166,7 +176,9 @@ final class OfficeRoomNode {
 
     init(id: String, tier: OfficeRoomTier, assets: OfficeAssets) {
         self.id = id; self.tier = tier; self.assets = assets
-        kit = assets.kit(tier)
+        let kit = assets.kit(tier)
+        self.kit = kit
+        zoneGrid = kit.spots.zone.map { kit.grid.restricted(to: $0) }
         root.addChild(content)
         buildWorld()
         buildChrome()
@@ -208,7 +220,7 @@ final class OfficeRoomNode {
             node.xScale = f.mirrored ? -1 : 1
             node.position = CGPoint(x: CGFloat((f.col - b.minCol) * 16 + a.width / 2), y: CGFloat(kit.worldHeight - ((f.row - b.minRow) * 16 + a.height)))
             // Öne-arkaya sıralama: ayak izi alt kenarı; yüzeydekiler (PC) sahibinin biraz üstünde.
-            node.zPosition = CGFloat((f.row + a.footprintH) * 16) + (a.onSurface ? 0.2 : 0)
+            node.zPosition = CGFloat((f.row + a.footprintH) * 16) + (a.onSurface ? 0.2 : 0) + (OfficeAssets.isFrontChair(a) ? 0.8 : 0)
             content.addChild(node)
             if a.id.hasSuffix("_OFF") { pcNodes[i] = node }
         }
@@ -464,30 +476,61 @@ final class OfficeRoomNode {
         actor.behavior = behavior
         if actor.away && m.status.isWorking { sendBack(actor, animated: animated) }
         if actor.isExecutive {
-            moveExecutive(actor, animated: animated)
+            actor.strollUntil = OfficeExecutive.strollDeadline(previous: actor.strollUntil, old: old, new: m.status, animated: animated, now: now)
+            moveExecutive(actor, animated: animated, now: now)
         } else if !actor.moving && !actor.away {
             applyPose(actor)
             if celebrate && animated { hop(actor) }
         }
     }
 
-    // MARK: Yönetici köşesi
+    // MARK: Yönetici alanı
 
-    /// Yönetici: çalışırken beyaz tahtanın önüne yürür ve ayakta yazar; boşta masasındaki koltuğa döner. Yürüyüş sürerken karar
-    /// yürüyüşün sonunda (`arrive`/`arriveAtBoard`) güncel davranışa göre verilir.
-    private func moveExecutive(_ a: OfficeActor, animated: Bool) {
-        guard !a.moving else { return }
-        if a.behavior.standing {
-            if a.atBoard { applyPose(a) } else { goToBoard(a, animated: animated) }
-        } else if a.atBoard {
-            sendBack(a, animated: animated)
-        } else {
-            applyPose(a)
+    private func executiveMode(_ a: OfficeActor, now: Date = .now) -> OfficeExecutiveMode {
+        let mode = OfficeExecutive.mode(status: a.member.status, strollUntil: a.strollUntil, now: now)
+        // Bölge/tahta olmayan (eski/sentetik) düzenlerde yönetici hep masasında.
+        switch mode {
+        case .board where kit.spots.board == nil: return .seated
+        case .stroll where zoneGrid == nil || kit.spots.zoneTiles.count < 2: return kit.spots.board == nil ? .seated : .board
+        default: return mode
         }
+    }
+
+    /// Yönetici: çalışırken tahtanın önünde ayakta yazar (arada alt ajanlara bakar); izin beklerken ve boşa geçtikten sonra 60 sn
+    /// yönetici bölgesinde volta atar; sonra masasına oturur. Yürüyüş sürerken karar yürüyüşün sonunda (`arrive`/`arriveAtBoard`/
+    /// volta adımı) güncel duruma göre verilir.
+    private func moveExecutive(_ a: OfficeActor, animated: Bool, now: Date) {
+        guard !a.moving else { return }
+        switch executiveMode(a, now: now) {
+        case .board:
+            endStroll(a)
+            if a.atBoard { applyPose(a); startLooking(a) } else { goToBoard(a, animated: animated) }
+        case .stroll:
+            if a.strolling { applyPose(a) } else { beginStroll(a, animated: animated) }
+        case .seated:
+            let wasUp = a.upright
+            endStroll(a)
+            if wasUp { sendBack(a, animated: animated) } else { applyPose(a) }
+        }
+    }
+
+    /// Ayakta durumlarını (tahta, volta, bakış sayacı) kapatır.
+    private func leaveStanding(_ a: OfficeActor) {
+        a.atBoard = false; a.toBoard = false
+        a.root.removeAction(forKey: "look")
+        endStroll(a)
+        if a.isExecutive { updateBoardOverlay(writing: false) }
+    }
+
+    private func endStroll(_ a: OfficeActor) {
+        a.strolling = false
+        a.root.removeAction(forKey: "stroll")
     }
 
     private func goToBoard(_ a: OfficeActor, animated: Bool) {
         guard let board = kit.spots.board else { applyPose(a); return }
+        endStroll(a)
+        a.root.removeAction(forKey: "look")
         a.toBoard = true
         let from = a.heading ?? a.tile
         guard animated, let route = kit.grid.path(from: from, to: board) else {
@@ -507,10 +550,87 @@ final class OfficeRoomNode {
         a.direction = .up
         a.root.zPosition = yDown(a.tile) + 0.5
         a.behavior = OfficeBehavior.behavior(for: a.member.status, atDesk: false, executive: true)
-        if !a.behavior.standing { sendBack(a, animated: true); return }   // tahtaya varırken iş bitti
-        a.atBoard = true
-        applyPose(a)
+        switch executiveMode(a) {
+        case .board:
+            a.atBoard = true
+            applyPose(a)
+            startLooking(a)
+            notify()
+        case .stroll: a.toBoard = false; beginStroll(a, animated: true)   // tahtaya varırken izin istendi / iş bitti
+        case .seated: sendBack(a, animated: true)
+        }
+    }
+
+    /// Tahtada yazarken ara sıra (3-5 sn) başını alt ajanlara çevirir (aşağı bakış kareleri), kısa süre sonra tahtaya döner.
+    private func startLooking(_ a: OfficeActor) {
+        a.root.removeAction(forKey: "look")
+        guard a.atBoard, !a.leaving else { return }
+        let seed = OfficeStroll.seed(for: a.member.id)
+        let n = a.lookCount
+        a.lookCount += 1
+        let wait = a.direction == .down ? OfficeStroll.lookAwayDuration(seed: seed, n) : OfficeStroll.writeInterval(seed: seed, n)
+        a.root.run(.sequence([.wait(forDuration: wait), .run { [weak self, weak a] in
+            guard let self, let a, a.atBoard, !a.moving, !a.leaving else { return }
+            a.direction = a.direction == .down ? .up : .down
+            self.applyPose(a)
+            self.startLooking(a)
+        }]), withKey: "look")
+    }
+
+    // MARK: Volta
+
+    /// Voltaya başlar: yönetici bölgesinde (üst orta şerit) sağa-sola 4-6 karelik yürüyüş + kısa duraklamalar. Animasyonsuz
+    /// uygulamada doğrudan bir volta karesinde belirir (döngü yine başlar).
+    private func beginStroll(_ a: OfficeActor, animated: Bool) {
+        guard zoneGrid != nil else { applyPose(a); return }
+        a.root.removeAction(forKey: "look")
+        a.atBoard = false; a.toBoard = false
+        updateBoardOverlay(writing: false)
+        a.strolling = true
+        a.behavior = OfficeBehavior.behavior(for: a.member.status, atDesk: false, executive: true)
+        if animated {
+            strollStep(a)
+        } else {
+            a.root.removeAction(forKey: "move"); a.moving = false
+            let seed = OfficeStroll.seed(for: a.member.id)
+            place(a, at: OfficeStroll.target(from: a.tile, zone: kit.spots.zoneTiles, seed: seed, step: a.strollCount) ?? a.tile)
+            strollPause(a)
+        }
         notify()
+    }
+
+    /// Bir volta adımı: modu yeniden değerlendirir (boşta 60 sn dolduysa masaya, çalışmaya başladıysa tahtaya), yoksa yeni hedefe yürür.
+    private func strollStep(_ a: OfficeActor) {
+        guard a.strolling, !a.leaving, actors[a.member.id] === a else { return }
+        guard executiveMode(a) == .stroll, let grid = zoneGrid else {
+            moveExecutive(a, animated: true, now: .now)
+            return
+        }
+        let seed = OfficeStroll.seed(for: a.member.id)
+        a.strollCount += 1
+        let from = a.heading ?? a.tile
+        guard let goal = OfficeStroll.target(from: from, zone: kit.spots.zoneTiles, seed: seed, step: a.strollCount),
+              let route = grid.path(from: from, to: goal), !route.isEmpty else { strollPause(a); return }
+        place(a, at: from)
+        a.root.zPosition = yDown(from) + 0.5
+        run(route: [from] + route, for: a) { [weak self] in self?.strollPause(a) }
+        if a.behavior.bubble == .alert { setBubble(a); positionAccessoryAndBubble(a) }   // izin "!" balonu yürürken de görünür
+    }
+
+    private func strollPause(_ a: OfficeActor) {
+        guard a.strolling, !a.leaving, actors[a.member.id] === a else { return }
+        a.moving = false
+        if let t = a.heading { a.tile = t }
+        a.heading = nil
+        a.root.zPosition = yDown(a.tile) + 0.5
+        a.direction = .down   // duraklarken alt ajanlara bakar
+        a.behavior = OfficeBehavior.behavior(for: a.member.status, atDesk: false, executive: true)
+        applyPose(a)
+        let seed = OfficeStroll.seed(for: a.member.id)
+        a.root.run(.sequence([.wait(forDuration: OfficeStroll.pause(seed: seed, step: a.strollCount)), .run { [weak self, weak a] in
+            guard let self, let a else { return }
+            self.strollStep(a)
+        }]), withKey: "stroll")
     }
 
     /// Tahta katmanı: yönetici tahtada yazıyorsa 3 kareli animasyon, değilse gizli (animasyon yok).
@@ -587,7 +707,7 @@ final class OfficeRoomNode {
     /// Metin balonunu düğüme uygular: yalnızca seviye ≥ 2 yakınlıkta, karakter yerinde (yürümüyor) ve metin varsa görünür.
     private func renderBubble(_ a: OfficeActor, reposition: Bool = true) {
         guard let text = a.bubbleText, bubblesOn, isVisible, !a.moving, !a.away, !a.leaving else {
-            if let tb = a.textBubble, !tb.node.isHidden { tb.node.isHidden = true }
+            if let tb = a.textBubble, !tb.node.isHidden { tb.node.isHidden = true; resolveBubbleOverlaps() }
             return
         }
         let tb: OfficeTextBubble
@@ -626,7 +746,7 @@ final class OfficeRoomNode {
         let tex = frames.map { assets.characterTexture(index: a.appearance.characterIndex, direction: a.direction, frame: $0) }
         a.body.xScale = (OfficeCharacterSheet.mirrorsHorizontally(a.direction) ? -1 : 1) * abs(a.body.xScale)
         a.body.texture = tex[0]
-        a.body.position.y = a.atBoard ? 0 : -Self.sitDrop   // tahtada ayakta (oturma çökmesi yok)
+        a.body.position.y = a.upright ? 0 : -Self.sitDrop   // tahtada/voltada ayakta (oturma çökmesi yok)
         if a.behavior.pose != .sitting {
             // Okuma (izin bekleme) yavaş, yazma hızlı.
             let t = a.behavior.pose == .typing ? 0.28 : 0.6
@@ -668,28 +788,60 @@ final class OfficeRoomNode {
         }
     }
 
-    /// Aksesuar baş üstünde, balon sağ üstte; oturma pozunda baş birkaç piksel aşağıdadır.
+    /// Aksesuar baş üstünde, balon sağ üstte; oturma pozunda baş birkaç piksel aşağıdadır (ayakta/yürürken değil).
     private func positionAccessoryAndBubble(_ a: OfficeActor) {
         let s = a.body.yScale
-        let seated = !a.moving && !a.hopping && !a.away
-        let headTop: CGFloat = (seated ? 28 : 30) * s + a.body.position.y
+        let headTop = headTop(a)
         if let acc = a.accessory {
             acc.position = CGPoint(x: 0, y: headTop - 1)
             acc.xScale = s; acc.yScale = s
         }
         a.bubble?.position = CGPoint(x: 7 * s, y: headTop - 8 * s)
-        let top = headTop + (a.accessory?.size.height ?? 0) * s + 3
-        // Yan yana oturan salon koltuklarında (kanepe) etiketler çakışmasın: tek sütundakini bir kademe yukarı al.
-        let stagger: CGFloat = a.seat.kind == .lounge && a.seat.tile.col % 2 != 0 ? 14 / CGFloat(zoom) : 0
-        a.label.position = CGPoint(x: 0, y: top + stagger)
+        a.label.position = CGPoint(x: 0, y: labelY(a))
         if let tb = a.textBubble, !tb.node.isHidden {
-            // Balon etiketin (varsa) üstünde; yan yana oturanlar çakışmasın diye tek numaralı koltuklar bir balon boyu yukarıda.
-            let z = CGFloat(zoom)
-            let labelSpace: CGFloat = a.labelBuilt && !a.label.isHidden ? 16 / z : 1 / z
-            let lift: CGFloat = a.seat.id % 2 == 1 ? (OfficeTextBubble.height + 1) / z : 0
-            tb.node.setScale(1 / z)
+            tb.node.setScale(1 / CGFloat(zoom))
             tb.setFlipped(a.root.position.x > CGFloat(kit.worldWidth) / 2)
-            tb.node.position = CGPoint(x: 0, y: top + stagger + labelSpace + lift)
+            resolveBubbleOverlaps()
+        }
+    }
+
+    /// Baş üstü (root'a göre): oturma ve ayakta okuma pozlarında baş birkaç piksel aşağıdadır.
+    private func headTop(_ a: OfficeActor) -> CGFloat {
+        let still = !a.moving && !a.hopping && !a.away
+        let low = still && (!a.upright || a.behavior.pose == .reading)
+        return (low ? 28 : 30) * a.body.yScale + a.body.position.y
+    }
+
+    /// Ad etiketinin (varsa) y konumu: baş + aksesuar üstü. Yan yana oturan salon koltuklarında (kanepe) tek sütundakini bir kademe yukarı al.
+    private func labelY(_ a: OfficeActor) -> CGFloat {
+        let s = a.body.yScale
+        let top = headTop(a) + (a.accessory?.size.height ?? 0) * s + 3
+        let stagger: CGFloat = a.seat.kind == .lounge && a.seat.tile.col % 2 != 0 ? 14 / CGFloat(zoom) : 0
+        return top + stagger
+    }
+
+    /// Metin balonlarını yerleştirir: etiketin (varsa) üstünde; komşu balonla çakışan balon dikeyde yukarı kayar (balon boyu kadar),
+    /// çakışma kalmayana dek. Soldan sağa sırayla yerleştirilir (sol balon sabit, sağdaki kayar).
+    private func resolveBubbleOverlaps() {
+        let z = CGFloat(zoom)
+        let tail = OfficePixelArt.speechBubbleTailX / z
+        let step = (OfficeTextBubble.height + 1) / z
+        var placed: [CGRect] = []
+        let shown = actors.values.filter { a in a.textBubble.map { !$0.node.isHidden } ?? false }
+            .sorted { ($0.root.position.x, $0.root.position.y) < ($1.root.position.x, $1.root.position.y) }
+        for a in shown {
+            guard let tb = a.textBubble else { continue }
+            let labelSpace: CGFloat = a.labelBuilt && !a.label.isHidden ? 16 / z : 1 / z
+            let base = labelY(a) + labelSpace
+            let w = tb.width / z, x = a.root.position.x
+            let minX = tb.flipped ? x + tail - w : x - tail
+            var lift: CGFloat = 0
+            for _ in 0..<8 {
+                let rect = CGRect(x: minX, y: a.root.position.y + base + lift, width: w, height: OfficeTextBubble.height / z).insetBy(dx: -1 / z, dy: -0.5 / z)
+                if placed.contains(where: { $0.intersects(rect) }) { lift += step } else { break }
+            }
+            tb.node.position = CGPoint(x: 0, y: base + lift)
+            placed.append(CGRect(x: minX, y: a.root.position.y + base + lift, width: w, height: OfficeTextBubble.height / z))
         }
     }
 
@@ -755,10 +907,14 @@ final class OfficeRoomNode {
         a.behavior = OfficeBehavior.behavior(for: a.member.status, atDesk: a.seat.kind == .desk, executive: a.isExecutive)
         a.away = false
         a.atBoard = false; a.toBoard = false
+        endStroll(a)
         if let s = a.awaySeatID { awayLounge.remove(s); a.awaySeatID = nil }
-        if a.isExecutive && a.behavior.standing && kit.spots.board != nil {
-            goToBoard(a, animated: animated)   // çalışırken tahta önünde ayakta
-            return
+        if a.isExecutive {
+            switch executiveMode(a) {
+            case .board: goToBoard(a, animated: animated); return   // çalışırken tahta önünde ayakta
+            case .stroll: beginStroll(a, animated: animated); return
+            case .seated: break
+            }
         }
         applyPose(a)
         notify()
@@ -774,8 +930,7 @@ final class OfficeRoomNode {
         if let s = a.awaySeatID { awayLounge.remove(s); a.awaySeatID = nil }
         a.leaving = true
         a.away = true
-        a.atBoard = false; a.toBoard = false
-        if a.isExecutive { updateBoardOverlay(writing: false) }
+        leaveStanding(a)
         a.body.removeAction(forKey: "bubbleExpiry"); a.bubbleTimer = false; a.bubbleText = nil
         a.textBubble?.node.isHidden = true
         a.bubble?.removeFromParent(); a.bubble = nil
@@ -850,8 +1005,7 @@ final class OfficeRoomNode {
 
     private func sendBack(_ a: OfficeActor, animated: Bool) {
         a.root.removeAction(forKey: "coffee")
-        a.atBoard = false; a.toBoard = false
-        if a.isExecutive { updateBoardOverlay(writing: false) }
+        leaveStanding(a)
         let from = a.heading ?? a.tile
         guard animated, let route = kit.grid.path(from: from, to: a.seat.tile) else {
             a.root.removeAction(forKey: "move"); a.root.removeAction(forKey: "coffee"); a.moving = false

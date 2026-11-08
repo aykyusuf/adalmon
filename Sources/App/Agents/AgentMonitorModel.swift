@@ -22,10 +22,15 @@ final class AgentMonitorModel {
     @ObservationIgnored private var livenessTask: Task<Void, Never>?
     @ObservationIgnored private let probe: ProcessLivenessProbing
     @ObservationIgnored private let livenessInterval: TimeInterval
+    /// Modeli bilinmeyen oturumlar için konuşma dosyası araması; nil = kapalı (testlerde gerçek dosyaya dokunulmaz).
+    @ObservationIgnored private let modelResolver: (any SessionModelResolving)?
+    @ObservationIgnored private var lookups = ModelLookupTracker()
 
-    init(probe: ProcessLivenessProbing = SystemProcessProbe(), livenessInterval: TimeInterval = 5) {
+    init(probe: ProcessLivenessProbing = SystemProcessProbe(), livenessInterval: TimeInterval = 5,
+         modelResolver: (any SessionModelResolving)? = nil) {
         self.probe = probe
         self.livenessInterval = livenessInterval
+        self.modelResolver = modelResolver
     }
 
     /// Canlılık döngüsü çalışıyor mu (testler yaşam döngüsünü buradan doğrular).
@@ -39,12 +44,33 @@ final class AgentMonitorModel {
         refreshSummary()
         schedulePrune()
         updateLivenessPolling()
+        lookUpUnknownModels(now: now)
+    }
+
+    /// Modeli bilinmeyen oturum için, hız sınırı izin veriyorsa arka plan kuyruğunda konuşma dosyasının yalnızca model alanını okur.
+    /// Yalnızca olay gelince tetiklenir (zamanlayıcı yok); model bilinince durur.
+    private func lookUpUnknownModels(now: Date) {
+        guard let resolver = modelResolver else { return }
+        for id in state.sessionsWithUnknownModel.sorted() where lookups.shouldAttempt(id, now: now) {
+            Task.detached(priority: .utility) { [weak self] in
+                let model = resolver.latestModel(sessionID: id)
+                await self?.finishLookup(id, model: model)
+            }
+        }
+    }
+
+    private func finishLookup(_ id: String, model: String?) {
+        var next = state
+        let adopted = model.map { next.adoptTranscriptModel($0, for: id) } ?? false
+        lookups.finish(id, found: model != nil, now: .now)
+        if adopted { state = next }
     }
 
     func prune(now: Date = .now) {
         var next = state
         guard !next.prune(now: now).isEmpty else { return }
         state = next
+        lookups.retain(Set(state.sessions.keys))
         refreshSummary()
         updateLivenessPolling()
     }
@@ -72,6 +98,7 @@ final class AgentMonitorModel {
         livenessTask?.cancel()
         livenessTask = nil
         state = AgentState()
+        lookups.removeAll()
         lastEventAt = nil
         refreshSummary()
     }

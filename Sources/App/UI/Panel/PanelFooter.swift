@@ -3,8 +3,23 @@ import SwiftUI
 struct PanelFooter: View {
     let data: PanelData
     let onQuit: () -> Void
+    /// Açık kalma satırı için son açılış; `nil` ise satır gösterilmez.
+    var bootTime: Date? = UptimeSummary.systemBoot
 
     var body: some View {
+        // Açık kalma satırı durum satırına sığıyorsa aynı satırda (panel yüksekliği artmaz), sığmıyorsa altta ayrı satır.
+        ViewThatFits(in: .horizontal) {
+            row(uptimeInline: true)
+            VStack(alignment: .leading, spacing: 3) {
+                row(uptimeInline: false)
+                UptimeLine(boot: bootTime)
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+
+    private func row(uptimeInline: Bool) -> some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(data.filterConnected ? Color.green : Color.secondary)
@@ -12,14 +27,13 @@ struct PanelFooter: View {
                 .accessibilityHidden(true)
             Text(statusText)
                 .lineLimit(1)
-            Spacer()
+            Spacer(minLength: 8)
+            if uptimeInline { UptimeLine(boot: bootTime) }
             Button("Çık", systemImage: "power", action: onQuit)
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .help("Adalmon'dan çık")
         }
-        .font(.caption2)
-        .foregroundStyle(.secondary)
     }
 
     private var statusText: String {

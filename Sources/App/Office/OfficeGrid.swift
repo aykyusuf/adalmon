@@ -8,6 +8,16 @@ struct OfficeTile: Hashable, Sendable {
     func manhattan(to other: OfficeTile) -> Int { abs(col - other.col) + abs(row - other.row) }
 }
 
+/// Karo dikdörtgeni (kapsayıcı): yönetici bölgesi gibi alanlar.
+struct OfficeRect: Equatable, Sendable {
+    var minCol: Int
+    var minRow: Int
+    var maxCol: Int
+    var maxRow: Int
+
+    func contains(_ t: OfficeTile) -> Bool { t.col >= minCol && t.col <= maxCol && t.row >= minRow && t.row <= maxRow }
+}
+
 /// Yürünebilir karo ızgarası + BFS yol bulma.
 struct OfficeGrid: Equatable, Sendable {
     let cols: Int
@@ -70,6 +80,13 @@ struct OfficeGrid: Equatable, Sendable {
         return out.reversed()
     }
 
+    /// Yalnızca `rect` içindeki karoları yürünür bırakan kopya: bu ızgarada bulunan yollar bölgeden çıkmaz.
+    func restricted(to rect: OfficeRect) -> OfficeGrid {
+        var w = walkable
+        for r in 0..<rows { for c in 0..<cols where !rect.contains(OfficeTile(c, r)) { w[r * cols + c] = false } }
+        return OfficeGrid(cols: cols, rows: rows, walkable: w)
+    }
+
     /// `from`'dan ulaşılabilen yürünür karolar.
     func reachable(from start: OfficeTile) -> Set<OfficeTile> {
         guard contains(start) else { return [] }
@@ -108,6 +125,10 @@ struct OfficeSpots: Equatable, Sendable {
     /// Yönetici beyaz tahtasının önünde durulan karo (yukarı bakar) ve tahtanın yerleşim dizini (`layout.furniture`).
     var board: OfficeTile?
     var boardIndex: Int?
+    /// Yönetici bölgesi (üst orta şerit: tahta önü + yönetici masası) ve içindeki ulaşılabilir yürünür karolar (volta rotası).
+    /// Yönetici bu bölgeden çıkmaz; şablon `OfficeLayout.executiveZone` verir.
+    var zone: OfficeRect?
+    var zoneTiles: [OfficeTile] = []
 
     var executiveSeat: OfficeSeat? { seats.first { $0.kind == .executive } }
     var deskSeats: [OfficeSeat] { seats.filter { $0.kind == .desk } }
@@ -173,7 +194,21 @@ struct OfficeSpots: Equatable, Sendable {
             let t = OfficeTile(f.col, f.row + a.footprintH)
             if reachable.contains(t) { board = t; boardIndex = i; break }
         }
-        return OfficeSpots(seats: seats, entrance: entrance, door: door, coffee: coffee, coffeeFacing: coffeeFacing, board: board, boardIndex: boardIndex)
+        var zone: OfficeRect?
+        var zoneTiles: [OfficeTile] = []
+        if let z = layout.executiveZone {
+            zone = z
+            // Mobilya ayak izinin tamamı (arka plan satırı dahil) dışında kalan, ulaşılabilir karolar: masanın arkasında yürünmez.
+            func covered(_ t: OfficeTile) -> Bool {
+                layout.furniture.contains { f in
+                    guard let a = assets[f.assetID], !a.onWall, !a.onSurface else { return false }
+                    return t.col >= f.col && t.col < f.col + a.footprintW && t.row >= f.row && t.row < f.row + a.footprintH
+                }
+            }
+            for r in z.minRow...z.maxRow { for c in z.minCol...z.maxCol where reachable.contains(OfficeTile(c, r)) && !covered(OfficeTile(c, r)) { zoneTiles.append(OfficeTile(c, r)) } }
+        }
+        return OfficeSpots(seats: seats, entrance: entrance, door: door, coffee: coffee, coffeeFacing: coffeeFacing, board: board, boardIndex: boardIndex,
+                           zone: zone, zoneTiles: zoneTiles)
     }
 
     /// Koltuk türü varlıktan: arkadan görünen yastıklı sandalye (CUSHIONED_CHAIR_BACK) yönetici koltuğu, kanepe ve yastıklı ön/yan

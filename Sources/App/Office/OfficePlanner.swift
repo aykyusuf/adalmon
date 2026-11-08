@@ -176,6 +176,77 @@ enum OfficeWander {
     }
 }
 
+// MARK: Yönetici (ana ajan) davranışı
+
+/// Yöneticinin bulunduğu yer/davranış: tahta önünde ayakta yazar (+ ara sıra alt ajanlara bakar), yönetici bölgesinde volta atar,
+/// ya da masasında oturur.
+enum OfficeExecutiveMode: Equatable, Sendable { case board, stroll, seated }
+
+enum OfficeExecutive {
+    /// Oturum boşa/bitişe geçince bu süre volta atar, sonra masasına oturur ve durur (CPU).
+    static let idleStrollDuration: TimeInterval = 60
+
+    /// Duruma göre mod. `strollUntil`: boşa geçişte kurulan volta bitiş anı (nil: volta yok, doğrudan masada).
+    /// Çalışırken tahtada; izin beklerken (iş sürüyor ama ajan durdu) süresiz volta; boştayken `strollUntil`'e kadar volta.
+    static func mode(status: AgentStatus, strollUntil: Date?, now: Date) -> OfficeExecutiveMode {
+        switch status {
+        case .thinking, .tool: return .board
+        case .waitingPermission: return .stroll
+        case .idle, .done: if let strollUntil, now < strollUntil { return .stroll }; return .seated
+        case .ended: return .seated
+        }
+    }
+
+    /// Durum değişince volta bitiş anı: çalışırken/izin beklerken yok; çalışmadan boşa geçişte (animasyonluysa) şimdi + süre.
+    static func strollDeadline(previous: Date?, old: AgentStatus, new: AgentStatus, animated: Bool, now: Date) -> Date? {
+        if new.isWorking { return nil }
+        if old.isWorking { return animated ? now.addingTimeInterval(idleStrollDuration) : nil }
+        return previous
+    }
+}
+
+/// Yönetici volta rotası ve tahta başı bakış zamanlaması: saf, deterministik "rastgele" (üye kimliğinden tohumlanır).
+enum OfficeStroll {
+    /// Volta yürüyüşünün yatay uzunluğu (karo).
+    static let lengths = 4...6
+
+    static func seed(for id: String) -> UInt64 {
+        var h: UInt64 = 14695981039346656037
+        for b in id.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
+        return h
+    }
+
+    /// SplitMix64 → 0..<1.
+    static func roll(seed: UInt64, _ n: Int) -> Double {
+        var z = seed &+ UInt64(truncatingIfNeeded: n) &* 0x9E3779B97F4A7C15
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        z ^= z >> 31
+        return Double(z >> 11) / Double(1 << 53)
+    }
+
+    /// `from`'dan, bölge karoları (`zone`) içinde, aynı/komşu satırda 4-6 (olmazsa mümkün olan en uzun, en az 2) karo yatay yürüyüş hedefi.
+    /// Hedef her zaman `zone` içindedir; `from` dışında en az bir karo yoksa nil.
+    static func target(from: OfficeTile, zone: [OfficeTile], seed: UInt64, step: Int) -> OfficeTile? {
+        let others = zone.filter { $0 != from && abs($0.row - from.row) <= 1 }
+        var pool = others.filter { lengths.contains(abs($0.col - from.col)) }
+        if pool.isEmpty {
+            let far = others.map { abs($0.col - from.col) }.max() ?? 0
+            if far >= 2 { pool = others.filter { abs($0.col - from.col) == far } }
+        }
+        if pool.isEmpty { pool = others }
+        guard !pool.isEmpty else { return nil }
+        return pool[min(pool.count - 1, Int(roll(seed: seed, step * 3) * Double(pool.count)))]
+    }
+
+    /// Volta duraklaması (sn): 1.5…4.
+    static func pause(seed: UInt64, step: Int) -> TimeInterval { 1.5 + roll(seed: seed, step * 3 + 1) * 2.5 }
+    /// Tahtaya dönük yazma süresi (sn): 3…5 — sonra alt ajanlara bakar.
+    static func writeInterval(seed: UInt64, _ n: Int) -> TimeInterval { 3 + roll(seed: seed, n * 3 + 2) * 2 }
+    /// Alt ajanlara bakma süresi (sn): 1…1.8.
+    static func lookAwayDuration(seed: UInt64, _ n: Int) -> TimeInterval { 1 + roll(seed: seed, n * 3 + 2) * 0.8 }
+}
+
 // MARK: Model → görünüm
 
 enum OfficeAccessory: Equatable, Sendable {

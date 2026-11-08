@@ -237,7 +237,11 @@ final class OfficeAssets {
 
     /// Duvara asılı olanlar ve arka satırı olmayan (`backgroundTiles == 0`) mobilya karakterlerin hep arkasında kalır
     /// (üstlerinde yürünebilir karo yok): arka plana pişirilir, sahnede düğüm olmaz.
-    static func isBaked(_ a: OfficeAsset) -> Bool { a.onWall || a.backgroundTiles == 0 }
+    static func isBaked(_ a: OfficeAsset) -> Bool { a.onWall || (a.backgroundTiles == 0 && !isFrontChair(a)) }
+
+    /// Yan görünümlü yastıklı koltuk: oturan karakterin bacaklarını örtecek şekilde karakterin ÖNÜNDE çizilir (arka plana pişmez);
+    /// aksi halde arkada kalıp oturan karakter "ayakta" görünür.
+    static func isFrontChair(_ a: OfficeAsset) -> Bool { a.id == "CUSHIONED_CHAIR_SIDE" }
 
     /// Tüm zemin ve duvar karolarını (renklendirilmiş) ve pişirilebilir mobilyayı tek bir görüntüye birleştirir.
     private static func bakeBackground(root: URL, layout: OfficeLayout, catalog: [String: OfficeAsset],

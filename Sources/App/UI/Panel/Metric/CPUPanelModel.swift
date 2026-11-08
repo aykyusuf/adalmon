@@ -24,8 +24,11 @@ struct CPUPanelModel: Equatable {
     var temperatureMax: String?
     var series: PanelSeries
     var processes: [TopProcess]
+    /// "2 g 23 sa 14 dk" ve "Son açılış: 6 Kas 09:12"; açılış zamanı okunamazsa nil.
+    var uptimeText: String?
+    var bootText: String?
 
-    static func make(_ data: PanelData, processes: [TopProcess]) -> CPUPanelModel {
+    static func make(_ data: PanelData, processes: [TopProcess], bootTime: Date? = BootTimeReader.system.read(), now: Date = .now) -> CPUPanelModel {
         let c = data.snapshot?.cpu
         let t = data.snapshot?.temperature
         var cores: [Core] = []
@@ -54,6 +57,8 @@ struct CPUPanelModel: Equatable {
             temperatureAverage: t?.cpu.map { "\(Int($0.rounded())) °C" },
             temperatureMax: t?.cpuMax.map { "\(Int($0.rounded())) °C" },
             series: .make(values: data.cpuHistory, samples: data.samples, format: .percent),
-            processes: processes)
+            processes: processes,
+            uptimeText: bootTime.map { UptimeFormatter.duration(UptimeFormatter.uptime(since: $0, now: now)) },
+            bootText: bootTime.map { "Son açılış: \(UptimeFormatter.bootStamp($0))" })
     }
 }

@@ -47,6 +47,14 @@ final class OfficeRoomTests: XCTestCase {
             XCTAssertEqual(kit.layout.furniture.filter { $0.assetID == "WHITEBOARD" }.count, 1, "\(tier): tek beyaz tahta (yönetici)")
             XCTAssertNotNil(kit.grid.path(from: exec.tile, to: board), "\(tier): koltuktan tahtaya yol")
             XCTAssertNotNil(kit.grid.path(from: board, to: exec.tile), "\(tier): tahtadan koltuğa yol")
+            // Yönetici alanı: tahta duvarda ortada, bölge (halı şeridi) tahta önünden yönetici masasına, alt ajan masalarından ayrı.
+            let zone = try XCTUnwrap(kit.spots.zone, "\(tier): yönetici bölgesi")
+            XCTAssertEqual([zone.minRow, zone.maxRow], [2, 4])
+            XCTAssertTrue(zone.contains(board) && zone.contains(exec.tile))
+            let boardF = kit.layout.furniture[try XCTUnwrap(kit.spots.boardIndex)]
+            XCTAssertLessThanOrEqual(abs((boardF.col * 2 + 2) - (zone.minCol + zone.maxCol + 1)), 1, "\(tier): tahta odanın ortasında")
+            XCTAssertTrue(kit.spots.seats.filter { $0.kind != .executive }.allSatisfy { !zone.contains($0.tile) }, "\(tier): yalnızca yönetici koltuğu bölgede")
+            XCTAssertTrue(kit.spots.zoneTiles.allSatisfy { kit.grid.isWalkable($0) })
             XCTAssertEqual(kit.spots.coffee != nil, coffee, "kahve makinesi yalnızca büyükte")
             XCTAssertEqual(tier.hasCoffee, coffee)
             for seat in kit.spots.seats { XCTAssertNotNil(kit.grid.path(from: kit.spots.entrance, to: seat.tile), "\(tier) koltuğa yol yok: \(seat)") }
@@ -432,15 +440,21 @@ final class OfficeRoomTests: XCTestCase {
         XCTAssertTrue(s.isAnimating)
 
         s.apply(members: OfficeMember.members(from: leadSession(.waitingPermission)), animated: false)
-        XCTAssertTrue(exec.atBoard)
+        XCTAssertFalse(exec.atBoard, "izin beklerken tahtadan ayrılıp yönetici bölgesinde volta atar")
+        XCTAssertTrue(exec.strolling)
+        XCTAssertTrue(try XCTUnwrap(room.kit.spots.zone).contains(exec.tile), "volta yönetici bölgesinde")
         XCTAssertEqual(exec.behavior.bubble, .alert, "izin beklerken \"!\" balonu")
         XCTAssertFalse(room.isBoardWriting, "okuma pozunda yazma animasyonu yok")
+        XCTAssertTrue(s.isAnimating)
 
         s.apply(members: OfficeMember.members(from: leadSession(.tool("Bash"))), animated: false)
+        XCTAssertTrue(exec.atBoard)
+        XCTAssertFalse(exec.strolling)
         XCTAssertTrue(room.isBoardWriting)
 
         s.apply(members: OfficeMember.members(from: leadSession(.done)), animated: false)
         XCTAssertFalse(exec.atBoard)
+        XCTAssertFalse(exec.strolling, "animasyonsuz uygulamada volta yok: doğrudan masada")
         XCTAssertEqual(exec.tile, exec.seat.tile, "iş bitince masasına döner")
         XCTAssertFalse(room.isBoardWriting)
         XCTAssertFalse(s.isAnimating, "boşta animasyon yok")
@@ -460,6 +474,7 @@ final class OfficeRoomTests: XCTestCase {
         // Yürürken iş biterse tahtaya varınca masaya geri döner (karar yürüyüşün sonunda).
         s.apply(members: OfficeMember.members(from: leadSession(.done)), animated: true)
         XCTAssertFalse(exec.behavior.standing)
+        XCTAssertEqual(exec.strollUntil.map { $0 > Date() }, true, "boşa geçince 60 sn volta penceresi")
         s.apply(members: [], animated: true)
         XCTAssertNil(s.room("L"), "kapanan oturumun odası kalkar")
     }

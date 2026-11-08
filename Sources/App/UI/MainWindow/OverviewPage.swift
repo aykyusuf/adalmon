@@ -24,6 +24,7 @@ struct OverviewPage: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 16, alignment: .top)], spacing: 16) {
                     OverviewTodayCard(summary: TodaySummary.make(data: data, stats: dayStats))
                     OverviewBudgetCard(budget: model.budget(now: now), router: router)
+                    OverviewUptimeCard()
                 }
                 OverviewTopAppsCard(rows: TopAppRow.top(data.today), showsFilterCallout: data.showsFilterCallout, router: router)
                 OverviewResourceCard(store: model.store, router: router)

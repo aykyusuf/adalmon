@@ -68,7 +68,7 @@ struct AgentsSettingsPane: View {
             Section("Gizlilik") {
                 Text("İletilir: olay adı, oturum ve ajan kimliği, ajan türü, araç adı, model adı, bildirim türü, proje klasörünün adı (yolun son parçası), oturum adı (session_title; /rename ile verdiğiniz ya da otomatik başlık), izin modu ve zaman. \"Hedefi de göster\" açıkken ek olarak yalnızca dosya adı (yolun son parçası) ya da komutun ilk kelimesi iletilir; içerik ve argüman asla.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("İletilmez: istem/komut argümanları/dosya içeriği (istemleriniz, araç girdi ve çıktıları, Claude'un yanıtları, dosya içerikleri), transkript. Dinleyici yalnızca bu Mac'ten, rastgele bir token ile erişilebilir; özellik kapalıyken hiç çalışmaz.")
+                Text("İletilmez: istem/komut argümanları/dosya içeriği (istemleriniz, araç girdi ve çıktıları, Claude'un yanıtları, dosya içerikleri), transkript. Dinleyici yalnızca bu Mac'ten, rastgele bir token ile erişilebilir; özellik kapalıyken hiç çalışmaz. Eski oturumların modeli, konuşma dosyasının yalnızca model alanı okunarak bulunur; içerik okunmaz/saklanmaz.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

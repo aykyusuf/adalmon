@@ -38,6 +38,21 @@ final class OfficePreviewTests: XCTestCase {
         try render(OfficeMember.members(from: OfficeDemo.crowd()), size: size, name: "office-10x10", dir: dir)
         try render(OfficeMember.members(from: OfficeDemo.crowd()), size: size, name: "office-10x10-focus", dir: dir, select: 2)
         try render(OfficeMember.members(from: OfficeDemo.crowd()), size: CGSize(width: 1500, height: 900), name: "office-10x10-large-window", dir: dir)
+        // Yönetici alanı: 1 oturum + 4 alt ajan (ekran görüntüsündeki durum), yönetici yalnız (volta), üç oturum.
+        let nowP = Date()
+        func lead(_ id: String, _ status: AgentStatus, subs: Int, model: String = "claude-sonnet-5-5") -> AgentSession {
+            AgentSession(id: id, project: "asyildiz_doviz_site", model: model, status: status, startedAt: nowP.addingTimeInterval(-Double(id.hashValue % 50)), lastEventAt: nowP,
+                         subagents: (0..<subs).map { AgentSubagent(agentID: "c\($0)", agentType: "crew-chief", model: $0 % 2 == 0 ? "claude-sonnet-5-5" : "claude-haiku-4-5",
+                                                                  status: .tool("Bash"), activity: "Bash", activityAt: nowP) },
+                         activity: "Bash", activityAt: nowP)
+        }
+        try render(OfficeMember.members(from: [lead("one", .tool("Bash"), subs: 4)]), size: size, name: "exec-1session-4subs", dir: dir)
+        try render(OfficeMember.members(from: [lead("one", .tool("Bash"), subs: 3)]), size: size, name: "exec-small-4members", dir: dir)
+        try render(OfficeMember.members(from: [lead("one", .tool("Bash"), subs: 4)]), size: CGSize(width: 1400, height: 900), name: "exec-1session-4subs-large", dir: dir)
+        try render(OfficeMember.members(from: [lead("one", .waitingPermission, subs: 0)]), size: size, name: "exec-alone-stroll", dir: dir)
+        try render(OfficeMember.members(from: [lead("one", .waitingPermission, subs: 7)]), size: size, name: "exec-medium-stroll", dir: dir)
+        try render(OfficeMember.members(from: [lead("one", .tool("Edit"), subs: 11)]), size: size, name: "exec-large-board", dir: dir)
+        try render(OfficeMember.members(from: [lead("a", .tool("Bash"), subs: 2), lead("b", .waitingPermission, subs: 4), lead("c", .idle, subs: 0)]), size: size, name: "exec-3sessions", dir: dir)
         // Taşma: 1 oturum, 14 alt ajan → "+3".
         let now = Date()
         let models = ["claude-opus-4-8", "claude-sonnet-5-5", "claude-haiku-4-5", "claude-fable-1"]

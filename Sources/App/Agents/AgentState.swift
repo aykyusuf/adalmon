@@ -234,6 +234,20 @@ struct AgentState: Equatable, Sendable {
         return dropped
     }
 
+    /// Modeli bilinmeyen (boş ya da rozeti çözülemeyen), kapanmamış oturumların kimlikleri.
+    var sessionsWithUnknownModel: [String] {
+        sessions.values.filter { $0.status != .ended && $0.badge == .unknown }.map(\.id)
+    }
+
+    /// Konuşma dosyasından bulunan modeli yazar; yalnızca oturum hâlâ modelsizse (hook araya model getirmediyse).
+    @discardableResult
+    mutating func adoptTranscriptModel(_ model: String, for sessionID: String) -> Bool {
+        guard var s = sessions[sessionID], s.badge == .unknown else { return false }
+        s.model = model
+        sessions[sessionID] = s
+        return true
+    }
+
     /// Tüm ajanların hedefini siler (etkinlik/araç bilgisi kalır).
     mutating func clearTargets() {
         for id in sessions.keys {

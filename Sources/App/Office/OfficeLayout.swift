@@ -68,14 +68,17 @@ struct OfficeLayout: Codable, Equatable, Sendable {
     var tiles: [Int]
     var tileColors: [OfficeTileColor?]
     var furniture: [OfficeFurniturePlacement]
+    /// Yönetici bölgesi (oda şablonları verir; JSON'da yok).
+    var executiveZone: OfficeRect?
 
     enum LayoutError: Error, Equatable { case badTileCount(expected: Int, got: Int) }
 
     private enum CodingKeys: String, CodingKey { case version, cols, rows, tiles, tileColors, furniture }
 
-    init(version: Int = 1, cols: Int, rows: Int, tiles: [Int], tileColors: [OfficeTileColor?] = [], furniture: [OfficeFurniturePlacement] = []) {
+    init(version: Int = 1, cols: Int, rows: Int, tiles: [Int], tileColors: [OfficeTileColor?] = [], furniture: [OfficeFurniturePlacement] = [],
+         executiveZone: OfficeRect? = nil) {
         self.version = version; self.cols = cols; self.rows = rows
-        self.tiles = tiles; self.tileColors = tileColors; self.furniture = furniture
+        self.tiles = tiles; self.tileColors = tileColors; self.furniture = furniture; self.executiveZone = executiveZone
     }
 
     init(from decoder: Decoder) throws {
@@ -86,6 +89,7 @@ struct OfficeLayout: Codable, Equatable, Sendable {
         tiles = try c.decode([Int].self, forKey: .tiles)
         tileColors = try c.decodeIfPresent([OfficeTileColor?].self, forKey: .tileColors) ?? []
         furniture = try c.decodeIfPresent([OfficeFurniturePlacement].self, forKey: .furniture) ?? []
+        executiveZone = nil
     }
 
     static func parse(_ data: Data) throws -> OfficeLayout {

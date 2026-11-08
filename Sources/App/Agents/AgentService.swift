@@ -9,7 +9,7 @@ final class AgentService {
         case off, starting, running(UInt16), failed(String)
     }
 
-    let monitor = AgentMonitorModel()
+    let monitor = AgentMonitorModel(modelResolver: TranscriptModelResolver())
     private(set) var listener: ListenerState = .off
     private(set) var pluginStatus: AgentPluginInstaller.PluginStatus = .unknown
     /// Kurulu plugin'in sürümü (`claude plugin list --json`); bilinmiyorsa nil.

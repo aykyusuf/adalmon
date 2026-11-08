@@ -38,6 +38,14 @@ struct CPUPanelView: View {
                     }
                 }
             }
+            if let uptime = model.uptimeText {
+                PanelCard {
+                    VStack(alignment: .leading, spacing: 3) {
+                        PanelValueRow(title: "Açık kalma süresi", value: uptime, bold: true)
+                        if let boot = model.bootText { Text(boot).font(.caption2).foregroundStyle(.secondary) }
+                    }
+                }
+            }
             PanelCard {
                 VStack(alignment: .leading, spacing: 6) {
                     PanelGroupTitle(title: "En çok CPU kullananlar")
