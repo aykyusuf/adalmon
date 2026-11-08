@@ -6,10 +6,11 @@ final class AgentStateTests: XCTestCase {
 
     private func ev(_ name: AgentEvent.Name, session: String = "s1", at: TimeInterval = 0, agentID: String? = nil, agentType: String? = nil,
                     tool: String? = nil, model: String? = nil, notification: String? = nil, to: String? = nil,
-                    resolvedModel: String? = nil, resolvedAgent: String? = nil, title: String? = nil, pid: Int32? = nil) -> (AgentEvent, Date) {
+                    resolvedModel: String? = nil, resolvedAgent: String? = nil, title: String? = nil, pid: Int32? = nil,
+                    target: String? = nil) -> (AgentEvent, Date) {
         (AgentEvent(event: name.rawValue, sessionID: session, agentID: agentID, agentType: agentType, toolName: tool, model: model,
                     toModel: to, notificationType: notification, project: "Adalmon", resolvedModel: resolvedModel,
-                    resolvedAgentID: resolvedAgent, sessionTitle: title, pid: pid), t0.addingTimeInterval(at))
+                    resolvedAgentID: resolvedAgent, sessionTitle: title, pid: pid, target: target), t0.addingTimeInterval(at))
     }
 
     private func run(_ events: [(AgentEvent, Date)]) -> AgentState {
@@ -37,6 +38,78 @@ final class AgentStateTests: XCTestCase {
         XCTAssertEqual(step(ev(.preToolUse, at: 13, tool: "Bash")), .ended, "kapanan oturum geç gelen olayla canlanmaz")
         XCTAssertEqual(state.sessions["s1"]?.project, "Adalmon")
         XCTAssertEqual(state.sessions["s1"]?.badge, .opus)
+    }
+
+    // MARK: Araç etkinliği (konuşma balonu girdisi)
+
+    func testToolEventsSetActivityAndTargetOnTheMainAgent() {
+        var state = AgentState()
+        state.apply(ev(.sessionStart).0, now: t0)
+        state.apply(ev(.userPromptSubmit, at: 1).0, now: t0.addingTimeInterval(1))
+        XCTAssertNil(state.sessions["s1"]?.activity)
+        XCTAssertEqual(state.sessions["s1"]?.activityAt, t0.addingTimeInterval(1))
+        state.apply(ev(.preToolUse, at: 2, tool: "Edit", target: "main.swift").0, now: t0.addingTimeInterval(2))
+        var s = state.sessions["s1"]
+        XCTAssertEqual(s?.status, .tool("Edit"))
+        XCTAssertEqual(s?.activity, "Edit")
+        XCTAssertEqual(s?.target, "main.swift")
+        XCTAssertEqual(s?.activityAt, t0.addingTimeInterval(2))
+        state.apply(ev(.preToolUse, at: 3, tool: "Grep").0, now: t0.addingTimeInterval(3))
+        s = state.sessions["s1"]
+        XCTAssertEqual(s?.activity, "Grep")
+        XCTAssertNil(s?.target, "hedefsiz araç önceki hedefi taşımaz")
+        state.apply(ev(.preToolUse, at: 4, tool: "Bash", target: "swift").0, now: t0.addingTimeInterval(4))
+        XCTAssertEqual(state.sessions["s1"]?.target, "swift")
+        state.apply(ev(.postToolUse, at: 5, tool: "Bash").0, now: t0.addingTimeInterval(5))
+        s = state.sessions["s1"]
+        XCTAssertEqual(s?.status, .thinking)
+        XCTAssertNil(s?.activity); XCTAssertNil(s?.target)
+        state.apply(ev(.preToolUse, at: 6, tool: "Read", target: "a.txt").0, now: t0.addingTimeInterval(6))
+        state.apply(ev(.stop, at: 7).0, now: t0.addingTimeInterval(7))
+        XCTAssertEqual(state.sessions["s1"]?.status, .done)
+        XCTAssertNil(state.sessions["s1"]?.activity); XCTAssertNil(state.sessions["s1"]?.target)
+    }
+
+    func testSubagentToolEventsGoToTheMatchingSubagentOnly() {
+        var state = run([ev(.sessionStart), ev(.userPromptSubmit, at: 1), ev(.subagentStart, at: 2, agentID: "a1", agentType: "Explore"),
+                         ev(.subagentStart, at: 2, agentID: "a2", agentType: "Plan")])
+        state.apply(ev(.preToolUse, at: 3, agentID: "a1", tool: "Edit", target: "x.swift").0, now: t0.addingTimeInterval(3))
+        let s = state.sessions["s1"]
+        XCTAssertEqual(s?.subagents.first { $0.agentID == "a1" }?.activity, "Edit")
+        XCTAssertEqual(s?.subagents.first { $0.agentID == "a1" }?.target, "x.swift")
+        XCTAssertEqual(s?.subagents.first { $0.agentID == "a1" }?.activityAt, t0.addingTimeInterval(3))
+        XCTAssertNil(s?.subagents.first { $0.agentID == "a2" }?.activity)
+        XCTAssertEqual(s?.subagents.first { $0.agentID == "a2" }?.activityAt, t0.addingTimeInterval(2), "başka alt ajanın zamanı değişmez")
+        XCTAssertNil(s?.activity, "ana ajana yazılmaz")
+        XCTAssertEqual(s?.status, .thinking)
+        // Alt ajanın araç sonucu yalnızca onu temizler; alt ajan bitince etkinlik silinir.
+        state.apply(ev(.postToolUse, at: 4, agentID: "a1", tool: "Edit").0, now: t0.addingTimeInterval(4))
+        XCTAssertNil(state.sessions["s1"]?.subagents.first { $0.agentID == "a1" }?.activity)
+        state.apply(ev(.preToolUse, at: 5, agentID: "a1", tool: "Bash", target: "ls").0, now: t0.addingTimeInterval(5))
+        state.apply(ev(.subagentStop, at: 6, agentID: "a1", agentType: "Explore").0, now: t0.addingTimeInterval(6))
+        let a1 = state.sessions["s1"]?.subagents.first { $0.agentID == "a1" }
+        XCTAssertEqual(a1?.status, .done)
+        XCTAssertNil(a1?.activity); XCTAssertNil(a1?.target)
+        // Bilinmeyen agent_id (listelenmeyen iç ajan) mevcut davranışla ana ajana yazılır.
+        state.apply(ev(.preToolUse, at: 7, agentID: "ghost", tool: "Read").0, now: t0.addingTimeInterval(7))
+        XCTAssertEqual(state.sessions["s1"]?.activity, "Read")
+    }
+
+    func testEventTargetIsSanitizedAndOptional() throws {
+        let json = #"{"event":"PreToolUse","session_id":"s","tool_name":"Edit","target":"  ma\u0001in.swift  ","tool_input":{"command":"SECRET"}}"#
+        let e = try XCTUnwrap(AgentEvent(json: Data(json.utf8)))
+        XCTAssertEqual(e.target, "main.swift", "kontrol karakteri atılır, uçlar kırpılır")
+        let long = try XCTUnwrap(AgentEvent(json: Data(#"{"event":"PreToolUse","session_id":"s","target":"\#(String(repeating: "a", count: 90))"}"#.utf8)))
+        XCTAssertEqual(long.target?.count, 40)
+        XCTAssertNil(try XCTUnwrap(AgentEvent(json: Data(#"{"event":"PreToolUse","session_id":"s","target":"\u0001  "}"#.utf8))).target)
+        XCTAssertNil(try XCTUnwrap(AgentEvent(json: Data(#"{"event":"PreToolUse","session_id":"s"}"#.utf8))).target)
+        XCTAssertTrue(AgentEvent.allowedKeys.contains("target"))
+        var state = AgentState()
+        state.clearTargets()
+        state.apply(ev(.preToolUse, tool: "Edit", target: "a.swift").0, now: t0)
+        state.clearTargets()
+        XCTAssertNil(state.sessions["s1"]?.target)
+        XCTAssertEqual(state.sessions["s1"]?.activity, "Edit", "yalnızca hedef silinir")
     }
 
     func testSessionTitleUpdatesDisplayName() {

@@ -44,14 +44,29 @@ final class AgentService {
         apply()
     }
 
+    /// "Hedefi de göster" anahtarı: tercih + betiğin okuduğu config.json (betik değişmez, yeniden kurulum gerekmez).
+    func setShowTargets(_ on: Bool) {
+        prefs.agentsShowTargets = on
+        try? installer.generator.setShowTargets(on)
+        if !on { monitor.clearTargets() }
+    }
+
     private func startListening() {
         guard server == nil else { return }
         token = installer.generator.readConfig()?.token ?? AgentPluginGenerator.makeToken()
         listener = .starting
         let monitor = monitor
+        let prefs = prefs
         let server = AgentEventServer(
             token: token,
-            onEvent: { event in Task { @MainActor in monitor.ingest(event) } },
+            onEvent: { event in
+                Task { @MainActor in
+                    // Savunma: hedef anahtarı kapalıysa (eski/elle değiştirilmiş betik gönderse bile) hedef atılır.
+                    var event = event
+                    if !prefs.agentsShowTargets { event.target = nil }
+                    monitor.ingest(event)
+                }
+            },
             onState: { [weak self] state in Task { @MainActor in self?.handle(state) } })
         self.server = server
         let saved = prefs.agentsPort
@@ -74,7 +89,7 @@ final class AgentService {
             listener = .running(port)
             if prefs.agentsPort != Int(port) { prefs.agentsPort = Int(port) }
             // Betik port/token'ı bu dosyadan okur; port değişse de yeniden kurulum gerekmez.
-            try? installer.generator.writeConfig(port: port, token: token)
+            try? installer.generator.writeConfig(port: port, token: token, showTargets: prefs.agentsShowTargets)
         }
     }
 

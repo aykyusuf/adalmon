@@ -13,7 +13,7 @@ struct AgentEvent: Equatable, Sendable {
     /// Betiğin ilettiği tüm anahtarlar; başka anahtar asla okunmaz.
     static let allowedKeys: Set<String> = [
         "event", "session_id", "agent_id", "agent_type", "tool_name", "source", "model", "from_model", "to_model",
-        "notification_type", "reason", "project", "permission_mode", "ts", "resolved_model", "resolved_agent_id", "session_title", "pid",
+        "notification_type", "reason", "project", "permission_mode", "ts", "resolved_model", "resolved_agent_id", "session_title", "pid", "target",
     ]
     static let maxValueLength = 200
 
@@ -39,6 +39,9 @@ struct AgentEvent: Equatable, Sendable {
     var sessionTitle: String?
     /// Hook komutunun üst süreci (Claude Code); canlılık yoklaması içindir. Yalnızca doğrulanmış tamsayı (>1), yoksa nil.
     var pid: Int32?
+    /// PreToolUse için isteğe bağlı kısa hedef (yalnızca "Hedefi de göster" açıkken betik ekler): dosya adı ya da komutun ilk kelimesi.
+    /// Kontrol karakterleri atılmış, en çok `maxTargetLength` karakter; içerik/argüman/yol asla.
+    var target: String?
 
     var name: Name? { Name(rawValue: event) }
 
@@ -46,7 +49,7 @@ struct AgentEvent: Equatable, Sendable {
          source: String? = nil, model: String? = nil, fromModel: String? = nil, toModel: String? = nil,
          notificationType: String? = nil, reason: String? = nil, project: String? = nil, permissionMode: String? = nil,
          timestamp: Date? = nil, resolvedModel: String? = nil, resolvedAgentID: String? = nil, sessionTitle: String? = nil,
-         pid: Int32? = nil) {
+         pid: Int32? = nil, target: String? = nil) {
         self.event = event
         self.sessionID = sessionID
         self.agentID = agentID
@@ -65,6 +68,16 @@ struct AgentEvent: Equatable, Sendable {
         self.resolvedAgentID = resolvedAgentID
         self.sessionTitle = sessionTitle.flatMap(Self.cleanTitle)
         self.pid = pid.flatMap { $0 > 1 ? $0 : nil }
+        self.target = target.flatMap(Self.cleanTarget)
+    }
+
+    static let maxTargetLength = 40
+
+    /// Hedef: kontrol karakterleri atılır (boşluğa çevrilmez), uçlar kırpılır, kısaltılır; boş kalırsa nil.
+    static func cleanTarget(_ value: String) -> String? {
+        let kept = String(String.UnicodeScalarView(value.unicodeScalars.filter { $0.properties.generalCategory != .control }))
+        let trimmed = kept.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : String(trimmed.prefix(maxTargetLength))
     }
 
     /// JSON'dan süreç kimliği: yalnızca tamsayı sayı (dize/ondalık/bool değil), Int32 aralığında ve >1.
@@ -97,6 +110,7 @@ struct AgentEvent: Equatable, Sendable {
                   reason: string("reason"), project: string("project"), permissionMode: string("permission_mode"),
                   timestamp: (object["ts"] as? Double).map { Date(timeIntervalSince1970: $0) },
                   resolvedModel: string("resolved_model"), resolvedAgentID: string("resolved_agent_id"),
-                  sessionTitle: object["session_title"] as? String, pid: allowed("pid").flatMap(Self.parsePID))
+                  sessionTitle: object["session_title"] as? String, pid: allowed("pid").flatMap(Self.parsePID),
+                  target: object["target"] as? String)
     }
 }

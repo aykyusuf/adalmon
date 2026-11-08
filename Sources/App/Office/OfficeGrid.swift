@@ -86,7 +86,8 @@ struct OfficeGrid: Equatable, Sendable {
 }
 
 struct OfficeSeat: Equatable, Identifiable, Sendable {
-    enum Kind: Equatable, Sendable { case desk, lounge }
+    /// `executive`: ana ajanın (oturumun) yönetici köşesindeki koltuğu; odada tek, üye sayısına dahil.
+    enum Kind: Equatable, Sendable { case executive, desk, lounge }
     var id: Int
     var tile: OfficeTile
     var facing: OfficeCharacterSheet.Direction
@@ -104,7 +105,11 @@ struct OfficeSpots: Equatable, Sendable {
     var door: OfficeTile
     var coffee: OfficeTile?
     var coffeeFacing: OfficeCharacterSheet.Direction
+    /// Yönetici beyaz tahtasının önünde durulan karo (yukarı bakar) ve tahtanın yerleşim dizini (`layout.furniture`).
+    var board: OfficeTile?
+    var boardIndex: Int?
 
+    var executiveSeat: OfficeSeat? { seats.first { $0.kind == .executive } }
     var deskSeats: [OfficeSeat] { seats.filter { $0.kind == .desk } }
     var loungeSeats: [OfficeSeat] { seats.filter { $0.kind == .lounge } }
 
@@ -133,7 +138,7 @@ struct OfficeSpots: Equatable, Sendable {
             if let a = assets[f.assetID], a.category == "chairs" { chairs.append((f, a, i)) }
         }
         for (f, a, _) in chairs {
-            let isSofa = a.id.hasPrefix("SOFA")
+            let kind = seatKind(for: a)
             for dr in min(a.backgroundTiles, a.footprintH)..<a.footprintH { for dc in 0..<a.footprintW {
                 let tile = OfficeTile(f.col + dc, f.row + dr)
                 let facing = facing(of: f, asset: a, tile: tile, layout: layout, assets: assets)
@@ -141,11 +146,12 @@ struct OfficeSpots: Equatable, Sendable {
                 let neighbours = [(0, -1), (1, 0), (0, 1), (-1, 0)].map { OfficeTile(tile.col + $0.0, tile.row + $0.1) }
                 // Ulaşılamayan (örn. çevresi tamamen engelli) koltuk listelenmez.
                 guard neighbours.contains(where: { reachable.contains($0) }) else { continue }
-                seats.append(OfficeSeat(id: 0, tile: tile, facing: facing, kind: isSofa ? .lounge : .desk, pcIndex: pc))
+                seats.append(OfficeSeat(id: 0, tile: tile, facing: facing, kind: kind, pcIndex: pc))
             } }
         }
-        // Masa koltukları önce satır, sonra sütun sırasıyla; salon koltukları da öyle. Kimlikler sıradan.
-        seats.sort { ($0.kind == .desk ? 0 : 1, $0.tile.row, $0.tile.col) < ($1.kind == .desk ? 0 : 1, $1.tile.row, $1.tile.col) }
+        // Yönetici koltuğu (id 0), sonra masa koltukları (önce satır, sonra sütun), sonra salon koltukları. Kimlikler sıradan.
+        func rank(_ k: OfficeSeat.Kind) -> Int { switch k { case .executive: 0; case .desk: 1; case .lounge: 2 } }
+        seats.sort { (rank($0.kind), $0.tile.row, $0.tile.col) < (rank($1.kind), $1.tile.row, $1.tile.col) }
         for i in seats.indices { seats[i].id = i }
 
         // Kahve makinesi: yüzeydeki COFFEE, yanında ulaşılabilir boş bir karo olan ilki.
@@ -158,7 +164,24 @@ struct OfficeSpots: Equatable, Sendable {
                 if reachable.contains(t), !seats.contains(where: { $0.tile == t }) { coffee = t; coffeeFacing = look; break search }
             }
         }
-        return OfficeSpots(seats: seats, entrance: entrance, door: door, coffee: coffee, coffeeFacing: coffeeFacing)
+
+        // Beyaz tahta: duvardaki WHITEBOARD'un hemen altındaki ulaşılabilir karo (yönetici orada ayakta yazar).
+        var board: OfficeTile?
+        var boardIndex: Int?
+        for (i, f) in layout.furniture.enumerated() where f.assetID == "WHITEBOARD" {
+            guard let a = assets[f.assetID] else { continue }
+            let t = OfficeTile(f.col, f.row + a.footprintH)
+            if reachable.contains(t) { board = t; boardIndex = i; break }
+        }
+        return OfficeSpots(seats: seats, entrance: entrance, door: door, coffee: coffee, coffeeFacing: coffeeFacing, board: board, boardIndex: boardIndex)
+    }
+
+    /// Koltuk türü varlıktan: arkadan görünen yastıklı sandalye (CUSHIONED_CHAIR_BACK) yönetici koltuğu, kanepe ve yastıklı ön/yan
+    /// koltuklar salon, diğerleri (bank, ahşap sandalye) masa koltuğudur. Şablonlar bu eşlemeye göre kurulur.
+    static func seatKind(for a: OfficeAsset) -> OfficeSeat.Kind {
+        if a.id == "CUSHIONED_CHAIR_BACK" { return .executive }
+        if a.id.hasPrefix("SOFA") || a.id.hasPrefix("CUSHIONED_CHAIR") { return .lounge }
+        return .desk
     }
 
     /// Koltuğun baktığı yön: ön/arka/yan varlık yönü; yönü olmayanlar (bank) en yakın masa/PC'ye bakar.

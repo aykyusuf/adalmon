@@ -58,6 +58,13 @@ final class AgentMonitorModel {
         updateLivenessPolling()
     }
 
+    /// "Hedefi de göster" kapanınca mevcut hedefleri atar (yeni olay beklemeden balonlar güncellenir).
+    func clearTargets() {
+        var next = state
+        next.clearTargets()
+        if next != state { state = next }
+    }
+
     /// Dinleyici kapanınca listeyi boşalt.
     func reset() {
         pruneTask?.cancel()

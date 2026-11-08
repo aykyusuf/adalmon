@@ -11,7 +11,7 @@ struct AgentPluginGenerator: Sendable {
     static let pluginID = "adalmon-agents@adalmon-local"
     /// Betikler her değiştiğinde artırılır: Claude plugin'i kendi önbelleğine kopyalar ve yalnızca `version` değişince yeniler.
     /// `AgentPluginTests.testScriptDigestPinsVersion` betik özetini bu sürüme kilitler (sürümsüz betik değişikliği testi kırar).
-    static let version = "1.2.0"
+    static let version = "1.3.0"
     /// Her iki betiğin birleşik SHA-256 özeti (ilk 16 hex); yalnızca sürüm kilidi testi içindir.
     static var scriptsDigest: String {
         let data = Data((AgentPluginScripts.python + "\n--\n" + AgentPluginScripts.shell).utf8)
@@ -94,9 +94,34 @@ struct AgentPluginGenerator: Sendable {
         try writeConfig(port: port, token: token)
     }
 
-    /// Yalnızca port/token yenilenir (betikler ve manifest dokunulmaz).
-    func writeConfig(port: UInt16, token: String) throws {
-        let data = try JSONSerialization.data(withJSONObject: ["port": Int(port), "token": token], options: [.sortedKeys])
+    /// Yalnızca port/token yenilenir (betikler ve manifest dokunulmaz). `showTargets` verilirse o da yazılır; verilmezse var olan
+    /// değer ve dosyadaki diğer anahtarlar korunur.
+    func writeConfig(port: UInt16, token: String, showTargets: Bool? = nil) throws {
+        var object = existingConfigObject()
+        object["port"] = Int(port)
+        object["token"] = token
+        if let showTargets { object["showTargets"] = showTargets }
+        try writeConfigObject(object)
+    }
+
+    /// Betikteki "Hedefi de göster" anahtarı (config.json `showTargets`); dosya yoksa/okunamazsa false.
+    func readShowTargets() -> Bool { existingConfigObject()["showTargets"] as? Bool ?? false }
+
+    /// Yalnızca `showTargets` yazılır (port/token ve mod korunur; dosya yoksa 0600 ile oluşturulur). Betik değişmez.
+    func setShowTargets(_ on: Bool) throws {
+        var object = existingConfigObject()
+        object["showTargets"] = on
+        try writeConfigObject(object)
+    }
+
+    private func existingConfigObject() -> [String: Any] {
+        guard let data = try? Data(contentsOf: configURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        return object
+    }
+
+    private func writeConfigObject(_ object: [String: Any]) throws {
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
         try ensureDirectory(root)
         let manager = FileManager.default
         // Önce 0600 ile boş dosya, sonra içerik: token hiçbir anda herkesçe okunabilir olmaz.

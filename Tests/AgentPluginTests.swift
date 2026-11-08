@@ -83,6 +83,8 @@ final class AgentPluginTests: XCTestCase {
     /// `viaShell`: betik `sh -c '...; exit 0'` ara kabuğu (fork'lanan) altında çalışır; Claude'un hook'u kabukla çalıştırmasını taklit eder.
     private func runScript(_ interpreter: String, _ script: URL, stdin: String, viaShell: Bool = false) throws -> [String: Any] {
         let process = Process()
+        // Betik yapılandırmayı (showTargets) bu yoldan okur; gerçek kullanıcı yapılandırması ASLA okunmaz.
+        process.environment = ProcessInfo.processInfo.environment.merging(["ADALMON_AGENTS_CONFIG": tmp.appending(path: "ClaudePlugin/config.json").path]) { $1 }
         let arguments = (interpreter.hasSuffix("python3") ? ["-I"] : []) + [script.path, "--dry-run"]
         if viaShell {
             process.executableURL = URL(filePath: "/bin/sh")
@@ -207,12 +209,106 @@ final class AgentPluginTests: XCTestCase {
         assertFiltered(payload)
     }
 
+    // MARK: Hedef (dosya adı / komut adı) süzmesi
+
+    private func preToolUse(_ tool: String, input: String, event: String = "PreToolUse") -> String {
+        #"{"hook_event_name":"\#(event)","session_id":"sess-1","cwd":"/x/p","tool_name":"\#(tool)","tool_input":\#(input),"prompt":"SECRET-PROMPT"}"#
+    }
+
+    /// Dizeyi JSON dize değişmezine çevirir (tırnaklı).
+    private func jsonString(_ value: String) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: [value])) ?? Data()
+        return String(String(decoding: data, as: UTF8.self).dropFirst().dropLast())
+    }
+
+    /// Gerçek betik çalıştırması: showTargets açıkken yalnızca dosya adı / komut adı; içerik, argüman, yol asla.
+    private func assertTargetFiltering(_ interpreter: String, usesPython: Bool, file: StaticString = #filePath, line: UInt = #line) throws {
+        let g = generator(python: usesPython)
+        try g.write(port: 1, token: "x")
+        let script = usesPython ? g.pythonScriptURL : g.shellScriptURL
+        func target(_ tool: String, _ input: String, event: String = "PreToolUse") throws -> String? {
+            let payload = try runScript(interpreter, script, stdin: preToolUse(tool, input: input, event: event))
+            XCTAssertTrue(Set(payload.keys).isSubset(of: AgentEvent.allowedKeys), "izinsiz anahtar: \(payload.keys)", file: file, line: line)
+            return payload["target"] as? String
+        }
+        func bash(_ command: String) throws -> String? { try target("Bash", #"{"command":\#(jsonString(command)),"description":"SECRET-DESC"}"#) }
+
+        // Anahtar kapalı (varsayılan): hiçbir hedef.
+        XCTAssertFalse(g.readShowTargets())
+        XCTAssertNil(try target("Edit", #"{"file_path":"/a/b/main.swift","new_string":"SECRET-BODY"}"#), "showTargets=false: hedef yok", file: file, line: line)
+        XCTAssertNil(try bash("swift build"), "showTargets=false: hedef yok", file: file, line: line)
+
+        try g.setShowTargets(true)
+        XCTAssertTrue(g.readShowTargets())
+        for tool in ["Edit", "Write", "MultiEdit", "Read"] {
+            XCTAssertEqual(try target(tool, #"{"file_path":"/a/b/main.swift","content":"SECRET-BODY","old_string":"SECRET-OLD"}"#), "main.swift", tool, file: file, line: line)
+        }
+        XCTAssertEqual(try target("NotebookEdit", #"{"notebook_path":"/n/deep/analiz.ipynb","new_source":"SECRET-SRC"}"#), "analiz.ipynb", file: file, line: line)
+        XCTAssertEqual(try target("Edit", #"{"file_path":"/a/ma\u0001in.swift"}"#), "main.swift", "kontrol karakteri atılır", file: file, line: line)
+        XCTAssertEqual(try target("Edit", #"{"file_path":"/a/\#(String(repeating: "u", count: 80)).swift"}"#)?.count, 40, "en çok 40 karakter", file: file, line: line)
+        XCTAssertNil(try target("Edit", #"{"file_path":"/"}"#), file: file, line: line)
+        XCTAssertNil(try target("Edit", #"{"new_string":"SECRET"}"#), "dosya yolu yoksa hedef yok", file: file, line: line)
+
+        XCTAssertEqual(try bash("FOO=bar swift build --x"), "swift", file: file, line: line)
+        XCTAssertEqual(try bash("sudo " + "r" + "m -f x"), "rm", file: file, line: line)
+        XCTAssertEqual(try bash("env A=1 B=2 nohup node server.js --port SECRET"), "node", file: file, line: line)
+        XCTAssertEqual(try bash("git commit -m SECRET-MSG"), "git", "yalnızca ilk kelime", file: file, line: line)
+        XCTAssertNil(try bash("sudo -u root ls x"), "bayraklı önekten sonra emin olunamaz", file: file, line: line)
+        XCTAssertNil(try bash("/usr/bin/swift build"), "yol gönderilmez", file: file, line: line)
+        XCTAssertNil(try bash("./run.sh SECRET"), "yol gönderilmez", file: file, line: line)
+        XCTAssertNil(try bash(#"FOO="a b SECRET" swift build"#), "tırnaklı atama: emin olunamaz", file: file, line: line)
+        XCTAssertNil(try bash("ls; echo SECRET"), "özel karakter", file: file, line: line)
+        XCTAssertNil(try bash("$(whoami) x"), file: file, line: line)
+        XCTAssertNil(try bash(String(repeating: "a", count: 30) + " x"), "24 karakterden uzun komut adı", file: file, line: line)
+        XCTAssertNil(try bash("   "), file: file, line: line)
+
+        for (tool, input) in [("Grep", #"{"pattern":"SECRET-PAT","path":"/a/b.swift"}"#), ("Glob", #"{"pattern":"**/SECRET.swift"}"#),
+                              ("WebSearch", #"{"query":"SECRET-Q"}"#), ("WebFetch", #"{"url":"https://x.test/SECRET"}"#),
+                              ("Task", #"{"prompt":"SECRET-TASK","file_path":"/a/b.swift"}"#), ("TodoWrite", #"{"file_path":"/a/b.swift"}"#)] {
+            XCTAssertNil(try target(tool, input), "\(tool): hedef gönderilmez", file: file, line: line)
+        }
+        XCTAssertNil(try target("Edit", #"{"file_path":"/a/b/main.swift"}"#, event: "PostToolUse"), "yalnızca PreToolUse", file: file, line: line)
+
+        try g.setShowTargets(false)
+        XCTAssertNil(try target("Edit", #"{"file_path":"/a/b/main.swift"}"#), file: file, line: line)
+    }
+
+    func testPythonTargetFiltering() throws {
+        guard AgentPluginGenerator.pythonAvailable() else { throw XCTSkip("/usr/bin/python3 yok") }
+        try assertTargetFiltering("/usr/bin/python3", usesPython: true)
+    }
+
+    func testShellTargetFiltering() throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/plutil") else { throw XCTSkip("plutil yok") }
+        try assertTargetFiltering("/bin/sh", usesPython: false)
+    }
+
+    func testShowTargetsConfigKeepsPortTokenAndMode() throws {
+        let g = generator()
+        XCTAssertFalse(g.readShowTargets(), "yapılandırma yokken kapalı")
+        try g.setShowTargets(true)   // plugin kurulmadan da yazılabilir (port/token henüz yok)
+        XCTAssertNil(g.readConfig())
+        try g.writeConfig(port: 51000, token: "tok")
+        XCTAssertTrue(g.readShowTargets(), "port/token yazımı anahtarı bozmaz")
+        XCTAssertEqual(g.readConfig()?.port, 51000)
+        try g.write(port: 51001, token: "tok")   // plugin (yeniden) kurulumu da korur
+        XCTAssertTrue(g.readShowTargets())
+        try g.setShowTargets(false)
+        XCTAssertEqual(g.readConfig()?.port, 51001)
+        XCTAssertEqual(g.readConfig()?.token, "tok")
+        XCTAssertFalse(g.readShowTargets())
+        try g.writeConfig(port: 51002, token: "tok", showTargets: true)
+        XCTAssertTrue(g.readShowTargets())
+        let mode = try FileManager.default.attributesOfItem(atPath: g.configURL.path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o600)
+    }
+
     // MARK: Sürüm kilidi
 
     /// Betikler değişince özet değişir ve bu test kırılır: `AgentPluginGenerator.version` artırılıp buradaki eşleme güncellenmeli
     /// (aksi halde kullanıcıdaki Claude önbelleği eski betiği çalıştırmaya devam eder).
     func testScriptDigestPinsVersion() {
-        let pinned = ["1.2.0": "33a9c8e5fec09ed7"]
+        let pinned = ["1.3.0": "d6042c9f478a14e4"]
         XCTAssertEqual(pinned[AgentPluginGenerator.version], AgentPluginGenerator.scriptsDigest,
                        "betik değişti: version'ı artır ve özeti güncelle (\(AgentPluginGenerator.scriptsDigest))")
         let g = generator()

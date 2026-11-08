@@ -20,6 +20,10 @@ struct AgentsSettingsPane: View {
                 Toggle("Özelliği aç", isOn: Binding(get: { prefs.agentsEnabled }, set: { agents.setEnabled($0) }))
                 Toggle("Menü çubuğunda \"Ajanlar\" öğesini göster", isOn: $prefs.agentsInMenuBar)
                     .disabled(!prefs.agentsEnabled)
+                Toggle("Ofis balonlarında hedefi de göster (dosya adı / komut adı)", isOn: Binding(get: { prefs.agentsShowTargets }, set: { agents.setShowTargets($0) }))
+                    .disabled(!prefs.agentsEnabled)
+                Text("Kapalıyken balonlar yalnızca araç türünü söyler (\"Dosya düzenliyor\"). Açıkken \"main.swift düzenliyor\" gibi yalnızca dosya adı ya da komutun ilk kelimesi gösterilir.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("Plugin") {
@@ -62,9 +66,9 @@ struct AgentsSettingsPane: View {
             }
 
             Section("Gizlilik") {
-                Text("İletilir: olay adı, oturum ve ajan kimliği, ajan türü, araç adı, model adı, bildirim türü, proje klasörünün adı (yolun son parçası), oturum adı (session_title; /rename ile verdiğiniz ya da otomatik başlık), izin modu ve zaman.")
+                Text("İletilir: olay adı, oturum ve ajan kimliği, ajan türü, araç adı, model adı, bildirim türü, proje klasörünün adı (yolun son parçası), oturum adı (session_title; /rename ile verdiğiniz ya da otomatik başlık), izin modu ve zaman. \"Hedefi de göster\" açıkken ek olarak yalnızca dosya adı (yolun son parçası) ya da komutun ilk kelimesi iletilir; içerik ve argüman asla.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("İletilmez: istem/komut/dosya içeriği (istemleriniz, araç girdi ve çıktıları, Claude'un yanıtları, dosya içerikleri), transkript. Dinleyici yalnızca bu Mac'ten, rastgele bir token ile erişilebilir; özellik kapalıyken hiç çalışmaz.")
+                Text("İletilmez: istem/komut argümanları/dosya içeriği (istemleriniz, araç girdi ve çıktıları, Claude'un yanıtları, dosya içerikleri), transkript. Dinleyici yalnızca bu Mac'ten, rastgele bir token ile erişilebilir; özellik kapalıyken hiç çalışmaz.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

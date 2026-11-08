@@ -16,6 +16,10 @@ struct OfficeMember: Equatable, Identifiable, Sendable {
     var status: AgentStatus
     /// Oturum rengi şeridi (üst oturum ve alt ajanları aynı şeridi paylaşır).
     var groupIndex: Int
+    /// Konuşma balonu girdisi: çalışılan araç adı, isteğe bağlı kısa hedef ve ajanın son kendi olayı (nil: balon sönmez).
+    var activity: String? = nil
+    var target: String? = nil
+    var activityAt: Date? = nil
 
     static let groupPaletteSize = 6
 
@@ -25,10 +29,12 @@ struct OfficeMember: Equatable, Identifiable, Sendable {
         var out: [OfficeMember] = []
         for (i, s) in sessions.enumerated().reversed() where s.status != .ended {  // eskiden yeniye: önce gelen önce masa seçer
             let group = Self.stableGroup(for: s.id, fallback: i)
-            out.append(OfficeMember(id: s.id, parentID: nil, kind: .session, label: s.displayName, badge: s.badge, status: s.status, groupIndex: group))
+            out.append(OfficeMember(id: s.id, parentID: nil, kind: .session, label: s.displayName, badge: s.badge, status: s.status, groupIndex: group,
+                                 activity: s.activity, target: s.target, activityAt: s.activityAt))
             for sub in s.subagents where sub.status != .done && sub.status != .ended {
                 out.append(OfficeMember(id: "\(s.id)#\(sub.agentID)", parentID: s.id, kind: .subagent, label: sub.agentType,
-                                        badge: sub.model.map { AgentModelBadge(modelID: $0) } ?? s.badge, status: sub.status, groupIndex: group))
+                                        badge: sub.model.map { AgentModelBadge(modelID: $0) } ?? s.badge, status: sub.status, groupIndex: group,
+                                        activity: sub.activity, target: sub.target, activityAt: sub.activityAt))
             }
         }
         return out
@@ -58,8 +64,9 @@ struct OfficePlan: Equatable, Sendable {
     var overflowCount: Int { placements.values.filter { $0 == .overflow }.count }
 }
 
-/// Kararlı masa atayıcı: bir üye var olduğu sürece koltuğunu korur. Yeni oturum ilk boş masaya, alt ajan üst oturumuna en yakın
-/// boş masaya oturur; masa kalmazsa salon (kanepe) koltuklarına, o da dolarsa taşar.
+/// Kararlı masa atayıcı: bir üye var olduğu sürece koltuğunu korur. Oturum (ana ajan) odanın yönetici koltuğuna, alt ajan üst
+/// oturumuna (yönetici koltuğuna) en yakın boş masaya oturur; masa kalmazsa salon koltuklarına, o da dolarsa taşar. Yönetici
+/// koltuğu olmayan düzenlerde (eski/sentetik) oturum ilk masaya oturur.
 struct OfficeAssigner: Sendable {
     let seats: [OfficeSeat]
     private(set) var seatOf: [String: Int] = [:]
@@ -90,7 +97,8 @@ struct OfficeAssigner: Sendable {
     }
 
     private func pick(for m: OfficeMember, anchor: OfficeTile?, taken: Set<Int>) -> OfficeSeat? {
-        for kind in [OfficeSeat.Kind.desk, .lounge] {
+        let kinds: [OfficeSeat.Kind] = m.kind == .session ? [.executive, .desk, .lounge] : [.desk, .lounge]
+        for kind in kinds {
             let free = seats.filter { $0.kind == kind && !taken.contains($0.id) }
             if free.isEmpty { continue }
             if let anchor {
@@ -114,9 +122,20 @@ struct OfficeBehavior: Equatable, Sendable {
     var pcOn: Bool
     /// Boştayken ara sıra kahveye yürüyebilir.
     var mayWander: Bool
+    /// Yönetici: beyaz tahtanın önünde ayakta (yazıyor ya da izin bekliyor); false: masasında oturuyor.
+    var standing = false
 
-    static func behavior(for status: AgentStatus, atDesk: Bool) -> OfficeBehavior {
-        switch status {
+    /// `executive`: ana ajanın yönetici köşesi. Çalışırken tahta önünde ayakta, boştayken masasında oturur (kahveye gitmez).
+    static func behavior(for status: AgentStatus, atDesk: Bool, executive: Bool = false) -> OfficeBehavior {
+        if executive {
+            switch status {
+            case .thinking: return OfficeBehavior(pose: .typing, bubble: .thinking, pcOn: false, mayWander: false, standing: true)
+            case .tool: return OfficeBehavior(pose: .typing, bubble: nil, pcOn: false, mayWander: false, standing: true)
+            case .waitingPermission: return OfficeBehavior(pose: .reading, bubble: .alert, pcOn: false, mayWander: false, standing: true)
+            case .idle, .done, .ended: return OfficeBehavior(pose: .sitting, bubble: nil, pcOn: false, mayWander: false)
+            }
+        }
+        return switch status {
         case .thinking: OfficeBehavior(pose: atDesk ? .typing : .reading, bubble: .thinking, pcOn: atDesk, mayWander: false)
         case .tool: OfficeBehavior(pose: atDesk ? .typing : .reading, bubble: nil, pcOn: atDesk, mayWander: false)
         case .waitingPermission: OfficeBehavior(pose: .reading, bubble: .alert, pcOn: atDesk, mayWander: false)
@@ -253,12 +272,13 @@ enum OfficeDemo {
         }.reversed()
     }
 
-    /// Tek oturum demo: bir ana oturum ve birkaç alt ajan.
+    /// Tek oturum demo: yönetici tahtada yazıyor ("main.swift düzenliyor"), üç alt ajan farklı balonlarla (balonlar sönmez).
     static func single(now: Date = .now) -> [AgentSession] {
         [AgentSession(id: "single", project: "adalmon", model: "claude-opus-4-8", status: .tool("Edit"), startedAt: now.addingTimeInterval(-300), lastEventAt: now,
-                      subagents: [AgentSubagent(agentID: "s1", agentType: "Explore", model: "claude-haiku-4-5", status: .tool("Grep")),
-                                  AgentSubagent(agentID: "s2", agentType: "general-purpose", model: "claude-sonnet-5-5", status: .thinking),
-                                  AgentSubagent(agentID: "s3", agentType: "Plan", model: "claude-opus-4-8", status: .waitingPermission)])]
+                      subagents: [AgentSubagent(agentID: "s1", agentType: "Explore", model: "claude-haiku-4-5", status: .tool("Grep"), activity: "Grep"),
+                                  AgentSubagent(agentID: "s2", agentType: "general-purpose", model: "claude-sonnet-5-5", status: .tool("Edit"), activity: "Edit", target: "OfficeRoomNode.swift"),
+                                  AgentSubagent(agentID: "s3", agentType: "Plan", model: "claude-opus-4-8", status: .tool("Bash"), activity: "Bash", target: "swift")],
+                      activity: "Edit", target: "main.swift")]
     }
 
     /// Bir adım için tek anlık "ortalama sahne": önizleme testi ve statik demo.

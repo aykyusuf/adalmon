@@ -54,6 +54,11 @@ struct AgentSubagent: Equatable, Identifiable, Sendable {
     var agentType: String
     var model: String?
     var status: AgentStatus
+    /// Çalışılan aracın adı (PreToolUse; araç bitince/başka olayda nil) ve isteğe bağlı kısa hedefi (dosya adı / komut adı).
+    var activity: String?
+    var target: String?
+    /// Bu ajanın kendi son etkinlik olayı (konuşma balonu süresi için); alt ajan olayı üst oturumunkini etkilemez.
+    var activityAt: Date?
     var id: String { agentID }
 }
 
@@ -73,6 +78,10 @@ struct AgentSession: Equatable, Identifiable, Sendable {
     var pidStartedAt: Date?
     /// Süreç ölü bulunup kapatıldıysa o an (olay gelmeden kapandığı için `lastEventAt` yerine bu bekleme için kullanılır).
     var exitedAt: Date?
+    /// Ana ajanın çalıştığı araç adı ve isteğe bağlı kısa hedefi (bkz. `AgentSubagent`).
+    var activity: String?
+    var target: String?
+    var activityAt: Date?
 
     /// Panelde ana başlık: oturum adı, yoksa proje klasörü adı.
     var displayName: String { title ?? project }
@@ -147,36 +156,39 @@ struct AgentState: Equatable, Sendable {
         case .userPromptSubmit:
             s.subagents.removeAll { $0.status == .done || $0.status == .ended }
             s.status = .thinking
+            s.activity = nil; s.target = nil; s.activityAt = now
         case .preToolUse:
-            Self.setStatus(.tool(e.toolName ?? "araç"), for: e.agentID, in: &s)
+            Self.setStatus(.tool(e.toolName ?? "araç"), activity: e.toolName, target: e.target, for: e.agentID, in: &s, now: now)
         case .postToolUse, .postToolUseFailure:
-            Self.setStatus(.thinking, for: e.agentID, in: &s)
+            Self.setStatus(.thinking, for: e.agentID, in: &s, now: now)
             if let id = e.resolvedAgentID, let model = e.resolvedModel {
                 if let i = s.subagents.firstIndex(where: { $0.agentID == id }) { s.subagents[i].model = model } else {
                     pendingSubagentModels[id] = model
                 }
             }
         case .permissionRequest:
-            Self.setStatus(.waitingPermission, for: e.agentID, in: &s)
+            Self.setStatus(.waitingPermission, for: e.agentID, in: &s, now: now)
         case .notification:
             switch e.notificationType {
-            case "permission_prompt": s.status = .waitingPermission
-            case "idle_prompt": s.status = .idle
+            case "permission_prompt": s.status = .waitingPermission; s.activity = nil; s.target = nil
+            case "idle_prompt": s.status = .idle; s.activity = nil; s.target = nil
             default: break
             }
         case .stop:
             if let id = e.agentID, s.subagents.contains(where: { $0.agentID == id }) { break } // alt ajanın Stop'u oturumu bitirmez
             s.status = .done
+            s.activity = nil; s.target = nil
         case .subagentStart:
             // agent_type boş olan iç/yardımcı ajanlar listelenmez.
             guard let id = e.agentID, let type = e.agentType else { break }
             if !s.subagents.contains(where: { $0.agentID == id }) {
                 s.subagents.append(AgentSubagent(agentID: id, agentType: type, model: pendingSubagentModels.removeValue(forKey: id) ?? e.model,
-                                                 status: .thinking))
+                                                 status: .thinking, activityAt: now))
             }
         case .subagentStop:
             guard let id = e.agentID, e.agentType != nil, let i = s.subagents.firstIndex(where: { $0.agentID == id }) else { break }
             s.subagents[i].status = .done
+            s.subagents[i].activity = nil; s.subagents[i].target = nil
         case .postModelSwitch:
             if let model = e.toModel { s.model = model }
         }
@@ -184,11 +196,18 @@ struct AgentState: Equatable, Sendable {
         return true
     }
 
-    private static func setStatus(_ status: AgentStatus, for agentID: String?, in s: inout AgentSession) {
+    /// Durumu ilgili ajana (agent_id'li alt ajan, yoksa oturumun ana ajanı) yazar; araç bilgisi (`activity`/`target`) yalnızca
+    /// PreToolUse'ta dolar, diğer durumlarda temizlenir. Etkinlik zamanı yalnızca o ajanı etkiler.
+    private static func setStatus(_ status: AgentStatus, activity: String? = nil, target: String? = nil, for agentID: String?,
+                                  in s: inout AgentSession, now: Date) {
         if let id = agentID, let i = s.subagents.firstIndex(where: { $0.agentID == id }) {
-            if s.subagents[i].status != .done, s.subagents[i].status != .ended { s.subagents[i].status = status }
+            if s.subagents[i].status != .done, s.subagents[i].status != .ended {
+                s.subagents[i].status = status
+                s.subagents[i].activity = activity; s.subagents[i].target = target; s.subagents[i].activityAt = now
+            }
         } else if s.status != .ended {
             s.status = status
+            s.activity = activity; s.target = target; s.activityAt = now
         }
     }
 
@@ -213,6 +232,14 @@ struct AgentState: Equatable, Sendable {
         for id in dropped { sessions[id] = nil }
         if sessions.isEmpty { pendingSubagentModels = [:] }
         return dropped
+    }
+
+    /// Tüm ajanların hedefini siler (etkinlik/araç bilgisi kalır).
+    mutating func clearTargets() {
+        for id in sessions.keys {
+            sessions[id]?.target = nil
+            if let n = sessions[id]?.subagents.count { for i in 0..<n { sessions[id]?.subagents[i].target = nil } }
+        }
     }
 
     /// Bir sonraki budama anı (olay yoksa hiçbir zamanlayıcı kurulmaz).

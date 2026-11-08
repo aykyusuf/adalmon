@@ -214,6 +214,8 @@ final class OfficeScene: SKScene {
         for room in rooms.values {
             let on = zoom >= 2 && (selectedRoomID == room.id || (selectedRoomID == nil && room.memberCount <= 4))
             room.setLabels(on)
+            // Metin balonları: zoom ≥ 2; odak varsa yalnızca odak odasında, yoksa görünür her odada.
+            room.setBubbles(zoom >= 2 && (selectedRoomID == nil || selectedRoomID == room.id))
         }
     }
 

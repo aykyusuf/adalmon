@@ -94,6 +94,44 @@ enum OfficePixelArt {
         ".kwwwwwwwk.", "..kkkwkkk..", "....kwk....", ".....k....."],
         palette: ["k": 0x222222, "w": 0xFFFFFF, "g": 0x555555])
 
+    /// Konuşma balonu, verilen genişlikte (piksel; en az 14): koyu çerçeve, beyaz iç, yuvarlak köşe, sol altta kuyruk. Gövde `bodyHeight`
+    /// satır, altında 2 satır kuyruk (toplam bodyHeight + 2). Stil mevcut "…" / "!" balonlarıyla aynı. Kuyruk ucu x ≈ 3.5, y = alt kenar.
+    static func speechBubble(width w: Int, bodyHeight h: Int = 12) -> CGImage? {
+        let w = max(14, w)
+        func solid(_ left: Character, _ fill: Character, _ right: Character) -> String { String(left) + String(repeating: fill, count: w - 2) + String(right) }
+        var rows: [String] = []
+        let cap = "." + "." + String(repeating: "k", count: w - 4) + ".."
+        rows.append(cap)
+        rows.append(".k" + String(repeating: "w", count: w - 4) + "k.")
+        for _ in 2..<(h - 2) { rows.append(solid("k", "w", "k")) }
+        rows.append(rows[1])
+        var bottom = Array(cap)
+        bottom[3] = "w"; bottom[4] = "w"
+        rows.append(String(bottom))
+        rows.append(".." + "kwk" + String(repeating: ".", count: w - 5))
+        rows.append("..." + "k" + String(repeating: ".", count: w - 4))
+        return image(rows, palette: ["k": 0x222222, "w": 0xFFFFFF])
+    }
+    static let speechBubbleHeight: CGFloat = 14
+    /// Kuyruk ucunun x konumu (piksel).
+    static let speechBubbleTailX: CGFloat = 3.5
+
+    /// Beyaz tahtanın yazı alanı (22×9; tahta dokusunda x 5, y 12): 3 kareli "yazıyor" animasyonu (satırlar uzar).
+    static let boardWriteSize = CGSize(width: 22, height: 9)
+    static let boardWriteOrigin = CGPoint(x: 5, y: 12)
+    static let boardWriteFrames: [CGImage] = {
+        let lines: [[(row: Int, length: Int, color: Character)]] = [
+            [(1, 10, "b")],
+            [(1, 18, "b"), (3, 8, "b")],
+            [(1, 18, "b"), (3, 14, "b"), (5, 6, "r")],
+        ]
+        return lines.compactMap { frame in
+            var rows = [[Character]](repeating: [Character](repeating: "w", count: 22), count: 9)
+            for l in frame { for x in 1..<(1 + l.length) { rows[l.row][x] = l.color } }
+            return image(rows.map { String($0) }, palette: ["w": 0xFFFFFF, "b": 0x2F6FDE, "r": 0xE0262B])
+        }
+    }()
+
     /// 16×32 kapı (duvara oturur).
     static let door: CGImage? = {
         var rows: [String] = []
@@ -288,6 +326,21 @@ final class OfficeAssets {
         let img = b == .alert ? OfficePixelArt.alertBubble : OfficePixelArt.thinkBubble
         return img.map { Self.nearest(SKTexture(cgImage: $0)) }
     }
+
+    private var speechBubbleTextures: [Int: SKTexture] = [:]
+
+    /// Konuşma balonu dokusu, genişliğe göre (en çok ~25 farklı genişlik; önbellekli, paylaşılır).
+    func speechBubbleTexture(width: Int) -> SKTexture? {
+        let w = max(14, width)
+        if let t = speechBubbleTextures[w] { return t }
+        guard let img = OfficePixelArt.speechBubble(width: w) else { return nil }
+        let t = Self.nearest(SKTexture(cgImage: img))
+        speechBubbleTextures[w] = t
+        return t
+    }
+
+    /// Beyaz tahta "yazıyor" kareleri.
+    private(set) lazy var boardWriteTextures: [SKTexture] = OfficePixelArt.boardWriteFrames.map { Self.nearest(SKTexture(cgImage: $0)) }
 
     func doorTexture() -> SKTexture? { OfficePixelArt.door.map { Self.nearest(SKTexture(cgImage: $0)) } }
 }

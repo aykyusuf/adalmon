@@ -26,12 +26,27 @@ final class OfficeRoomTests: XCTestCase {
 
     func testTierTemplatesHaveExpectedSeats() throws {
         let a = try assets()
-        let expected: [(OfficeRoomTier, Int, Int, Bool)] = [(.small, 2, 2, false), (.medium, 4, 4, false), (.large, 10, 2, true)]
+        // Koltuk sayısı yönetici dahil: küçük 1+2+1 = 4, orta 1+6+1 = 8, büyük 1+10+1 = 12.
+        let expected: [(OfficeRoomTier, Int, Int, Bool)] = [(.small, 2, 1, false), (.medium, 6, 1, false), (.large, 10, 1, true)]
         for (tier, desks, lounges, coffee) in expected {
             let kit = a.kit(tier)
+            XCTAssertEqual(kit.spots.seats.filter { $0.kind == .executive }.count, 1, "\(tier): tek yönetici koltuğu")
             XCTAssertEqual(kit.spots.deskSeats.count, desks, "\(tier) masa koltuğu")
             XCTAssertEqual(kit.spots.loungeSeats.count, lounges, "\(tier) salon koltuğu")
+            XCTAssertEqual(kit.spots.seats.count, 1 + desks + lounges)
             XCTAssertEqual(kit.spots.seats.count, tier.capacity)
+            // Yönetici köşesi: koltuk id 0, yukarı (masaya) bakar, PC'si var, tüm masa koltuklarının üstünde (duvar tarafı);
+            // beyaz tahtanın önüne yol var.
+            let exec = try XCTUnwrap(kit.spots.executiveSeat, "\(tier)")
+            XCTAssertEqual(exec.id, 0)
+            XCTAssertEqual(exec.facing, .up)
+            XCTAssertNotNil(exec.pcIndex)
+            XCTAssertTrue(kit.spots.deskSeats.allSatisfy { $0.tile.row > exec.tile.row }, "\(tier): alt ajan masaları yönetici köşesinin altında")
+            let board = try XCTUnwrap(kit.spots.board, "\(tier): beyaz tahta önü")
+            XCTAssertEqual(kit.layout.furniture[try XCTUnwrap(kit.spots.boardIndex)].assetID, "WHITEBOARD")
+            XCTAssertEqual(kit.layout.furniture.filter { $0.assetID == "WHITEBOARD" }.count, 1, "\(tier): tek beyaz tahta (yönetici)")
+            XCTAssertNotNil(kit.grid.path(from: exec.tile, to: board), "\(tier): koltuktan tahtaya yol")
+            XCTAssertNotNil(kit.grid.path(from: board, to: exec.tile), "\(tier): tahtadan koltuğa yol")
             XCTAssertEqual(kit.spots.coffee != nil, coffee, "kahve makinesi yalnızca büyükte")
             XCTAssertEqual(tier.hasCoffee, coffee)
             for seat in kit.spots.seats { XCTAssertNotNil(kit.grid.path(from: kit.spots.entrance, to: seat.tile), "\(tier) koltuğa yol yok: \(seat)") }
@@ -64,9 +79,31 @@ final class OfficeRoomTests: XCTestCase {
         XCTAssertEqual(plan.rooms[1].memberCount, 1)
         // Alt ajanlar önce boş masalara oturur (small: 2 masa).
         let seats = try assets().kit(.small).spots.seats
-        let deskIDs = Set(seats.filter { $0.kind == .desk }.map(\.id))
-        XCTAssertEqual(r1.placements["s1#a0"], .seat(deskIDs.subtracting([0]).first!))
+        let exec = try XCTUnwrap(seats.first { $0.kind == .executive })
+        let nearest = try XCTUnwrap(seats.filter { $0.kind == .desk }.min { ($0.tile.manhattan(to: exec.tile), $0.id) < ($1.tile.manhattan(to: exec.tile), $1.id) })
+        XCTAssertEqual(r1.placements["s1#a0"], .seat(nearest.id), "alt ajan ebeveynin (yönetici koltuğunun) en yakın masasına")
+        for (id, pl) in r1.placements where id != "s1" {
+            guard case .seat(let sid) = pl else { return XCTFail("taşma olmamalı") }
+            XCTAssertNotEqual(seats[sid].kind, .executive, "yönetici koltuğu yalnızca ana ajana")
+        }
         XCTAssertTrue(plan.removed.isEmpty)
+    }
+
+    func testExecutiveSeatGoesToSessionAndSubagentsFillDesksThenLounge() throws {
+        var p = try planner()
+        let seats = try assets().kit(.small).spots.seats
+        // Önce alt ajanlar sıralanmış olsa bile ana ajan yönetici koltuğunu alır.
+        let plan = p.update(members: [sub("a0", of: "s"), sub("a1", of: "s"), session("s"), sub("a2", of: "s")]).rooms[0]
+        XCTAssertEqual(plan.placements["s"], .seat(0))
+        func kind(_ id: String) -> OfficeSeat.Kind? { if case .seat(let n)? = plan.placements[id] { seats[n].kind } else { nil } }
+        XCTAssertEqual(kind("s"), .executive)
+        XCTAssertEqual(Set([kind("s#a0"), kind("s#a1"), kind("s#a2")]), [.desk, .lounge], "önce masalar, sonra salon")
+        XCTAssertEqual([kind("s#a0"), kind("s#a1"), kind("s#a2")].filter { $0 == .desk }.count, 2)
+        XCTAssertEqual(plan.overflowCount, 0)
+        // Dördüncü alt ajan taşar: koltuk sayısı yönetici dahil 4.
+        let full = p.update(members: room("s", subs: 4)).rooms[0]
+        XCTAssertEqual(full.tier, .medium, "5 üye orta oda")
+        XCTAssertEqual(full.overflowCount, 0)
     }
 
     func testOverflowShowsPlusNAfterTwelve() throws {
@@ -258,7 +295,8 @@ final class OfficeRoomTests: XCTestCase {
         let before = t.nodeCount
         t.select(first, animated: false)
         XCTAssertGreaterThan(t.nodeCount, before, "odaklanınca etiketler kurulur")
-        XCTAssertLessThan(t.nodeCount - before, 12 * 5, "yalnızca o odanın etiketleri")
+        XCTAssertLessThan(t.nodeCount - before, 12 * 5 + 12 * 3, "yalnızca o odanın etiketleri ve metin balonları (karakter başına arka plan + etiket + kap)")
+        XCTAssertTrue(t.roomIDs.dropFirst().allSatisfy { id in t.room(id)!.actors.values.allSatisfy { $0.textBubble == nil } }, "odak dışı odalarda balon düğümü yok")
         print("DUGUM-SAYISI odakli=\(t.nodeCount) gorunur=\(t.visibleRoomCount) zoom=\(t.zoom)")
     }
 
@@ -348,17 +386,134 @@ final class OfficeRoomTests: XCTestCase {
         var members = OfficeMember.members(from: [AgentSession(id: "small", project: "k", model: "claude-opus-4-8", status: .idle, startedAt: now, lastEventAt: now)])
         s.apply(members: members, animated: false, now: now.addingTimeInterval(-100))
         let small = try XCTUnwrap(s.room("small"))
-        XCTAssertEqual(small.wanderCandidates().count, 1, "küçük odada boşta kalan kanepeye gider")
+        XCTAssertEqual(small.wanderCandidates().count, 0, "yönetici boştayken masasında kalır, dolaşmaz")
+        s.apply(members: OfficeMember.members(from: [AgentSession(id: "small", project: "k", model: "claude-opus-4-8", status: .thinking, startedAt: now, lastEventAt: now,
+                                                                   subagents: [AgentSubagent(agentID: "q", agentType: "x", model: nil, status: .idle)])]),
+                animated: false, now: now.addingTimeInterval(-100))
+        XCTAssertEqual(try XCTUnwrap(s.room("small")).wanderCandidates().count, 1, "küçük odada boşta kalan alt ajan koltuğa gider")
         XCTAssertNil(small.kit.spots.coffee)
-        members = OfficeMember.members(from: [AgentSession(id: "L", project: "k", model: "claude-opus-4-8", status: .idle, startedAt: now, lastEventAt: now,
-                                                            subagents: (0..<9).map { AgentSubagent(agentID: "q\($0)", agentType: "x", model: nil, status: .thinking) })])
+        members = OfficeMember.members(from: [AgentSession(id: "L", project: "k", model: "claude-opus-4-8", status: .thinking, startedAt: now, lastEventAt: now,
+                                                            subagents: (0..<9).map { AgentSubagent(agentID: "q\($0)", agentType: "x", model: nil, status: $0 == 0 ? .idle : .thinking) })])
         let l = try scene()
         l.apply(members: members, animated: false, now: now.addingTimeInterval(-100))
         let large = try XCTUnwrap(l.room("L"))
         XCTAssertEqual(large.tier, .large)
         XCTAssertNotNil(large.kit.spots.coffee)
-        XCTAssertEqual(large.wanderCandidates().count, 1, "yalnızca boştaki ana karakter")
+        XCTAssertEqual(large.wanderCandidates().count, 1, "yalnızca boştaki alt ajan (yönetici dolaşmaz)")
         XCTAssertTrue(l.wanderTick(now: now, roll: 0))
         XCTAssertTrue(large.isWalking)
+    }
+
+    // MARK: Yönetici köşesi (sahne)
+
+    private func leadSession(_ status: AgentStatus, subs: [AgentSubagent] = [], activity: String? = nil, target: String? = nil, at: Date? = nil) -> [AgentSession] {
+        let now = Date()
+        return [AgentSession(id: "L", project: "p", model: "claude-opus-4-8", status: status, startedAt: now, lastEventAt: now, subagents: subs,
+                             activity: activity, target: target, activityAt: at)]
+    }
+
+    func testExecutiveWritesAtBoardWhenWorkingAndSitsWhenIdle() throws {
+        let s = try scene()
+        s.apply(members: OfficeMember.members(from: leadSession(.idle)), animated: false)
+        let room = try XCTUnwrap(s.room("L"))
+        let exec = try XCTUnwrap(room.actors["L"])
+        XCTAssertEqual(exec.seat.kind, .executive)
+        XCTAssertEqual(exec.tile, exec.seat.tile, "boşta: masasında oturur")
+        XCTAssertFalse(exec.atBoard)
+        XCTAssertFalse(room.isBoardWriting)
+        XCTAssertFalse(s.isAnimating)
+
+        s.apply(members: OfficeMember.members(from: leadSession(.thinking)), animated: false)
+        XCTAssertTrue(exec.atBoard, "çalışırken beyaz tahtanın önünde ayakta")
+        XCTAssertEqual(exec.tile, room.kit.spots.board)
+        XCTAssertEqual(exec.direction, .up)
+        XCTAssertEqual(exec.body.position.y, 0, "ayakta: oturma çökmesi yok")
+        XCTAssertTrue(room.isBoardWriting, "tahtada yazma animasyonu")
+        XCTAssertTrue(s.isAnimating)
+
+        s.apply(members: OfficeMember.members(from: leadSession(.waitingPermission)), animated: false)
+        XCTAssertTrue(exec.atBoard)
+        XCTAssertEqual(exec.behavior.bubble, .alert, "izin beklerken \"!\" balonu")
+        XCTAssertFalse(room.isBoardWriting, "okuma pozunda yazma animasyonu yok")
+
+        s.apply(members: OfficeMember.members(from: leadSession(.tool("Bash"))), animated: false)
+        XCTAssertTrue(room.isBoardWriting)
+
+        s.apply(members: OfficeMember.members(from: leadSession(.done)), animated: false)
+        XCTAssertFalse(exec.atBoard)
+        XCTAssertEqual(exec.tile, exec.seat.tile, "iş bitince masasına döner")
+        XCTAssertFalse(room.isBoardWriting)
+        XCTAssertFalse(s.isAnimating, "boşta animasyon yok")
+
+        s.apply(members: [], animated: false)
+        XCTAssertNil(s.room("L"), "oturum kapanınca oda kalkar")
+    }
+
+    func testExecutiveWalksToBoardAnimatedAndLeavesThroughDoor() throws {
+        let s = try scene()
+        s.apply(members: OfficeMember.members(from: leadSession(.idle)), animated: false)
+        s.apply(members: OfficeMember.members(from: leadSession(.tool("Edit"))), animated: true)
+        let room = try XCTUnwrap(s.room("L"))
+        let exec = try XCTUnwrap(room.actors["L"])
+        XCTAssertTrue(exec.moving, "tahtaya yürüyor")
+        XCTAssertTrue(s.isAnimating)
+        // Yürürken iş biterse tahtaya varınca masaya geri döner (karar yürüyüşün sonunda).
+        s.apply(members: OfficeMember.members(from: leadSession(.done)), animated: true)
+        XCTAssertFalse(exec.behavior.standing)
+        s.apply(members: [], animated: true)
+        XCTAssertNil(s.room("L"), "kapanan oturumun odası kalkar")
+    }
+
+    // MARK: Konuşma balonları (sahne)
+
+    func testTextBubbleShowsToolVerbAndReusesNodesOnChange() throws {
+        let s = try scene()
+        let now = Date()
+        let subs = [AgentSubagent(agentID: "a", agentType: "x", model: nil, status: .tool("Grep"), activity: "Grep", activityAt: now),
+                    AgentSubagent(agentID: "b", agentType: "y", model: nil, status: .thinking, activityAt: now)]
+        s.apply(members: OfficeMember.members(from: leadSession(.tool("Edit"), subs: subs, activity: "Edit", target: "main.swift", at: now)), animated: false, now: now)
+        XCTAssertGreaterThanOrEqual(s.zoom, 2)
+        let room = try XCTUnwrap(s.room("L"))
+        func bubble(_ id: String) -> OfficeTextBubble? { room.actors[id]?.textBubble }
+        XCTAssertEqual(bubble("L")?.text, "main.swift düzenliyor")
+        XCTAssertEqual(bubble("L#a")?.text, "Arıyor")
+        XCTAssertEqual(bubble("L#b")?.text, "Düşünüyor…")
+        XCTAssertEqual(bubble("L")?.node.isHidden, false)
+        let first = try XCTUnwrap(bubble("L#a"))
+        XCTAssertEqual(first.node.children.count, 2, "tek arka plan sprite'ı + tek etiket")
+        // Metin değişince aynı düğümler yeniden kullanılır; değişmeyen karaktere dokunulmaz.
+        let untouched = try XCTUnwrap(bubble("L"))
+        let later = now.addingTimeInterval(2)
+        let subs2 = [AgentSubagent(agentID: "a", agentType: "x", model: nil, status: .tool("Bash"), activity: "Bash", target: "swift", activityAt: later),
+                     subs[1]]
+        s.apply(members: OfficeMember.members(from: leadSession(.tool("Edit"), subs: subs2, activity: "Edit", target: "main.swift", at: now)), animated: false, now: later)
+        XCTAssertTrue(bubble("L#a") === first, "balon düğümü yeniden kullanılır")
+        XCTAssertEqual(first.text, "swift çalıştırıyor")
+        XCTAssertTrue(bubble("L") === untouched)
+        XCTAssertEqual(untouched.text, "main.swift düzenliyor")
+    }
+
+    func testTextBubbleDisappearsAfterTenSecondsAndSkippedWhenNotWorking() throws {
+        let s = try scene()
+        let now = Date()
+        s.apply(members: OfficeMember.members(from: leadSession(.tool("Read"), activity: "Read", at: now.addingTimeInterval(-11))), animated: false, now: now)
+        let room = try XCTUnwrap(s.room("L"))
+        XCTAssertNil(room.actors["L"]?.bubbleText, "10 sn olay yok: balon yok")
+        XCTAssertTrue(room.actors["L"]?.bubbleExpired ?? false)
+        s.apply(members: OfficeMember.members(from: leadSession(.tool("Read"), activity: "Read", at: now.addingTimeInterval(-3))), animated: false, now: now)
+        XCTAssertEqual(room.actors["L"]?.bubbleText, "Dosya okuyor")
+        XCTAssertTrue(room.actors["L"]?.bubbleTimer ?? false, "kalan süre için sayaç kurulur (görünüm duraklatılmaz)")
+        XCTAssertTrue(s.isAnimating)
+        s.apply(members: OfficeMember.members(from: leadSession(.idle)), animated: false, now: now)
+        XCTAssertNil(room.actors["L"]?.bubbleText)
+        XCTAssertFalse(room.actors["L"]?.bubbleTimer ?? true)
+        XCTAssertEqual(room.actors["L"]?.textBubble?.node.isHidden, true)
+    }
+
+    func testNoTextBubbleNodesWhenZoomedOut() throws {
+        let s = try scene()
+        s.apply(members: OfficeMember.members(from: OfficeDemo.crowd()), animated: false)
+        XCTAssertEqual(s.zoom, 1)
+        XCTAssertTrue(s.roomIDs.allSatisfy { id in s.room(id)!.actors.values.allSatisfy { $0.textBubble == nil } }, "uzaktayken metin balonu düğümü kurulmaz")
     }
 }

@@ -51,6 +51,8 @@ final class Preferences {
     var agentsEnabled: Bool { didSet { d.set(agentsEnabled, forKey: "agentsEnabled") } }
     /// Menü çubuğunda "Ajanlar" öğesi. Varsayılan kapalı.
     var agentsInMenuBar: Bool { didSet { d.set(agentsInMenuBar, forKey: "agentsInMenuBar") } }
+    /// Ajan balonlarında hedefi de göster (dosya adı / komut adı; içerik ve argüman asla). Varsayılan kapalı.
+    var agentsShowTargets: Bool { didSet { d.set(agentsShowTargets, forKey: "agentsShowTargets") } }
     /// Dinleyicinin kalıcı rastgele portu; 0 = henüz seçilmedi.
     var agentsPort: Int { didSet { d.set(agentsPort, forKey: "agentsPort") } }
 
@@ -97,6 +99,7 @@ final class Preferences {
         deviceSettings = Self.load([String: DeviceSettings].self, "deviceSettings", d) ?? [:]
         agentsEnabled = d.bool(forKey: "agentsEnabled")
         agentsInMenuBar = d.bool(forKey: "agentsInMenuBar")
+        agentsShowTargets = d.bool(forKey: "agentsShowTargets")
         agentsPort = d.integer(forKey: "agentsPort")
         menuBar = MenuBarConfigStore(defaults: d)
         panel = PanelConfigStore(defaults: d)

@@ -33,6 +33,8 @@ final class OfficePreviewTests: XCTestCase {
         try render([], size: size, name: "office-empty", dir: dir)
         try render(OfficeMember.members(from: OfficeDemo.single()), size: size, name: "office-1-session", dir: dir)
         try render(OfficeMember.members(from: OfficeDemo.showcase), size: size, name: "office-3-sessions", dir: dir)
+        try render(OfficeMember.members(from: OfficeDemo.showcase), size: size, name: "office-3-sessions-focus", dir: dir, select: 2)
+        try render(OfficeMember.members(from: OfficeDemo.single()), size: CGSize(width: 1400, height: 900), name: "office-1-session-large-window", dir: dir)
         try render(OfficeMember.members(from: OfficeDemo.crowd()), size: size, name: "office-10x10", dir: dir)
         try render(OfficeMember.members(from: OfficeDemo.crowd()), size: size, name: "office-10x10-focus", dir: dir, select: 2)
         try render(OfficeMember.members(from: OfficeDemo.crowd()), size: CGSize(width: 1500, height: 900), name: "office-10x10-large-window", dir: dir)
