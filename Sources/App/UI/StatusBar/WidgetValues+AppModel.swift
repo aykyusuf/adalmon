@@ -16,7 +16,7 @@ extension WidgetValues {
                   downToday: model.downToday, upToday: model.upToday,
                   temperature: s?.temperature,
                   temperatureHistory: TemperatureHistory.shared.record(s))
-        battery = model.battery.reading.map(BatteryGlyphState.init)
+        battery = model.battery.reading.map(ChargeTierMemory.shared.state)
         let pinned = Set(model.prefs.menuBar.config.components.compactMap(\.deviceID))
         if !pinned.isEmpty {
             devices = Dictionary(model.devices.devices.filter { pinned.contains($0.id) }.map { ($0.id, BatteryGlyphState(device: $0)) },
@@ -34,5 +34,19 @@ extension WidgetValues {
             diskWrite = s.disk.writeBytesPerSecond
             gpuMemory = s.gpu?.memoryUsedBytes
         }
+    }
+}
+
+/// Şimşek rengi kademesinin histerezisi: `WidgetValues` her tikte yeniden kurulduğu için önceki kademe burada tutulur.
+@MainActor
+final class ChargeTierMemory {
+    static let shared = ChargeTierMemory()
+
+    private(set) var last: ChargeTier?
+
+    func state(_ reading: BatteryReading) -> BatteryGlyphState {
+        let s = BatteryGlyphState(reading, previousTier: last)
+        last = s.chargeTier
+        return s
     }
 }

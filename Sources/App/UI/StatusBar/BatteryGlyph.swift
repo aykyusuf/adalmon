@@ -130,6 +130,60 @@ struct BatteryGlyphOptions: Codable, Equatable, Sendable {
     }
 }
 
+/// Şarj gücünün kademesi (şimşek rengi). Ham watt render/kare anahtarına girmez; yalnızca bu kademe girer.
+enum ChargeTier: Int, Hashable, Sendable, CaseIterable {
+    /// Fişte ama adaptör yükü karşılamıyor: pil boşalıyor.
+    case insufficient
+    /// < 5 W
+    case slow
+    /// 5–20 W
+    case medium
+    /// 20–45 W
+    case fast
+    /// > 45 W
+    case veryFast
+
+    /// Kademe sınırları (W): slow | 5 | medium | 20 | fast | 45 | veryFast.
+    static let bounds: (slow: Double, medium: Double, fast: Double) = (5, 20, 45)
+    /// Histerezis: önceki kademeden çıkmak için sınırın en az bu kadar ötesine geçmek gerekir.
+    static let hysteresis: Double = 1
+    /// Fişteyken bundan daha negatif güç "pil boşalıyor" sayılır (optimize şarj beklemesindeki gürültü sayılmaz).
+    static let drainEnter: Double = -1
+    static let drainExit: Double = -0.5
+
+    private static func plain(_ w: Double) -> ChargeTier {
+        if w < bounds.slow { return .slow }
+        if w < bounds.medium { return .medium }
+        if w <= bounds.fast { return .fast }
+        return .veryFast
+    }
+
+    /// Kademenin [alt, üst) aralığı (watt).
+    private var range: (Double, Double) {
+        switch self {
+        case .insufficient: (-.infinity, 0)
+        case .slow: (-.infinity, Self.bounds.slow)
+        case .medium: (Self.bounds.slow, Self.bounds.medium)
+        case .fast: (Self.bounds.medium, Self.bounds.fast)
+        case .veryFast: (Self.bounds.fast, .infinity)
+        }
+    }
+
+    /// `watts`: pile giren (+) / pilden çıkan (−) güç. `previous`: bir önceki kademe (histerezis için).
+    /// `nil` → şimşek gücü bilinmiyor ya da fişte değil (varsayılan renkler).
+    static func resolve(watts: Double?, plugged: Bool, charging: Bool, previous: ChargeTier? = nil) -> ChargeTier? {
+        guard plugged || charging, let w = watts else { return nil }
+        let drainLimit = previous == .insufficient ? drainExit : drainEnter
+        if w < drainLimit { return .insufficient }
+        guard charging else { return nil }
+        if let previous, previous != .insufficient {
+            let (lo, hi) = previous.range
+            if w >= lo - hysteresis && w < hi + hysteresis { return previous }
+        }
+        return plain(w)
+    }
+}
+
 /// Menü çubuğu pil çizimi için gereken en küçük durum (zaman damgası yok; render anahtarı bununla karşılaştırır).
 struct BatteryGlyphState: Equatable, Hashable, Sendable {
     var level: Int
@@ -141,6 +195,8 @@ struct BatteryGlyphState: Equatable, Hashable, Sendable {
     /// Cihaz pili ise cihaz simgesi (SF Symbol) ve "~" (yaklaşık) bilgisi.
     var deviceSymbol: String?
     var isApproximate = false
+    /// Şarj gücü kademesi (yalnızca Mac pili; ham watt bilerek tutulmaz → anahtar gereksiz değişmez).
+    var chargeTier: ChargeTier?
 
     init(device d: DeviceBattery) {
         level = d.summaryLevel ?? 0
@@ -151,16 +207,22 @@ struct BatteryGlyphState: Equatable, Hashable, Sendable {
         lowPowerMode = false
         deviceSymbol = d.kind.symbol
         isApproximate = d.isApproximate
+        chargeTier = nil
     }
 
-    init(_ r: BatteryReading) {
+    init(_ r: BatteryReading, previousTier: ChargeTier? = nil) {
         level = r.level
         isCharging = r.isCharging
         isPluggedIn = r.isPluggedIn
         isFull = r.state == .full
         timeText = BatteryFormat.menuBarTime(r)
         lowPowerMode = r.lowPowerMode
+        chargeTier = ChargeTier.resolve(watts: Self.chargeWatts(r), plugged: r.isPluggedIn, charging: r.isCharging,
+                                        previous: previousTier)
     }
+
+    /// Pile giden güç (W): öncelik BatteryPower, yoksa akım × gerilim.
+    static func chargeWatts(_ r: BatteryReading) -> Double? { r.chargeRateW }
 }
 
 /// Pil gövdesinin bu çizimde nasıl çizileceği: düz (statik), canlı dalganın belirli bir fazında ya da hiç (animasyonda
@@ -171,8 +233,8 @@ enum BatteryCapsuleRender: Equatable, Sendable {
     case hidden
 }
 
-/// "Dolgulu sıvı pil": yuvarlak köşeli gövde + sağda uç, içi seviye kadar renkli sıvı, üstünde kalın yüzde; şarjda
-/// şimşek gövdenin içinde, yazının solunda. Yazı ve şimşek sıvının üstünde kalan kısımda zıt renkle kırpılır.
+/// "Dolgulu sıvı pil": yuvarlak köşeli gövde + sağda uç, içi seviye kadar renkli sıvı, üstünde kalın yüzde; şarjda ve
+/// fişteyken gövdenin solunda ayrı, ince şimşek (rengi şarj gücünü gösterir). Yazı sıvının üstünde zıt renkle kırpılır.
 enum BatteryGlyph {
     struct Metrics: Equatable {
         var body: CGSize
@@ -226,17 +288,25 @@ enum BatteryGlyph {
         return NSFont(descriptor: rounded, size: points) ?? base
     }
 
-    static func boltSize(innerHeight: CGFloat) -> CGSize {
-        CGSize(width: round(innerHeight * 0.55 * 2) / 2, height: innerHeight * 0.86)
+    /// Gövdenin solundaki ayrı şimşek (Juicy gibi): ince, ≈ 9,5 pt yüksek (Orta), parlamasız.
+    static func boltSize(_ m: Metrics) -> CGSize {
+        let h = (m.body.height * 0.68 * 2).rounded() / 2
+        return CGSize(width: (h * 0.55 * 2).rounded() / 2, height: h)
     }
-    static let boltSpacing: CGFloat = 1.5
+    /// Şimşek ile gövde arası.
+    static let boltGap: CGFloat = 2
 
-    /// Yazı + (varsa) şimşek gövde içine en az 1 pt payla sığana dek küçülen yazı tipi (yalnızca "⚡100" gibi uç durumlar).
-    static func contentFont(_ m: Metrics, text: String, bolt: Bool, innerWidth: CGFloat, innerHeight: CGFloat) -> NSFont {
-        let extra = bolt ? boltSize(innerHeight: innerHeight).width + boltSpacing : 0
+    /// Gövdenin solunda şimşeğe ayrılan yer (şimşek yoksa 0).
+    static func boltSlot(_ m: Metrics, _ state: BatteryGlyphState?) -> CGFloat {
+        guard let state, showsBolt(state) else { return 0 }
+        return boltSize(m).width + boltGap
+    }
+
+    /// Yazı gövde içine en az 1 pt payla sığana dek küçülen yazı tipi (yalnızca "~100" gibi uç durumlar).
+    static func contentFont(_ m: Metrics, text: String, innerWidth: CGFloat) -> NSFont {
         var points = m.font
         var font = levelFont(m, size: points)
-        while (text as NSString).size(withAttributes: [.font: font]).width + extra > innerWidth - 2, points > m.font * 0.7 {
+        while (text as NSString).size(withAttributes: [.font: font]).width > innerWidth - 2, points > m.font * 0.7 {
             points -= 0.5
             font = levelFont(m, size: points)
         }
@@ -247,7 +317,8 @@ enum BatteryGlyph {
         ceil((s as NSString).size(withAttributes: [.font: font]).width)
     }
 
-    static func showsBolt(_ state: BatteryGlyphState) -> Bool { state.isCharging || (state.isPluggedIn && !state.isFull) }
+    /// Şarjda ve fişteyken (dolu olsa da) gövdenin solunda şimşek.
+    static func showsBolt(_ state: BatteryGlyphState) -> Bool { state.isCharging || state.isPluggedIn }
 
     private static let deviceIconWidth: CGFloat = 14
 
@@ -308,7 +379,7 @@ enum BatteryGlyph {
         if c.deviceID != nil { return deviceWidth(c, state(c, values)) }
         let m = metrics(c.battery.size)
         let state = state(c, values)
-        var w = capsuleSize(m, state).width
+        var w = boltSlot(m, state) + capsuleSize(m, state).width
         if state?.deviceSymbol != nil { w += deviceIconWidth + gap }
         if c.battery.showTime, let t = state?.timeText { w += gap + textWidth(t, timeFont(m)) }
         return ceil(w)
@@ -320,6 +391,7 @@ enum BatteryGlyph {
         let state = state(c, values)
         var x = rect.minX
         if state?.deviceSymbol != nil { x += deviceIconWidth + gap }
+        x += boltSlot(m, state)
         let size = capsuleSize(m, state)
         let y = rect.midY - size.height / 2
         // Yarım noktaya hizala (2x ekranda tam piksel).
@@ -330,14 +402,75 @@ enum BatteryGlyph {
         tint(statusColors: c.battery.statusColors, state)
     }
 
-    static func tint(statusColors: Bool, _ state: BatteryGlyphState) -> NSColor? {
+    /// Ayarlardaki "Durum renkleri" anahtarının açıklaması.
+    static let statusColorsCaption =
+        "Şarjda yeşil, fişte ama şarj olmuyorsa mavi, azalınca turuncu/kırmızı; şimşek rengi şarj hızını gösterir."
+
+    /// Otomatik durum rengi (dolgu + çerçeve). `nil` → nötr.
+    enum Tone: Equatable, Sendable {
+        case charging, plugged, lowPower, low, critical
+    }
+
+    static func tone(statusColors: Bool, _ state: BatteryGlyphState) -> Tone? {
         guard statusColors else { return nil }
-        if state.isCharging { return .systemGreen }
-        if state.lowPowerMode && !state.isPluggedIn { return .systemYellow }
-        if state.isPluggedIn { return nil }
-        if state.level <= 10 { return .systemRed }
-        if state.level <= 20 { return .systemOrange }
+        if state.isCharging { return .charging }
+        if state.lowPowerMode && !state.isPluggedIn { return .lowPower }
+        if state.isPluggedIn { return .plugged }
+        if state.level <= 10 { return .critical }
+        if state.level <= 20 { return .low }
         return nil
+    }
+
+    static func tint(statusColors: Bool, _ state: BatteryGlyphState) -> NSColor? {
+        switch tone(statusColors: statusColors, state) {
+        case .charging: .systemGreen
+        case .plugged: pluggedBlue
+        case .lowPower: .systemYellow
+        case .low: .systemOrange
+        case .critical: .systemRed
+        case nil: nil
+        }
+    }
+
+    /// Görünüme göre çözülen sRGB renk (açık menü çubuğunda biraz daha koyu ton → okunur).
+    private static func dynamic(_ name: String, dark: (CGFloat, CGFloat, CGFloat), light: (CGFloat, CGFloat, CGFloat)) -> NSColor {
+        NSColor(name: NSColor.Name("adalmon.battery." + name)) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) != .aqua
+            let c = isDark ? dark : light
+            return NSColor(srgbRed: c.0, green: c.1, blue: c.2, alpha: 1)
+        }
+    }
+
+    /// Fişte ama şarj olmuyor (dolu / koruma): sakin gök mavisi.
+    static var pluggedBlue: NSColor { dynamic("plugged", dark: (0.36, 0.68, 0.95), light: (0.20, 0.53, 0.88)) }
+
+    /// Şimşek rengi: şarj gücü kademesine göre; hazır/özel dolgu renginden bağımsız. Durum renkleri kapalıysa nötr.
+    static func boltColor(statusColors: Bool, _ state: BatteryGlyphState) -> NSColor {
+        guard statusColors else { return NSColor.labelColor.withAlphaComponent(0.85) }
+        if state.chargeTier == .insufficient { return boltColor(.insufficient) }
+        if state.isCharging { return boltColor(state.chargeTier ?? .medium) }
+        if state.isPluggedIn { return pluggedBlue.withAlphaComponent(0.7) }
+        return boltColor(.medium)
+    }
+
+    static func boltColor(_ tier: ChargeTier) -> NSColor {
+        switch tier {
+        case .insufficient: dynamic("bolt.drain", dark: (1.0, 0.60, 0.26), light: (0.90, 0.45, 0.06))
+        case .slow: dynamic("bolt.slow", dark: (1.0, 0.80, 0.32), light: (0.80, 0.56, 0.0))
+        case .medium: dynamic("bolt.medium", dark: (0.42, 0.85, 0.46), light: (0.16, 0.62, 0.26))
+        case .fast: dynamic("bolt.fast", dark: (0.33, 0.92, 0.64), light: (0.0, 0.66, 0.42))
+        case .veryFast: dynamic("bolt.veryFast", dark: (0.36, 0.93, 0.88), light: (0.0, 0.64, 0.64))
+        }
+    }
+
+    /// Gövdenin solundaki ince şimşek (dikey ortalı, yarım noktaya hizalı). Gövde karelerinin dışında → taban görüntüde.
+    static func drawBolt(_ state: BatteryGlyphState, options: BatteryGlyphOptions, capsule: CGRect) {
+        let m = metrics(options.size)
+        let s = boltSize(m)
+        let x = capsule.minX - boltGap - s.width
+        let y = ((capsule.midY - s.height / 2) * 2).rounded() / 2
+        boltColor(statusColors: options.statusColors, state).setFill()
+        boltPath(in: CGRect(x: x, y: y, width: s.width, height: s.height)).fill()
     }
 
     /// Pilde ve %20'nin altında: kırmızı nabız.
@@ -356,6 +489,8 @@ enum BatteryGlyph {
         if let symbol = state.deviceSymbol {
             WidgetGraphics.symbol(symbol, in: CGRect(x: rect.minX, y: rect.midY - 7, width: deviceIconWidth, height: 14), color: .labelColor)
         }
+        // Şimşek gövdenin dışında: animasyonda da (gövde .hidden) taban görüntüde kalır.
+        if showsBolt(state) { drawBolt(state, options: c.battery, capsule: capsule) }
         switch render {
         case .hidden: break
         // Cihaz pilleri her zaman sakin (düz) çizilir.
@@ -746,17 +881,10 @@ static func customAlert(_ state: BatteryGlyphState) -> Bool {
         } : nil
 
         let text = (state.isApproximate ? "~" : "") + "\(state.level)"
-        let bolt = showsBolt(state)
-        let font = contentFont(m, text: text, bolt: bolt, innerWidth: inner.width, innerHeight: inner.height)
+        let font = contentFont(m, text: text, innerWidth: inner.width)
         let textSize = (text as NSString).size(withAttributes: [.font: font])
-        let boltSize = boltSize(innerHeight: inner.height)
-        let spacing: CGFloat = bolt ? boltSpacing : 0
-        let contentWidth = textSize.width + (bolt ? boltSize.width + spacing : 0)
-        var x = inner.midX - contentWidth / 2
-        let boltRect = CGRect(x: x, y: inner.midY - boltSize.height / 2, width: boltSize.width, height: boltSize.height)
-        if bolt { x += boltSize.width + spacing }
         let baselineY = inner.midY - font.capHeight / 2
-        let textOrigin = CGPoint(x: x, y: baselineY + font.descender)
+        let textOrigin = CGPoint(x: inner.midX - textSize.width / 2, y: baselineY + font.descender)
 
         var fill = baseFill
         if let liquid {
@@ -814,10 +942,6 @@ static func customAlert(_ state: BatteryGlyphState) -> Bool {
         }
 
         func drawContent(_ color: NSColor) {
-            if bolt {
-                color.setFill()
-                boltPath(in: boltRect).fill()
-            }
             (text as NSString).draw(at: textOrigin, withAttributes: [.font: font, .foregroundColor: color])
         }
 
@@ -838,12 +962,6 @@ static func customAlert(_ state: BatteryGlyphState) -> Bool {
             liquid.addClip()
             if wave != nil, [.bubbles, .stripes, .segments, .sparkle, .ecg].contains(style) {
                 let halo = fill.withAlphaComponent(min(1, fill.alphaComponent + 0.1))
-                if bolt {
-                    let p = boltPath(in: boltRect)
-                    p.lineWidth = 1.8
-                    halo.setStroke()
-                    p.stroke()
-                }
                 (text as NSString).draw(at: textOrigin, withAttributes: [.font: font, .strokeColor: halo, .strokeWidth: 24])
             }
             drawContent(onFill)

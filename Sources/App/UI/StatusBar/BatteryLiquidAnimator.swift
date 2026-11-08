@@ -58,6 +58,7 @@ struct BatteryFrameKey: Hashable, Sendable {
     init(state: BatteryGlyphState, options: BatteryGlyphOptions, appearance: NSAppearance.Name, scale: CGFloat) {
         var s = state
         s.timeText = nil // süre gövdenin dışında çizilir; kareleri etkilemez
+        s.chargeTier = nil // şimşek de gövdenin dışında (taban görüntüde); güç kademesi kareleri yeniden üretmez
         self.state = s
         size = options.size
         statusColors = options.statusColors

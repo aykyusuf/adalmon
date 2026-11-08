@@ -54,7 +54,11 @@ struct ComponentInspector: View {
 
         if component.visual == .batteryCapsule {
             Toggle("Kalan / dolma süresini göster", isOn: $component.battery.showTime)
-            Toggle("Durum renkleri (şarjda yeşil, azalınca turuncu, kritikte kırmızı)", isOn: $component.battery.statusColors)
+            Toggle("Durum renkleri", isOn: $component.battery.statusColors)
+            Text(BatteryGlyph.statusColorsCaption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Picker("Boyut", selection: $component.battery.size) {
                 ForEach(BatteryGlyphOptions.Size.allCases) { Text($0.displayName).tag($0) }
             }
@@ -293,7 +297,7 @@ struct BatteryStylePicker: View {
         HStack(spacing: 6) {
             Text("Renk")
             chip("Otomatik", selected: fillColor == nil) { fillColor = nil }
-                .help("Durum renkleri: şarjda yeşil, azalınca turuncu, kritikte kırmızı")
+                .help("Durum renkleri: " + BatteryGlyph.statusColorsCaption)
             ForEach(BatteryGlyphOptions.Swatch.allCases) { swatch in
                 let selected = fillColor == swatch.color
                 Button { fillColor = swatch.color } label: {

@@ -68,6 +68,9 @@ struct MetricCardView: View {
                 Toggle("Durum rengi (şarj / düşük)", isOn: $card.thresholdColor)
             }
             .toggleStyle(.checkbox)
+            Text(BatteryGlyph.statusColorsCaption)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Picker("Animasyon", selection: $card.batteryAnimation) {
                 ForEach(BatteryGlyphOptions.Animation.allCases) { Text($0.displayName).tag($0) }
             }

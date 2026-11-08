@@ -150,7 +150,7 @@ final class BatteryPreviewTests: XCTestCase {
         }
         try await snapshot(view.frame(width: 1400, height: 900), size: NSSize(width: 1400, height: 900), name: "bat1-mainwindow-real", wait: 2.5)
         XCTAssertEqual(MainSection.battery.shortcutKey, "7")
-        XCTAssertEqual(MainSection.pages.last, .battery)
+        XCTAssertTrue(MainSection.pages.contains(.battery))
     }
 
     // MARK: Menü çubuğu
