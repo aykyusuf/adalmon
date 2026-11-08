@@ -41,7 +41,9 @@
 
   function loadImage(file) {
     if (!images.has(file)) {
-      images.set(file, api('/assets/' + file).then((r) => r.blob()).then((b) => createImageBitmap(b)));
+      // Düzen JSON'u mobilya dosyalarını klasör öneki olmadan verir ("PC/PC_FRONT_OFF.png"): bilinen kök yoksa furniture/ varsay.
+      const rooted = /^(characters|furniture|floors|walls|carpets|generated)\//.test(file) ? file : 'furniture/' + file;
+      images.set(file, api('/assets/' + rooted).then((r) => r.blob()).then((b) => createImageBitmap(b)));
     }
     return images.get(file);
   }
