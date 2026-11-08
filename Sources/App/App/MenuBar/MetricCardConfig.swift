@@ -14,6 +14,8 @@ struct MetricCardConfig: Equatable, Identifiable, Sendable {
     var networkSource: NetworkCardSource = .speed
     /// Pil kartı: kalan / dolum süresini de göster.
     var showTime = false
+    /// Pil kartı: menü çubuğundaki sıvı animasyonu.
+    var batteryAnimation: BatteryGlyphOptions.Animation = .live
 
     var id: MetricCardKind { kind }
 

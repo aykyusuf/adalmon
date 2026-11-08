@@ -23,17 +23,20 @@ enum MenuBarComposer {
     }
 
     static func image(for components: [MenuBarComponent], config: MenuBarConfig, values: WidgetValues,
-                      appearance: NSAppearance.Name? = nil, zoom: CGFloat = 1) -> NSImage {
+                      appearance: NSAppearance.Name? = nil, zoom: CGFloat = 1,
+                      battery: BatteryCapsuleRender = .flat) -> NSImage {
         let widths = widths(of: components, config: config, values: values)
         let size = NSSize(width: width(of: components, config: config, values: values) * zoom, height: ComponentRenderer.height * zoom)
         let spacing = config.clampedSpacing
+        let animated = animatedBatteryIndex(in: components)
         let image = NSImage(size: size, flipped: false) { _ in
             let draw = {
                 if zoom != 1 { NSGraphicsContext.current?.cgContext.scaleBy(x: zoom, y: zoom) }
                 var x = horizontalPadding
-                for (component, w) in zip(components, widths) {
+                for (index, (component, w)) in zip(components, widths).enumerated() {
                     ComponentRenderer.draw(component, config: config, values: values,
-                                           in: CGRect(x: x, y: 0, width: w, height: ComponentRenderer.height))
+                                           in: CGRect(x: x, y: 0, width: w, height: ComponentRenderer.height),
+                                           battery: index == animated ? battery : .flat)
                     x += w + spacing
                 }
             }
@@ -47,6 +50,41 @@ enum MenuBarComposer {
         image.isTemplate = false
         image.accessibilityDescription = accessibilitySummary(for: components, values: values)
         return image
+    }
+
+    /// Canlı sıvıyla çizilecek (ilk) Mac pili bileşeninin sırası.
+    static func animatedBatteryIndex(in components: [MenuBarComponent]) -> Int? {
+        components.firstIndex(where: BatteryGlyph.isAnimatable)
+    }
+
+    /// Animasyonlu pil gövdesinin bileşik görüntüdeki dikdörtgeni (yakınlaştırmasız nokta).
+    static func animatedBatteryRect(in components: [MenuBarComponent], config: MenuBarConfig, values: WidgetValues) -> CGRect? {
+        guard let index = animatedBatteryIndex(in: components) else { return nil }
+        let slot = frames(of: components, config: config, values: values)[index]
+        return BatteryGlyph.capsuleRect(components[index], values: values,
+                                        in: CGRect(x: slot.lowerBound, y: 0, width: slot.upperBound - slot.lowerBound,
+                                                   height: ComponentRenderer.height))
+    }
+
+    /// `base` bitmap'inin üstüne `overlay`'i `rect`'e bindirir (kare başına tek kopya; vektör çizimi yok).
+    static func composite(base: NSImage, overlay: NSImage, at rect: CGRect) -> NSImage {
+        guard let baseRep = base.representations.first as? NSBitmapImageRep,
+              let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: baseRep.pixelsWide, pixelsHigh: baseRep.pixelsHigh,
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return base }
+        rep.size = base.size
+        NSGraphicsContext.saveGraphicsState()
+        let ctx = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current = ctx
+        ctx?.imageInterpolation = .none
+        base.draw(in: NSRect(origin: .zero, size: base.size), from: .zero, operation: .copy, fraction: 1)
+        overlay.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        let out = NSImage(size: base.size)
+        out.addRepresentation(rep)
+        out.isTemplate = base.isTemplate
+        out.accessibilityDescription = base.accessibilityDescription
+        return out
     }
 
     static func bitmap(_ image: NSImage, appearance: NSAppearance, scale: CGFloat) -> NSImage {

@@ -13,28 +13,47 @@ struct BatteryGlyphOptions: Codable, Equatable, Sendable {
         }
     }
 
+    /// Menü çubuğundaki sıvı dolgunun hareketi (yalnızca Mac pili).
+    enum Animation: String, Codable, CaseIterable, Identifiable, Sendable {
+        case off, light, live
+        var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .off: "Kapalı"
+            case .light: "Hafif"
+            case .live: "Canlı"
+            }
+        }
+    }
+
     var showTime = false
     var statusColors = true
     var size: Size = .medium
+    /// (`animation` adı SwiftUI `Binding.animation(_:)` ile çakışır; JSON anahtarı yine "animation".)
+    var motion: Animation = .live
 
-    init(showTime: Bool = false, statusColors: Bool = true, size: Size = .medium) {
+    init(showTime: Bool = false, statusColors: Bool = true, size: Size = .medium, motion: Animation = .live) {
         self.showTime = showTime
         self.statusColors = statusColors
         self.size = size
+        self.motion = motion
     }
 
-    private enum CodingKeys: String, CodingKey { case showTime, statusColors, size }
+    private enum CodingKeys: String, CodingKey { case showTime, statusColors, size
+        case motion = "animation"
+    }
 
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         showTime = try c.decodeIfPresent(Bool.self, forKey: .showTime) ?? false
         statusColors = try c.decodeIfPresent(Bool.self, forKey: .statusColors) ?? true
         size = (try? c.decodeIfPresent(Size.self, forKey: .size)) ?? .medium
+        motion = (try? c.decodeIfPresent(Animation.self, forKey: .motion)) ?? .live
     }
 }
 
 /// Menü çubuğu pil çizimi için gereken en küçük durum (zaman damgası yok; render anahtarı bununla karşılaştırır).
-struct BatteryGlyphState: Equatable, Sendable {
+struct BatteryGlyphState: Equatable, Hashable, Sendable {
     var level: Int
     var isCharging: Bool
     var isPluggedIn: Bool
@@ -66,36 +85,91 @@ struct BatteryGlyphState: Equatable, Sendable {
     }
 }
 
-/// Kapsül pil: içinde yüzde, solda şarj şimşeği, sağda isteğe bağlı süre.
+/// Pil gövdesinin bu çizimde nasıl çizileceği: düz (statik), canlı dalganın belirli bir fazında ya da hiç (animasyonda
+/// gövde ayrı, önceden hazırlanmış karelerden üstüne bindirilir).
+enum BatteryCapsuleRender: Equatable, Sendable {
+    case flat
+    case wave(phase: Double, amplitude: CGFloat)
+    case hidden
+}
+
+/// "Dolgulu sıvı pil": yuvarlak köşeli gövde + sağda uç, içi seviye kadar renkli sıvı, üstünde kalın yüzde; şarjda
+/// şimşek gövdenin içinde, yazının solunda. Yazı ve şimşek sıvının üstünde kalan kısımda zıt renkle kırpılır.
 enum BatteryGlyph {
-    private struct Metrics {
-        var capsule: CGSize
+    struct Metrics: Equatable {
+        var body: CGSize
+        var radius: CGFloat
+        var nub: CGSize
         var font: CGFloat
         var timeFont: CGFloat
+        var stroke: CGFloat
+        var inset: CGFloat
     }
 
-    private static func metrics(_ size: BatteryGlyphOptions.Size) -> Metrics {
+    static func metrics(_ size: BatteryGlyphOptions.Size) -> Metrics {
         switch size {
-        case .small: Metrics(capsule: CGSize(width: 28, height: 12), font: 8.5, timeFont: 10)
-        case .medium: Metrics(capsule: CGSize(width: 34, height: 14), font: 9.5, timeFont: 11)
-        case .large: Metrics(capsule: CGSize(width: 40, height: 16), font: 11, timeFont: 12)
+        // Orta = Juicy'nin gerçek pili (ekran görüntüsüyle ölçüldü): ~29x14 pt gövde + uç ≈ 32 pt, kalın ~10 pt rakam.
+        case .small: Metrics(body: CGSize(width: 26, height: 12.5), radius: 4, nub: CGSize(width: 2, height: 5),
+                             font: 9, timeFont: 10, stroke: 1.1, inset: 1.5)
+        case .medium: Metrics(body: CGSize(width: 29, height: 14), radius: 4.5, nub: CGSize(width: 2.2, height: 5.5),
+                              font: 10.5, timeFont: 11, stroke: 1.2, inset: 1.6)
+        case .large: Metrics(body: CGSize(width: 33, height: 16), radius: 5, nub: CGSize(width: 2.5, height: 6.5),
+                             font: 12, timeFont: 12, stroke: 1.3, inset: 1.8)
         }
     }
 
-    private static let boltWidth: CGFloat = 9
+    /// Bir dalga döngüsündeki kare sayısı (nabız ve parıltı da bu döngüde tam tur atar → kare önbelleği N kare).
+    static let frameCount = 24
     private static let gap: CGFloat = 3
+    private static let nubGap: CGFloat = 1
 
-    /// "~" öneki kapsülün biraz genişlemesini ister.
-    private static func capsuleWidth(_ m: Metrics, _ state: BatteryGlyphState) -> CGFloat { m.capsule.width + (state.isApproximate ? 5 : 0) }
+    /// Animasyon modunun dalga genliği (pt).
+    static func amplitude(_ animation: BatteryGlyphOptions.Animation) -> CGFloat {
+        switch animation {
+        case .off: 0
+        case .light: 0.6
+        case .live: 1.0
+        }
+    }
 
-    private static func timeFont(_ m: Metrics) -> NSFont { .monospacedDigitSystemFont(ofSize: m.timeFont, weight: .medium) }
-    private static func levelFont(_ m: Metrics) -> NSFont { .monospacedDigitSystemFont(ofSize: m.font, weight: .semibold) }
+    /// "~" öneki gövdenin biraz genişlemesini ister.
+    static func bodyWidth(_ m: Metrics, _ state: BatteryGlyphState?) -> CGFloat { m.body.width + (state?.isApproximate == true ? 5 : 0) }
+    /// Gövde + uç (önbellekteki kare görüntüsünün boyutu).
+    static func capsuleSize(_ m: Metrics, _ state: BatteryGlyphState?) -> CGSize {
+        CGSize(width: bodyWidth(m, state) + nubGap + m.nub.width, height: m.body.height)
+    }
+
+    private static func timeFont(_ m: Metrics) -> NSFont { .monospacedDigitSystemFont(ofSize: m.timeFont, weight: .semibold) }
+    static func levelFont(_ m: Metrics, size: CGFloat? = nil) -> NSFont {
+        // Orantılı rakamlar: gövde genişliği sabit, "100" ve şimşek rahat sığar.
+        let points = size ?? m.font
+        let base = NSFont.systemFont(ofSize: points, weight: .heavy)
+        guard let rounded = base.fontDescriptor.withDesign(.rounded) else { return base }
+        return NSFont(descriptor: rounded, size: points) ?? base
+    }
+
+    static func boltSize(innerHeight: CGFloat) -> CGSize {
+        CGSize(width: round(innerHeight * 0.55 * 2) / 2, height: innerHeight * 0.86)
+    }
+    static let boltSpacing: CGFloat = 1.5
+
+    /// Yazı + (varsa) şimşek gövde içine en az 1 pt payla sığana dek küçülen yazı tipi (yalnızca "⚡100" gibi uç durumlar).
+    static func contentFont(_ m: Metrics, text: String, bolt: Bool, innerWidth: CGFloat, innerHeight: CGFloat) -> NSFont {
+        let extra = bolt ? boltSize(innerHeight: innerHeight).width + boltSpacing : 0
+        var points = m.font
+        var font = levelFont(m, size: points)
+        while (text as NSString).size(withAttributes: [.font: font]).width + extra > innerWidth - 2, points > m.font * 0.7 {
+            points -= 0.5
+            font = levelFont(m, size: points)
+        }
+        return font
+    }
 
     private static func textWidth(_ s: String, _ font: NSFont) -> CGFloat {
         ceil((s as NSString).size(withAttributes: [.font: font]).width)
     }
 
-    private static func showsBolt(_ state: BatteryGlyphState) -> Bool { state.isCharging || (state.isPluggedIn && !state.isFull) }
+    static func showsBolt(_ state: BatteryGlyphState) -> Bool { state.isCharging || (state.isPluggedIn && !state.isFull) }
 
     private static let deviceIconWidth: CGFloat = 14
 
@@ -103,6 +177,11 @@ enum BatteryGlyph {
     static func state(_ c: MenuBarComponent, _ values: WidgetValues) -> BatteryGlyphState? {
         guard let id = c.deviceID else { return values.battery }
         return values.devices[id]
+    }
+
+    /// Bu bileşen sürekli canlı sıvıyla çizilebilir mi (yalnızca Mac pili; cihaz pilleri statik).
+    static func isAnimatable(_ c: MenuBarComponent) -> Bool {
+        c.visual == .batteryCapsule && c.deviceID == nil && c.battery.motion != .off
     }
 
     // MARK: Cihaz öğesi ("📱 32%")
@@ -124,7 +203,7 @@ enum BatteryGlyph {
 
     private static func deviceWidth(_ c: MenuBarComponent, _ state: BatteryGlyphState?) -> CGFloat {
         var w = deviceIconWidth + gap + textWidth(deviceText(state), deviceFont)
-        if state?.isCharging == true { w += boltWidth - 3 }
+        if state?.isCharging == true { w += 9 - 3 }
         return ceil(w)
     }
 
@@ -135,8 +214,8 @@ enum BatteryGlyph {
                               in: CGRect(x: x, y: midY - 7, width: deviceIconWidth, height: 14), color: .labelColor)
         x += deviceIconWidth + gap
         if state?.isCharging == true {
-            WidgetGraphics.symbol("bolt.fill", in: CGRect(x: x - 2, y: midY - 5.5, width: boltWidth, height: 11), color: .systemGreen)
-            x += boltWidth - 3
+            WidgetGraphics.symbol("bolt.fill", in: CGRect(x: x - 2, y: midY - 5.5, width: 9, height: 11), color: .systemGreen)
+            x += 9 - 3
         }
         let color = deviceTint(c, state) ?? NSColor.labelColor
         let attrs: [NSAttributedString.Key: Any] = [.font: deviceFont, .foregroundColor: color]
@@ -145,19 +224,36 @@ enum BatteryGlyph {
         text.draw(at: NSPoint(x: x, y: midY - size.height / 2 + 0.3), withAttributes: attrs)
     }
 
+    // MARK: Ölçü
+
     static func width(_ c: MenuBarComponent, values: WidgetValues) -> CGFloat {
         if c.deviceID != nil { return deviceWidth(c, state(c, values)) }
         let m = metrics(c.battery.size)
-        guard let state = state(c, values) else { return m.capsule.width + (c.deviceID != nil ? deviceIconWidth + gap : 0) }
-        var w = capsuleWidth(m, state)
-        if state.deviceSymbol != nil { w += deviceIconWidth + gap }
-        if showsBolt(state) { w += boltWidth + gap - 2 }
-        if c.battery.showTime, let t = state.timeText { w += gap + textWidth(t, timeFont(m)) }
+        let state = state(c, values)
+        var w = capsuleSize(m, state).width
+        if state?.deviceSymbol != nil { w += deviceIconWidth + gap }
+        if c.battery.showTime, let t = state?.timeText { w += gap + textWidth(t, timeFont(m)) }
         return ceil(w)
     }
 
+    /// Gövde+uç dikdörtgeni (bileşen yuvası içinde, yarım noktaya hizalı). Animasyon kareleri buraya bindirilir.
+    static func capsuleRect(_ c: MenuBarComponent, values: WidgetValues, in rect: CGRect) -> CGRect {
+        let m = metrics(c.battery.size)
+        let state = state(c, values)
+        var x = rect.minX
+        if state?.deviceSymbol != nil { x += deviceIconWidth + gap }
+        let size = capsuleSize(m, state)
+        let y = rect.midY - size.height / 2
+        // Yarım noktaya hizala (2x ekranda tam piksel).
+        return CGRect(x: (x * 2).rounded() / 2, y: (y * 2).rounded() / 2, width: size.width, height: size.height)
+    }
+
     static func tint(_ c: MenuBarComponent, _ state: BatteryGlyphState) -> NSColor? {
-        guard c.battery.statusColors else { return nil }
+        tint(statusColors: c.battery.statusColors, state)
+    }
+
+    static func tint(statusColors: Bool, _ state: BatteryGlyphState) -> NSColor? {
+        guard statusColors else { return nil }
         if state.isCharging { return .systemGreen }
         if state.lowPowerMode && !state.isPluggedIn { return .systemYellow }
         if state.isPluggedIn { return nil }
@@ -166,67 +262,211 @@ enum BatteryGlyph {
         return nil
     }
 
-    static func draw(_ c: MenuBarComponent, values: WidgetValues, in rect: CGRect) {
+    /// Pilde ve %20'nin altında: kırmızı nabız.
+    static func pulses(_ state: BatteryGlyphState) -> Bool { !state.isCharging && !state.isPluggedIn && state.level < 20 }
+
+    // MARK: Çizim
+
+    static func draw(_ c: MenuBarComponent, values: WidgetValues, in rect: CGRect, capsule render: BatteryCapsuleRender = .flat) {
         if c.deviceID != nil { drawDevice(c, state(c, values), in: rect); return }
         let m = metrics(c.battery.size)
+        let capsule = capsuleRect(c, values: values, in: rect)
         guard let state = state(c, values) else {
-            drawPlaceholder(m, in: rect)
+            drawPlaceholder(m, in: capsule)
             return
         }
-        let tint = tint(c, state)
-        var x = rect.minX
-        let midY = rect.midY
-
         if let symbol = state.deviceSymbol {
-            WidgetGraphics.symbol(symbol, in: CGRect(x: x, y: midY - 7, width: deviceIconWidth, height: 14), color: .labelColor)
-            x += deviceIconWidth + gap
+            WidgetGraphics.symbol(symbol, in: CGRect(x: rect.minX, y: rect.midY - 7, width: deviceIconWidth, height: 14), color: .labelColor)
         }
-
-        if showsBolt(state) {
-            let color = (state.isCharging ? tint ?? NSColor.labelColor : NSColor.labelColor.withAlphaComponent(0.7))
-            WidgetGraphics.symbol("bolt.fill", in: CGRect(x: x - 1, y: midY - 5.5, width: boltWidth, height: 11), color: color)
-            x += boltWidth + gap - 2
+        switch render {
+        case .hidden: break
+        // Cihaz pilleri her zaman sakin (düz) çizilir.
+        case .flat: drawCapsule(state, options: c.battery, level: Double(state.level), in: capsule, wave: nil)
+        case .wave(let phase, let amplitude):
+            let wave = state.deviceSymbol == nil ? (phase, amplitude) : nil
+            drawCapsule(state, options: c.battery, level: Double(state.level), in: capsule, wave: wave)
         }
-
-        let capsule = CGRect(x: x, y: midY - m.capsule.height / 2, width: capsuleWidth(m, state), height: m.capsule.height)
-        let radius = capsule.height / 2
-        let outline = NSBezierPath(roundedRect: capsule.insetBy(dx: 0.6, dy: 0.6), xRadius: radius, yRadius: radius)
-        outline.lineWidth = 1.2
-        (tint?.withAlphaComponent(0.9) ?? NSColor.labelColor.withAlphaComponent(0.55)).setStroke()
-        outline.stroke()
-
-        // İç dolgu (seviyeye orantılı).
-        let inner = capsule.insetBy(dx: 2, dy: 2)
-        let fraction = CGFloat(max(0, min(100, state.level))) / 100
-        if fraction > 0 {
-            NSGraphicsContext.saveGraphicsState()
-            NSBezierPath(roundedRect: inner, xRadius: inner.height / 2, yRadius: inner.height / 2).addClip()
-            (tint ?? NSColor.labelColor).withAlphaComponent(tint == nil ? 0.30 : 0.42).setFill()
-            let fill = CGRect(x: inner.minX, y: inner.minY, width: max(inner.height, inner.width * fraction), height: inner.height)
-            NSBezierPath(roundedRect: fill, xRadius: inner.height / 2, yRadius: inner.height / 2).fill()
-            NSGraphicsContext.restoreGraphicsState()
-        }
-
-        let text = (state.isApproximate ? "~" : "") + "\(state.level)"
-        let font = levelFont(m)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
-        let size = (text as NSString).size(withAttributes: attrs)
-        (text as NSString).draw(at: NSPoint(x: capsule.midX - size.width / 2, y: capsule.midY - size.height / 2 + 0.3), withAttributes: attrs)
-        x = capsule.maxX
-
         if c.battery.showTime, let t = state.timeText {
             let tf = timeFont(m)
             let a: [NSAttributedString.Key: Any] = [.font: tf, .foregroundColor: NSColor.labelColor]
             let s = (t as NSString).size(withAttributes: a)
-            (t as NSString).draw(at: NSPoint(x: x + gap, y: midY - s.height / 2 + 0.3), withAttributes: a)
+            (t as NSString).draw(at: NSPoint(x: capsule.maxX + gap, y: rect.midY - s.height / 2 + 0.3), withAttributes: a)
         }
     }
 
-    private static func drawPlaceholder(_ m: Metrics, in rect: CGRect) {
-        let capsule = CGRect(x: rect.minX, y: rect.midY - m.capsule.height / 2, width: m.capsule.width, height: m.capsule.height)
-        let path = NSBezierPath(roundedRect: capsule.insetBy(dx: 0.6, dy: 0.6), xRadius: capsule.height / 2, yRadius: capsule.height / 2)
-        path.lineWidth = 1.2
+    /// Sıvı yüzeyinin dolgu yüksekliği (pt): seviye 0 → 0; seviye > 0 ise en az ince bir çizgi görünür.
+    static func fillHeight(level: Double, innerHeight: CGFloat) -> CGFloat {
+        let l = max(0, min(100, level))
+        guard l > 0 else { return 0 }
+        return max(1.2, innerHeight * CGFloat(l) / 100)
+    }
+
+    /// Dalga genliği uçlarda (boş / tam dolu) incelir: tam dolu pil tepeden "çukur" göstermez.
+    static func taperedAmplitude(_ amplitude: CGFloat, level: Double) -> CGFloat {
+        let l = CGFloat(max(0, min(100, level)))
+        return amplitude * max(0, min(1, l / 6, (100 - l) / 6))
+    }
+
+    /// Yüzey yüksekliği: iki sinüs, farklı dalga boyu ve faz; ikincisi iki kat hızlı ters yönde (döngü N karede kapanır).
+    static func surfaceOffset(x: CGFloat, width: CGFloat, phase: Double) -> CGFloat {
+        let u = Double(x / max(width, 1))
+        let a = sin(2 * .pi * (u / 0.85 + phase))
+        let b = sin(2 * .pi * (u / 0.47 - 2 * phase) + 1.7)
+        return CGFloat(0.65 * a + 0.35 * b)
+    }
+
+    /// Nabız: 0…1 (faz 0'da en parlak), döngüde bir tur.
+    static func pulse(phase: Double) -> CGFloat { CGFloat(0.5 + 0.5 * cos(2 * .pi * phase)) }
+
+    private static func liquidPath(inner: CGRect, level: Double, wave: (phase: Double, amplitude: CGFloat)?) -> NSBezierPath? {
+        let h = fillHeight(level: level, innerHeight: inner.height)
+        guard h > 0 else { return nil }
+        let top = inner.minY + h
+        let path = NSBezierPath()
+        path.move(to: CGPoint(x: inner.minX - 1, y: inner.minY - 1))
+        let amp = wave.map { taperedAmplitude($0.amplitude, level: level) } ?? 0
+        if amp > 0, let wave {
+            var x = inner.minX - 1
+            while x <= inner.maxX + 1 {
+                path.line(to: CGPoint(x: x, y: top + amp * surfaceOffset(x: x - inner.minX, width: inner.width, phase: wave.phase)))
+                x += 0.5
+            }
+        } else {
+            path.line(to: CGPoint(x: inner.minX - 1, y: top))
+            path.line(to: CGPoint(x: inner.maxX + 1, y: top))
+        }
+        path.line(to: CGPoint(x: inner.maxX + 1, y: inner.minY - 1))
+        path.close()
+        return path
+    }
+
+    /// Sıvının üstündeki yazı rengi: dolgu açık renkse koyu, koyuysa beyaz (mevcut görünümde çözülmüş renkle).
+    static func contrastingText(on fill: NSColor) -> NSColor {
+        guard let c = fill.usingColorSpace(.sRGB) else { return .white }
+        func lin(_ v: CGFloat) -> CGFloat { v <= 0.03928 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        let lum = 0.2126 * lin(c.redComponent) + 0.7152 * lin(c.greenComponent) + 0.0722 * lin(c.blueComponent)
+        // Yarı saydam dolgu menü çubuğuyla karışır; alfa düşükse etiket rengi daha güvenli.
+        if c.alphaComponent < 0.5 { return .labelColor }
+        return lum > 0.36 ? NSColor(white: 0.08, alpha: 1) : .white
+    }
+
+    static func boltPath(in r: CGRect) -> NSBezierPath {
+        let p = NSBezierPath()
+        let pts: [(CGFloat, CGFloat)] = [(0.62, 1.0), (0.0, 0.42), (0.43, 0.42), (0.33, 0.0), (1.0, 0.6), (0.57, 0.6)]
+        for (i, pt) in pts.enumerated() {
+            let point = CGPoint(x: r.minX + pt.0 * r.width, y: r.minY + pt.1 * r.height)
+            if i == 0 { p.move(to: point) } else { p.line(to: point) }
+        }
+        p.close()
+        p.lineJoinStyle = .round
+        return p
+    }
+
+    /// Gövde + uç + sıvı + yazı/şimşek. `capsule` = `capsuleSize` büyüklüğünde dikdörtgen. `level` kesirli olabilir
+    /// (seviye geçişi); yazı her zaman gerçek seviyeyi gösterir.
+    static func drawCapsule(_ state: BatteryGlyphState, options: BatteryGlyphOptions, level: Double, in capsule: CGRect,
+                            wave: (phase: Double, amplitude: CGFloat)?) {
+        let m = metrics(options.size)
+        let body = CGRect(x: capsule.minX, y: capsule.minY, width: bodyWidth(m, state), height: m.body.height)
+        let tint = tint(statusColors: options.statusColors, state)
+        let pulsing = pulses(state) && wave != nil
+        let pulse = wave.map { pulse(phase: $0.phase) } ?? 1
+
+        // Uç.
+        let nub = CGRect(x: body.maxX + nubGap, y: body.midY - m.nub.height / 2, width: m.nub.width, height: m.nub.height)
+        let nubPath = NSBezierPath(roundedRect: nub, xRadius: m.nub.width * 0.7, yRadius: m.nub.width * 0.7)
+        let neutralStroke = NSColor.labelColor.withAlphaComponent(0.6)
+        (tint?.withAlphaComponent(0.85) ?? neutralStroke).setFill()
+        nubPath.fill()
+
+        // Gövde çerçevesi ve boş kısmın hafif zemini.
+        let outline = NSBezierPath(roundedRect: body.insetBy(dx: m.stroke / 2, dy: m.stroke / 2), xRadius: m.radius, yRadius: m.radius)
+        outline.lineWidth = m.stroke
+        NSColor.labelColor.withAlphaComponent(0.10).setFill()
+        outline.fill()
+        var strokeColor = tint?.withAlphaComponent(0.95) ?? neutralStroke
+        if pulsing && options.statusColors {
+            strokeColor = NSColor.systemRed.withAlphaComponent(0.55 + 0.45 * pulse)
+        }
+        strokeColor.setStroke()
+        outline.stroke()
+
+        // Sıvı.
+        let inner = body.insetBy(dx: m.inset, dy: m.inset)
+        let innerRadius = max(1.5, m.radius - m.inset + 0.4)
+        let innerClip = NSBezierPath(roundedRect: inner, xRadius: innerRadius, yRadius: innerRadius)
+        let baseFill = tint ?? NSColor.labelColor.withAlphaComponent(0.9)
+        let liquid = liquidPath(inner: inner, level: level, wave: wave)
+        if let liquid {
+            NSGraphicsContext.saveGraphicsState()
+            innerClip.addClip()
+            var fill = baseFill
+            if pulsing { fill = fill.withAlphaComponent(fill.alphaComponent * (0.62 + 0.38 * pulse)) }
+            fill.setFill()
+            liquid.fill()
+            // Şarjda soldan sağa kayan hafif parıltı.
+            if state.isCharging, let wave {
+                liquid.addClip()
+                let band = inner.width * 0.4
+                let t = wave.phase - floor(wave.phase)
+                let cx = inner.minX - band / 2 + (inner.width + band) * CGFloat(t)
+                let gradient = NSGradient(colors: [.white.withAlphaComponent(0), .white.withAlphaComponent(0.38), .white.withAlphaComponent(0)])
+                gradient?.draw(in: CGRect(x: cx - band / 2, y: inner.minY, width: band, height: inner.height), angle: 0)
+            }
+            NSGraphicsContext.restoreGraphicsState()
+        }
+
+        // Yazı (+ şimşek): boş kısımda etiket rengi, sıvı üstünde zıt renk.
+        let text = (state.isApproximate ? "~" : "") + "\(state.level)"
+        let bolt = showsBolt(state)
+        let font = contentFont(m, text: text, bolt: bolt, innerWidth: inner.width, innerHeight: inner.height)
+        let textSize = (text as NSString).size(withAttributes: [.font: font])
+        let boltSize = boltSize(innerHeight: inner.height)
+        let spacing: CGFloat = bolt ? boltSpacing : 0
+        let contentWidth = textSize.width + (bolt ? boltSize.width + spacing : 0)
+        var x = inner.midX - contentWidth / 2
+        let boltRect = CGRect(x: x, y: inner.midY - boltSize.height / 2, width: boltSize.width, height: boltSize.height)
+        if bolt { x += boltSize.width + spacing }
+        // Rakamların görsel merkezi: cap height'a göre dikeyde ortala.
+        let baselineY = inner.midY - font.capHeight / 2
+        let textOrigin = CGPoint(x: x, y: baselineY + font.descender)
+
+        func drawContent(_ color: NSColor) {
+            if bolt {
+                color.setFill()
+                boltPath(in: boltRect).fill()
+            }
+            (text as NSString).draw(at: textOrigin, withAttributes: [.font: font, .foregroundColor: color])
+        }
+
+        let onFill = contrastingText(on: baseFill)
+        NSGraphicsContext.saveGraphicsState()
+        if let liquid {
+            // Sıvının dışında kalan bölge.
+            let outside = NSBezierPath(rect: body.insetBy(dx: -2, dy: -2))
+            outside.append(liquid)
+            outside.windingRule = .evenOdd
+            outside.addClip()
+        }
+        drawContent(.labelColor)
+        NSGraphicsContext.restoreGraphicsState()
+        if let liquid {
+            NSGraphicsContext.saveGraphicsState()
+            innerClip.addClip()
+            liquid.addClip()
+            drawContent(onFill)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+    }
+
+    private static func drawPlaceholder(_ m: Metrics, in capsule: CGRect) {
+        let body = CGRect(x: capsule.minX, y: capsule.minY, width: m.body.width, height: m.body.height)
+        let path = NSBezierPath(roundedRect: body.insetBy(dx: m.stroke / 2, dy: m.stroke / 2), xRadius: m.radius, yRadius: m.radius)
+        path.lineWidth = m.stroke
         NSColor.labelColor.withAlphaComponent(0.35).setStroke()
         path.stroke()
+        let nub = CGRect(x: body.maxX + nubGap, y: body.midY - m.nub.height / 2, width: m.nub.width, height: m.nub.height)
+        NSColor.labelColor.withAlphaComponent(0.35).setFill()
+        NSBezierPath(roundedRect: nub, xRadius: m.nub.width * 0.7, yRadius: m.nub.width * 0.7).fill()
     }
 }

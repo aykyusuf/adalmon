@@ -58,6 +58,11 @@ struct ComponentInspector: View {
                 ForEach(BatteryGlyphOptions.Size.allCases) { Text($0.displayName).tag($0) }
             }
             .pickerStyle(.segmented)
+            Picker("Animasyon", selection: $component.battery.motion) {
+                ForEach(BatteryGlyphOptions.Animation.allCases) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .help("Pildeki sıvının hareketi (yalnızca Mac pili). Canlı: sürekli dalga; Hafif: daha sakin. Hareketi Azalt açıkken durur, Düşük Güç Modunda yavaşlar.")
         }
         Toggle("Etiket göster", isOn: $component.showLabel)
         if component.visual.hasGraphic {

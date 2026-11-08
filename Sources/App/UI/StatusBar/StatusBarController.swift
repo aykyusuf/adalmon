@@ -13,6 +13,8 @@ final class StatusBarController: NSObject {
     /// Her öğenin son çizilen bileşenleri ve görüntü genişliği (tıklama → panel eşlemesi için).
     private var groupComponents: [String: [MenuBarComponent]] = [:]
     private var imageWidths: [String: CGFloat] = [:]
+    /// Mac pilinin canlı sıvı animasyonu (yalnızca pil öğesi menü çubuğundayken çalışır).
+    private let batteryAnimator = BatteryLiquidAnimator()
 
     init(model: AppModel, onClick: @escaping (NSStatusBarButton, PanelRoute) -> Void) {
         self.model = model
@@ -20,6 +22,10 @@ final class StatusBarController: NSObject {
         super.init()
         // Değerler her ölçüm adımında bir kez çizilir (her model alanı değişiminde değil).
         model.onStep = { [weak self] in self?.render() }
+        batteryAnimator.onMotionPolicyChange = { [weak self] in
+            self?.lastKeys = [:]
+            self?.render()
+        }
         observeConfig()
         render()
     }
@@ -49,6 +55,8 @@ final class StatusBarController: NSObject {
 
         let groups = StatusItemPlan.groups(for: config)
         syncItems(keys: groups.map(\.key))
+        let animatedKey = animatedGroupKey(groups, values: values)
+        if animatedKey == nil, batteryAnimator.target != nil { batteryAnimator.clear() }
 
         for group in groups {
             groupComponents[group.key] = group.items
@@ -56,11 +64,25 @@ final class StatusBarController: NSObject {
             let key = MenuBarRenderKey(components: group.items, config: config, values: values)
             guard lastKeys[group.key] != key else { continue }
             lastKeys[group.key] = key
-            let image = group.items.isEmpty
-                ? MenuBarComposer.placeholderImage()
-                : MenuBarComposer.bitmap(MenuBarComposer.image(for: group.items, config: config, values: values),
-                                         appearance: button.effectiveAppearance,
-                                         scale: button.window?.backingScaleFactor ?? 2)
+            let appearance = button.effectiveAppearance
+            let scale = button.window?.backingScaleFactor ?? 2
+            let image: NSImage
+            if group.key == animatedKey, let battery = values.battery,
+               let index = MenuBarComposer.animatedBatteryIndex(in: group.items),
+               let rect = MenuBarComposer.animatedBatteryRect(in: group.items, config: config, values: values) {
+                // Taban (gövdesiz) bir kez çizilir; kareler animatörde önceden hazırlanır.
+                let base = MenuBarComposer.bitmap(MenuBarComposer.image(for: group.items, config: config, values: values, battery: .hidden),
+                                                  appearance: appearance, scale: scale)
+                let frameKey = BatteryFrameKey(state: battery, options: group.items[index].battery,
+                                               appearance: appearance.name, scale: scale)
+                image = batteryAnimator.show(.init(itemKey: group.key, button: button, base: base, rect: rect,
+                                                    frameKey: frameKey, appearance: appearance))
+            } else if group.items.isEmpty {
+                image = MenuBarComposer.placeholderImage()
+            } else {
+                image = MenuBarComposer.bitmap(MenuBarComposer.image(for: group.items, config: config, values: values),
+                                               appearance: appearance, scale: scale)
+            }
             // Sabit genişlik: menü çubuğu yalnızca genişlik değişince yeniden yerleşim yapar (pil).
             let width = ceil(image.size.width) + 8
             if let item = items[group.key], abs(item.length - width) > 0.5 { item.length = width }
@@ -77,9 +99,20 @@ final class StatusBarController: NSObject {
         }
     }
 
+    /// Canlı sıvıyla çizilecek öğe: Mac pili kapsülünü içeren ilk öğe (pil okunuyorsa ve hareket izinliyse).
+    private func animatedGroupKey(_ groups: [StatusItemPlan.Group], values: WidgetValues) -> String? {
+        guard values.battery != nil else { return nil }
+        for group in groups {
+            guard let index = MenuBarComposer.animatedBatteryIndex(in: group.items) else { continue }
+            return batteryAnimator.motionAllowed(group.items[index].battery.motion) ? group.key : nil
+        }
+        return nil
+    }
+
     /// Yalnızca kaybolan öğeleri kaldırır, yenileri ekler; mevcut öğeler (ve Cmd-sürükle konumları) yerinde kalır.
     private func syncItems(keys: [String]) {
         for (key, item) in items where !keys.contains(key) {
+            if batteryAnimator.target?.itemKey == key { batteryAnimator.clear() }
             NSStatusBar.system.removeStatusItem(item)
             items[key] = nil
             appearanceObservers[key] = nil

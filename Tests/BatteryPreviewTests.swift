@@ -179,6 +179,8 @@ final class BatteryPreviewTests: XCTestCase {
             ("Büyük", comp(.init(showTime: true, size: .large)), .sampleCharging),
             ("Küçük", comp(.init(showTime: true, size: .small)), .sample),
             ("Durum rengi kapalı", comp(.init(showTime: true, statusColors: false)), critical),
+            ("Animasyon hafif", comp(.init(motion: .light)), .sample),
+            ("Animasyon kapalı", comp(.init(motion: .off)), .sample),
         ]
         var widths: [CGFloat] = []
         let rows = VStack(alignment: .leading, spacing: 10) {

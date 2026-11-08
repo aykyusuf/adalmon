@@ -68,6 +68,12 @@ struct MetricCardView: View {
                 Toggle("Durum rengi (şarj / düşük)", isOn: $card.thresholdColor)
             }
             .toggleStyle(.checkbox)
+            Picker("Animasyon", selection: $card.batteryAnimation) {
+                ForEach(BatteryGlyphOptions.Animation.allCases) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .help("Pildeki sıvının hareketi. Canlı: sürekli dalga; Hafif: daha sakin. Hareketi Azalt açıkken durur, Düşük Güç Modunda yavaşlar.")
             Text("Mac pilini kapsül içinde yüzde olarak gösterir. Cihaz pilleri (iPhone, AirPods…) ayrı menü çubuğu öğeleri olarak, pil panelinden eklenir.")
                 .font(.caption).foregroundStyle(.secondary)
         } else {

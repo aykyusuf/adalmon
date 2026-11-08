@@ -124,9 +124,11 @@ enum ComponentRenderer {
 
     // MARK: Drawing
 
-    static func draw(_ c: MenuBarComponent, config: MenuBarConfig, values: WidgetValues, in rect: CGRect) {
+    static func draw(_ c: MenuBarComponent, config: MenuBarConfig, values: WidgetValues, in rect: CGRect,
+                     battery: BatteryCapsuleRender = .flat) {
         if c.visual == .batteryCapsule {
-            BatteryGlyph.draw(c, values: values, in: rect)
+            // Canlı sıvı yalnızca Mac pilinde; cihaz pilleri her zaman düz.
+            BatteryGlyph.draw(c, values: values, in: rect, capsule: c.deviceID == nil ? battery : .flat)
             return
         }
         if c.visual.isCompact {
