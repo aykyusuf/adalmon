@@ -203,9 +203,9 @@ final class BatteryLiquidGlyphTests: XCTestCase {
     func testAnimationPolicy() {
         typealias P = BatteryAnimationPolicy
         let env = P.Environment()
-        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: false, env: env), P.Plan(fps: 6, step: 1))
-        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: true, env: env), P.Plan(fps: 6, step: 2), "şarjda dalga hızlanır")
-        XCTAssertEqual(P.plan(mode: .light, hasAnimatedItem: true, charging: false, env: env), P.Plan(fps: 4, step: 1))
+        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: false, env: env), P.Plan(fps: 15, step: 1))
+        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: true, env: env), P.Plan(fps: 15, step: 2), "şarjda dalga hızlanır")
+        XCTAssertEqual(P.plan(mode: .light, hasAnimatedItem: true, charging: false, env: env), P.Plan(fps: 8, step: 1))
         XCTAssertNil(P.plan(mode: .off, hasAnimatedItem: true, charging: false, env: env))
         // Dolu (şarj bitti, takılı): plan charging=false ile de durmaz.
         XCTAssertNotNil(P.plan(mode: .live, hasAnimatedItem: true, charging: state(100, plugged: true, full: true).isCharging, env: env), "dolu: animasyon sürer")
@@ -220,7 +220,7 @@ final class BatteryLiquidGlyphTests: XCTestCase {
         XCTAssertNil(P.plan(mode: .live, hasAnimatedItem: true, charging: false, env: e), "Hareketi Azalt → statik")
         XCTAssertFalse(P.motionAllowed(.live, reduceMotion: true, lowPower: false))
         e = env; e.lowPower = true
-        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: true, env: e), P.Plan(fps: 2, step: 1), "Düşük Güç: yavaş")
+        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: true, env: e), P.Plan(fps: 4, step: 1), "Düşük Güç: yavaş")
         XCTAssertNil(P.plan(mode: .light, hasAnimatedItem: true, charging: false, env: e), "Düşük Güç + Hafif: dur")
         XCTAssertTrue(P.motionAllowed(.live, reduceMotion: false, lowPower: true))
         XCTAssertFalse(P.motionAllowed(.off, reduceMotion: false, lowPower: false))
@@ -266,7 +266,7 @@ final class BatteryLiquidGlyphTests: XCTestCase {
                                                                   appearance: .darkAqua, scale: 2), appearance: appearance))
         button.image = first
         XCTAssertTrue(animator.isRunning)
-        XCTAssertEqual(animator.plan, BatteryAnimationPolicy.Plan(fps: 6, step: 2))
+        XCTAssertEqual(animator.plan, BatteryAnimationPolicy.Plan(fps: 15, step: 2))
         XCTAssertTrue(first === base, "düğme görüntüsü gövdesiz taban; sıvı katmanda")
         func contentsID() -> ObjectIdentifier? { button.layer?.sublayers?.last?.contents.map { ObjectIdentifier($0 as AnyObject) } }
         var seen: [ObjectIdentifier] = contentsID().map { [$0] } ?? []
@@ -318,6 +318,187 @@ final class BatteryLiquidGlyphTests: XCTestCase {
                      + "tik (birleşik çubuk) %.1f µs | karşılaştırma: her karede tam çizim %.1f µs | 12 fps birleşik ≈ %%%.3f çekirdek",
                      frames, soloComposite, composite, fullRedraw, composite * 12 / 1e6 * 100))
         XCTAssertLessThan(composite, fullRedraw, "bindirme tam çizimden ucuz")
+    }
+
+    // MARK: Animasyon stilleri
+
+    /// İki karenin bayt başına ortalama mutlak farkı (0…255).
+    private func diff(_ a: NSImage, _ b: NSImage) -> Double {
+        guard let ra = a.representations.first as? NSBitmapImageRep, let rb = b.representations.first as? NSBitmapImageRep,
+              ra.pixelsWide == rb.pixelsWide, ra.pixelsHigh == rb.pixelsHigh,
+              let pa = ra.bitmapData, let pb = rb.bitmapData else { return .infinity }
+        let n = ra.bytesPerRow * ra.pixelsHigh
+        var sum = 0
+        for i in 0..<n { sum += abs(Int(pa[i]) - Int(pb[i])) }
+        return Double(sum) / Double(n)
+    }
+
+    func testStylesDeterministicMovingSeamless() {
+        XCTAssertEqual(BatteryGlyphOptions.Style.allCases.count, 10)
+        XCTAssertEqual(BatteryGlyphOptions.Style.allCases.map(\.displayName),
+                       ["Sıvı", "Huzme", "Kabarcıklar", "Şeritler", "Nefes", "Aurora", "Okyanus", "Segmentler", "Kıvılcım", "Nabız"])
+        let n = BatteryGlyph.frameCount
+        XCTAssertTrue((24...30).contains(n))
+        for style in BatteryGlyphOptions.Style.allCases {
+            for s in [state(78), state(100), state(64, charging: true)] {
+                let key = BatteryFrameKey(state: s, options: .init(style: style), appearance: .darkAqua, scale: 2)
+                let frames = BatteryFrameRenderer.frames(key)
+                XCTAssertEqual(frames.count, n)
+                XCTAssertEqual(diff(BatteryFrameRenderer.frame(key, index: 7), BatteryFrameRenderer.frame(key, index: 7)), 0,
+                               "\(style) deterministik")
+                XCTAssertGreaterThan(diff(frames[0], frames[n / 2]), 0.05, "\(style) %\(s.level): hareket var")
+                let adjacent = (0..<(n - 1)).map { diff(frames[$0], frames[$0 + 1]) }
+                let seam = diff(frames[n - 1], frames[0])
+                XCTAssertLessThanOrEqual(seam, (adjacent.max() ?? 0) * 1.2 + 0.02, "\(style) %\(s.level): döngü dikişsiz")
+            }
+        }
+    }
+
+    func testStylesAtLevels() {
+        for style in BatteryGlyphOptions.Style.allCases {
+            for level in [0, 1, 20, 50, 100] {
+                let key = BatteryFrameKey(state: state(level), options: .init(style: style, fillColor: BatteryGlyphOptions.Swatch.blue.color),
+                                          appearance: .aqua, scale: 2)
+                XCTAssertNotNil(BatteryFrameRenderer.frame(key, index: 4).tiffRepresentation, "\(style) %\(level)")
+            }
+            let dead = BatteryFrameKey(state: state(0, charging: true), options: .init(style: style), appearance: .darkAqua, scale: 2)
+            XCTAssertEqual(diff(BatteryFrameRenderer.frame(dead, index: 0), BatteryFrameRenderer.frame(dead, index: 15)), 0,
+                           "\(style) %0: dolgu yok, süs yok")
+            // Kapalı: stil süsü yok, tüm kareler aynı.
+            let off = BatteryFrameKey(state: state(64), options: .init(motion: .off, style: style), appearance: .darkAqua, scale: 2)
+            XCTAssertEqual(diff(BatteryFrameRenderer.frame(off, index: 0), BatteryFrameRenderer.frame(off, index: 15)), 0)
+        }
+    }
+
+    func testStyleAndColorKeys() {
+        let blue = BatteryGlyphOptions.Swatch.blue.color
+        let base = BatteryFrameKey(state: state(78), options: .init(), appearance: .darkAqua, scale: 2)
+        XCTAssertEqual(base, BatteryFrameKey(state: state(78), options: .init(style: .liquid, fillColor: nil), appearance: .darkAqua, scale: 2))
+        XCTAssertNotEqual(base, BatteryFrameKey(state: state(78), options: .init(style: .beam), appearance: .darkAqua, scale: 2))
+        let colored = BatteryFrameKey(state: state(78), options: .init(fillColor: blue), appearance: .darkAqua, scale: 2)
+        XCTAssertNotEqual(base, colored)
+        XCTAssertEqual(colored, BatteryFrameKey(state: state(78), options: .init(fillColor: blue), appearance: .darkAqua, scale: 2))
+        XCTAssertNotEqual(colored, BatteryFrameKey(state: state(78), options: .init(fillColor: blue, secondColor: blue),
+                                                   appearance: .darkAqua, scale: 2))
+        XCTAssertEqual(colored.options.fillColor, blue, "anahtardan geri kurulan seçenekler rengi taşır")
+        XCTAssertEqual(BatteryFrameKey(state: state(78), options: .init(style: .aurora), appearance: .darkAqua, scale: 2).options.style, .aurora)
+        XCTAssertGreaterThan(diff(BatteryFrameRenderer.frame(base, index: 3), BatteryFrameRenderer.frame(colored, index: 3)), 0.5,
+                             "renk pikselleri değiştirir")
+        // Hazır renkler ayrı.
+        XCTAssertEqual(Set(BatteryGlyphOptions.Swatch.allCases.map(\.color)).count, 8)
+    }
+
+    func testCustomColorSafetyAlert() {
+        XCTAssertTrue(BatteryGlyph.customAlert(state(10)))
+        XCTAssertTrue(BatteryGlyph.customAlert(state(3)))
+        XCTAssertFalse(BatteryGlyph.customAlert(state(11)))
+        XCTAssertFalse(BatteryGlyph.customAlert(state(5, charging: true)))
+        XCTAssertFalse(BatteryGlyph.customAlert(state(5, plugged: true)))
+        // Özel renkte %8: kırmızı nabız (stil Nefes değilken de kareler değişir), %50'de kırmızı yok.
+        let pink = BatteryGlyphOptions.Swatch.blue.color
+        let low = BatteryFrameKey(state: state(8), options: .init(statusColors: false, style: .stripes, fillColor: pink),
+                                  appearance: .darkAqua, scale: 2)
+        let mid = BatteryFrameKey(state: state(50), options: .init(statusColors: false, style: .stripes, fillColor: pink),
+                                  appearance: .darkAqua, scale: 2)
+        func redness(_ image: NSImage) -> Double {
+            guard let rep = image.representations.first as? NSBitmapImageRep else { return 0 }
+            var total = 0.0
+            for y in 0..<rep.pixelsHigh { for x in 0..<rep.pixelsWide {
+                if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) { total += max(0, c.redComponent - c.blueComponent) * c.alphaComponent }
+            } }
+            return total
+        }
+        XCTAssertGreaterThan(redness(BatteryFrameRenderer.frame(low, index: 0)), redness(BatteryFrameRenderer.frame(mid, index: 0)) + 5)
+    }
+
+    func testStyleOptionsCodable() throws {
+        let legacy = try JSONDecoder().decode(BatteryGlyphOptions.self, from: Data(#"{"animation":"light","size":"small"}"#.utf8))
+        XCTAssertEqual(legacy.style, .liquid, "eski ayar: Sıvı")
+        XCTAssertNil(legacy.fillColor, "eski ayar: otomatik renk")
+        XCTAssertNil(legacy.secondColor)
+        let bogus = try JSONDecoder().decode(BatteryGlyphOptions.self, from: Data(#"{"style":"laser","fillColor":"x"}"#.utf8))
+        XCTAssertEqual(bogus.style, .liquid)
+        XCTAssertNil(bogus.fillColor)
+        let full = BatteryGlyphOptions(style: .aurora, fillColor: BatteryGlyphOptions.Swatch.pink.color,
+                                       secondColor: RGBAColor(red: 0.1, green: 0.2, blue: 0.9))
+        let data = try JSONEncoder().encode(full)
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains(#""style":"aurora""#))
+        XCTAssertEqual(try JSONDecoder().decode(BatteryGlyphOptions.self, from: data), full)
+        let plain = try JSONEncoder().encode(BatteryGlyphOptions())
+        XCTAssertFalse(String(decoding: plain, as: UTF8.self).contains("fillColor"), "otomatik renk JSON'a yazılmaz")
+    }
+
+    func testCardRoundTripKeepsStyleAndColors() throws {
+        var cards = MetricCardConfig.defaults
+        let index = try XCTUnwrap(cards.firstIndex { $0.kind == .battery })
+        cards[index].shown = true
+        cards[index].batteryStyle = .ocean
+        cards[index].batteryFill = BatteryGlyphOptions.Swatch.teal.color
+        cards[index].batterySecond = RGBAColor(red: 0.2, green: 0.3, blue: 0.9)
+        let components = cards.flatMap { $0.components() }
+        let capsule = try XCTUnwrap(components.first { $0.visual == .batteryCapsule })
+        XCTAssertEqual(capsule.battery.style, .ocean)
+        XCTAssertEqual(capsule.battery.fillColor, BatteryGlyphOptions.Swatch.teal.color)
+        let back = try XCTUnwrap(MetricCardConfig.cards(from: components), "stil/renk seçimi basit düzenleyiciyi bozmaz")
+        let card = try XCTUnwrap(back.first { $0.kind == .battery })
+        XCTAssertEqual(card.batteryStyle, .ocean)
+        XCTAssertEqual(card.batteryFill, BatteryGlyphOptions.Swatch.teal.color)
+        XCTAssertEqual(card.batterySecond, RGBAColor(red: 0.2, green: 0.3, blue: 0.9))
+    }
+
+    /// 10 stil x (%25, %78, %100, şarj) x faz 0 / 0.5 (koyu, açık) + özel renk sütunu.
+    func testExportStyleContactSheet() throws {
+        guard let dir = ProcessInfo.processInfo.environment["ADALMON_PREVIEW_DIR"], !dir.isEmpty else {
+            throw XCTSkip("ADALMON_PREVIEW_DIR yok; stil kontakt sayfası atlandı")
+        }
+        let states: [(String, BatteryGlyphState)] = [("%25", state(25)), ("%78", state(78)), ("%100", state(100)),
+                                                      ("Şarj %64", state(64, charging: true))]
+        let dark = NSColor(srgbRed: 0.16, green: 0.16, blue: 0.18, alpha: 1)
+        let light = NSColor(srgbRed: 0.93, green: 0.93, blue: 0.94, alpha: 1)
+        let pink = BatteryGlyphOptions.Swatch.pink.color, blue = BatteryGlyphOptions.Swatch.blue.color
+        let columns: [(String, NSAppearance.Name, Double, NSColor, RGBAColor?, RGBAColor?)] = [
+            ("koyu faz 0", .darkAqua, 0, dark, nil, nil), ("koyu faz 0.5", .darkAqua, 0.5, dark, nil, nil),
+            ("açık faz 0", .aqua, 0, light, nil, nil), ("açık faz 0.5", .aqua, 0.5, light, nil, nil),
+            ("koyu pembe/mavi 0.3", .darkAqua, 0.3, dark, pink, blue), ("açık mavi 0.3", .aqua, 0.3, light, blue, nil),
+        ]
+        let zoom: CGFloat = 4
+        let labelW: CGFloat = 190, cellW: CGFloat = 175, rowH: CGFloat = 14 * zoom + 14, headerH: CGFloat = 30
+        let rows = BatteryGlyphOptions.Style.allCases.flatMap { style in states.map { (style, $0.0, $0.1) } }
+        let size = NSSize(width: labelW + cellW * CGFloat(columns.count), height: headerH + rowH * CGFloat(rows.count))
+        let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height),
+                                                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor(white: 0.3, alpha: 1).setFill()
+        NSRect(origin: .zero, size: size).fill()
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14, weight: .medium), .foregroundColor: NSColor.white]
+        for (ci, col) in columns.enumerated() {
+            (col.0 as NSString).draw(at: NSPoint(x: labelW + CGFloat(ci) * cellW + 8, y: size.height - headerH + 6), withAttributes: attrs)
+        }
+        for (ri, row) in rows.enumerated() {
+            let y = size.height - headerH - rowH * CGFloat(ri + 1)
+            if ri % states.count == 0 {
+                NSColor(white: 0.5, alpha: 1).setFill()
+                NSRect(x: 0, y: y + rowH - 1, width: size.width, height: 1).fill()
+            }
+            ("\(row.0.displayName) · \(row.1)" as NSString).draw(at: NSPoint(x: 10, y: y + rowH / 2 - 9), withAttributes: attrs)
+            for (ci, col) in columns.enumerated() {
+                let cell = NSRect(x: labelW + CGFloat(ci) * cellW + 4, y: y + 4, width: cellW - 8, height: rowH - 8)
+                col.3.setFill()
+                NSBezierPath(roundedRect: cell, xRadius: 6, yRadius: 6).fill()
+                let options = BatteryGlyphOptions(style: row.0, fillColor: col.4, secondColor: col.5)
+                let key = BatteryFrameKey(state: row.2, options: options, appearance: col.1, scale: zoom)
+                let image = BatteryFrameRenderer.frame(key, phase: col.2)
+                let target = NSRect(x: cell.minX + 12, y: cell.midY - image.size.height * zoom / 2,
+                                    width: image.size.width * zoom, height: image.size.height * zoom)
+                image.draw(in: target, from: .zero, operation: .sourceOver, fraction: 1)
+            }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        let url = URL(filePath: dir).appending(path: "battery-styles-contact-sheet.png")
+        try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: url)
+        print("BATTERY_STYLES_SHEET: \(url.path())")
     }
 
     // MARK: Önizleme kontakt sayfası

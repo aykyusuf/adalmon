@@ -1,7 +1,7 @@
 import AppKit
 
 /// Codable sRGB renk (bileşenler 0...1).
-struct RGBAColor: Codable, Equatable, Sendable {
+struct RGBAColor: Codable, Hashable, Sendable {
     var red: Double
     var green: Double
     var blue: Double

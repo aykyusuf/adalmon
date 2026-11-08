@@ -16,6 +16,10 @@ struct MetricCardConfig: Equatable, Identifiable, Sendable {
     var showTime = false
     /// Pil kartı: menü çubuğundaki sıvı animasyonu.
     var batteryAnimation: BatteryGlyphOptions.Animation = .live
+    /// Pil kartı: animasyon stili ve dolgu renkleri (nil = otomatik).
+    var batteryStyle: BatteryGlyphOptions.Style = .liquid
+    var batteryFill: RGBAColor?
+    var batterySecond: RGBAColor?
 
     var id: MetricCardKind { kind }
 

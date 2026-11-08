@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Editor rows for the selected component (meant to sit inside a grouped `Form` section).
@@ -63,6 +64,9 @@ struct ComponentInspector: View {
             }
             .pickerStyle(.segmented)
             .help("Pildeki sıvının hareketi (yalnızca Mac pili). Canlı: sürekli dalga; Hafif: daha sakin. Hareketi Azalt açıkken durur, Düşük Güç Modunda yavaşlar.")
+            BatteryStylePicker(style: $component.battery.style, fillColor: $component.battery.fillColor,
+                               secondColor: $component.battery.secondColor, statusColors: component.battery.statusColors,
+                               motion: component.battery.motion, values: values)
         }
         Toggle("Etiket göster", isOn: $component.showLabel)
         if component.visual.hasGraphic {
@@ -183,6 +187,156 @@ struct ComponentInspector: View {
     private func normalizeThresholds() {
         if component.thresholds.critical < component.thresholds.warning + 0.05 {
             component.thresholds.critical = min(1, component.thresholds.warning + 0.05)
+        }
+    }
+}
+
+/// Pil animasyon stili ızgarası + dolgu rengi seçici. Izgara statik (stilin önizleme fazında tek kare); yalnızca seçili
+/// hücre, görünürken tek hafif zaman çizelgesiyle (10 fps) canlı döner — Hareketi Azalt ya da Kapalı'da o da durur.
+struct BatteryStylePicker: View {
+    @Binding var style: BatteryGlyphOptions.Style
+    @Binding var fillColor: RGBAColor?
+    @Binding var secondColor: RGBAColor?
+    let statusColors: Bool
+    let motion: BatteryGlyphOptions.Animation
+    let values: WidgetValues
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let zoom: CGFloat = 2
+    private static let loop: TimeInterval = 2
+
+    private var appearance: NSAppearance {
+        NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua) ?? NSAppearance.currentDrawing()
+    }
+
+    private var previewState: BatteryGlyphState {
+        var s = values.battery ?? BatteryGlyphState(BatteryReading.sample)
+        s.timeText = nil
+        s.deviceSymbol = nil
+        s.isApproximate = false
+        return s
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Animasyon stili")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 76, maximum: 96), spacing: 6)], alignment: .leading, spacing: 6) {
+                ForEach(BatteryGlyphOptions.Style.allCases) { item in
+                    cell(item)
+                }
+            }
+            colorRow
+            if style.usesSecondColor {
+                secondRow
+            }
+            if fillColor != nil {
+                Text("Özel renkte de pil %10 ve altına inince kırmızı uyarı nabzı gösterilir.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func frame(_ item: BatteryGlyphOptions.Style, phase: Double) -> NSImage {
+        let options = BatteryGlyphOptions(statusColors: statusColors, size: .medium, motion: .live, style: item,
+                                          fillColor: fillColor, secondColor: secondColor)
+        let key = BatteryFrameKey(state: previewState, options: options, appearance: appearance.name, scale: 2 * Self.zoom)
+        return BatteryFrameRenderer.frame(key, appearance: appearance, phase: phase)
+    }
+
+    @ViewBuilder
+    private func glyph(_ item: BatteryGlyphOptions.Style) -> some View {
+        let size = BatteryGlyph.capsuleSize(BatteryGlyph.metrics(.medium), previewState)
+        Group {
+            if item == style && motion != .off && !reduceMotion {
+                TimelineView(.animation(minimumInterval: 1.0 / 10)) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate / Self.loop
+                    Image(nsImage: frame(item, phase: t - floor(t))).resizable().interpolation(.high)
+                }
+            } else {
+                Image(nsImage: frame(item, phase: item.previewPhase)).resizable().interpolation(.high)
+            }
+        }
+        .frame(width: size.width * Self.zoom, height: size.height * Self.zoom)
+    }
+
+    private func cell(_ item: BatteryGlyphOptions.Style) -> some View {
+        let selected = item == style
+        return Button { style = item } label: {
+            VStack(spacing: 4) {
+                glyph(item)
+                Text(item.displayName)
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .foregroundStyle(selected ? .primary : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(colorScheme == .dark ? Color(white: 0.11) : Color(white: 0.985), in: .rect(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7)
+                .strokeBorder(selected ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: selected ? 2 : 0.5))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.displayName)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.caption)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(selected ? Color.accentColor.opacity(0.2) : Color.clear, in: .capsule)
+            .overlay(Capsule().strokeBorder(selected ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: selected ? 1.5 : 0.5))
+    }
+
+    private var colorRow: some View {
+        HStack(spacing: 6) {
+            Text("Renk")
+            chip("Otomatik", selected: fillColor == nil) { fillColor = nil }
+                .help("Durum renkleri: şarjda yeşil, azalınca turuncu, kritikte kırmızı")
+            ForEach(BatteryGlyphOptions.Swatch.allCases) { swatch in
+                let selected = fillColor == swatch.color
+                Button { fillColor = swatch.color } label: {
+                    Circle()
+                        .fill(Color(nsColor: swatch.color.nsColor))
+                        .frame(width: 14, height: 14)
+                        .overlay(Circle().strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5))
+                        .padding(2)
+                        .overlay(Circle().strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 1.5))
+                }
+                .buttonStyle(.plain)
+                .help(swatch.displayName)
+                .accessibilityLabel(swatch.displayName)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+            ColorPicker("Özel renk", selection: colorBinding($fillColor, fallback: BatteryGlyphOptions.Swatch.green.color),
+                        supportsOpacity: false)
+                .labelsHidden()
+                .help("Özel renk")
+        }
+    }
+
+    private var secondRow: some View {
+        HStack(spacing: 6) {
+            Text("İkinci renk")
+            chip("Otomatik", selected: secondColor == nil) { secondColor = nil }
+                .help(style == .stripes ? "Şeritler dolgunun açık tonuyla çizilir" : "Birinci renkten türetilir")
+            ColorPicker("İkinci renk", selection: colorBinding($secondColor, fallback: BatteryGlyphOptions.Swatch.purple.color),
+                        supportsOpacity: false)
+                .labelsHidden()
+        }
+    }
+
+    private func colorBinding(_ source: Binding<RGBAColor?>, fallback: RGBAColor) -> Binding<Color> {
+        Binding {
+            Color(nsColor: (source.wrappedValue ?? fallback).nsColor)
+        } set: {
+            source.wrappedValue = RGBAColor(NSColor($0))
         }
     }
 }

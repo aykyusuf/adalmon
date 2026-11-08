@@ -32,22 +32,26 @@ enum BatteryAnimationPolicy {
         guard hasAnimatedItem, motionAllowed(mode, reduceMotion: env.reduceMotion, lowPower: env.lowPower),
               env.visible, !env.screensAsleep, env.sessionActive else { return nil }
         let step = charging ? 2 : 1
-        // Kare başı maliyet yüksek ölçüldü: düşük fps; şarjda dalga hızı fps yerine faz adımıyla artar.
-        if env.lowPower { return Plan(fps: 2, step: 1) } // yalnızca Canlı buraya gelir: yavaş ve sakin
+        // Tik yalnızca önceden çizilmiş kareyi katmana atar (ölçümde CPU'nun asıl yükü değil) → akıcı fps;
+        // şarjda hız fps yerine faz adımıyla artar.
+        if env.lowPower { return Plan(fps: 4, step: 1) } // yalnızca Canlı buraya gelir: yavaş ve sakin
         switch mode {
         case .off: return nil
-        case .light: return Plan(fps: 4, step: step)
-        case .live: return Plan(fps: 6, step: step)
+        case .light: return Plan(fps: 8, step: step)
+        case .live: return Plan(fps: 15, step: step)
         }
     }
 }
 
-/// Önceden çizilmiş pil gövdesi karelerinin anahtarı: seviye + durum + boyut + renk + görünüm + ölçek.
+/// Önceden çizilmiş pil gövdesi karelerinin anahtarı: seviye + durum + boyut + renk + stil + görünüm + ölçek.
 struct BatteryFrameKey: Hashable, Sendable {
     var state: BatteryGlyphState
     var size: BatteryGlyphOptions.Size
     var statusColors: Bool
     var animation: BatteryGlyphOptions.Animation
+    var style: BatteryGlyphOptions.Style
+    var fillColor: RGBAColor?
+    var secondColor: RGBAColor?
     var appearance: String
     var scale: CGFloat
 
@@ -58,12 +62,16 @@ struct BatteryFrameKey: Hashable, Sendable {
         size = options.size
         statusColors = options.statusColors
         animation = options.motion
+        style = options.style
+        fillColor = options.fillColor
+        secondColor = options.secondColor
         self.appearance = appearance.rawValue
         self.scale = scale
     }
 
     var options: BatteryGlyphOptions {
-        BatteryGlyphOptions(statusColors: statusColors, size: size, motion: animation)
+        BatteryGlyphOptions(statusColors: statusColors, size: size, motion: animation, style: style,
+                            fillColor: fillColor, secondColor: secondColor)
     }
 }
 
@@ -73,6 +81,11 @@ enum BatteryFrameRenderer {
     /// Tek gövde karesi (bitmap). `level` kesirli olabilir (seviye geçişi).
     /// `appearance`: düğmenin gerçek `effectiveAppearance`'ı (Yüksek Karşıtlık vb. adla yeniden kurulamayabilir).
     static func frame(_ key: BatteryFrameKey, appearance: NSAppearance? = nil, level: Double? = nil, index: Int) -> NSImage {
+        frame(key, appearance: appearance, level: level, phase: phase(index))
+    }
+
+    /// Belirli bir fazda tek kare (ayar önizlemesi için de kullanılır).
+    static func frame(_ key: BatteryFrameKey, appearance: NSAppearance? = nil, level: Double? = nil, phase: Double) -> NSImage {
         let m = BatteryGlyph.metrics(key.size)
         let size = BatteryGlyph.capsuleSize(m, key.state)
         let amplitude = BatteryGlyph.amplitude(key.animation)
@@ -87,7 +100,7 @@ enum BatteryFrameRenderer {
         appearance.performAsCurrentDrawingAppearance {
             BatteryGlyph.drawCapsule(key.state, options: key.options, level: level ?? Double(key.state.level),
                                      in: CGRect(origin: .zero, size: size),
-                                     wave: amplitude > 0 ? (phase(index), amplitude) : nil)
+                                     wave: amplitude > 0 ? (phase, amplitude) : nil)
         }
         NSGraphicsContext.restoreGraphicsState()
         let image = NSImage(size: size)
