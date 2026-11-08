@@ -250,14 +250,9 @@ struct BatteryStylePicker: View {
     private func glyph(_ item: BatteryGlyphOptions.Style) -> some View {
         let size = BatteryGlyph.capsuleSize(BatteryGlyph.metrics(.medium), previewState)
         Group {
-            if item == style && motion != .off && !reduceMotion {
-                TimelineView(.animation(minimumInterval: 1.0 / 10)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate / Self.loop
-                    Image(nsImage: frame(item, phase: t - floor(t))).resizable().interpolation(.high)
-                }
-            } else {
-                Image(nsImage: frame(item, phase: item.previewPhase)).resizable().interpolation(.high)
-            }
+            // Canlı önizleme bilerek yok: 10 fps TimelineView tüm ayar penceresini yeniden değerlendirip %70 CPU yiyordu.
+            // Menü çubuğundaki pil zaten canlı; ızgara her stili en güzel karesinde gösterir.
+            Image(nsImage: frame(item, phase: item.previewPhase)).resizable().interpolation(.high)
         }
         .frame(width: size.width * Self.zoom, height: size.height * Self.zoom)
     }
