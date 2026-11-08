@@ -78,9 +78,166 @@ final class WallpaperPolicyTests: XCTestCase {
     }
 
     func testRulesCodableRoundTrip() throws {
-        var r = WallpaperPauseRules(); r.pauseOnLowPower = false
+        var r = WallpaperPauseRules(); r.pauseOnLowPower = false; r.pauseOnThermal = false
         let back = try JSONDecoder().decode(WallpaperPauseRules.self, from: JSONEncoder().encode(r))
         XCTAssertEqual(back, r)
+    }
+
+    // MARK: Bellek / ısı / CPU kuralları
+
+    func testNewRulesDefaultOn() {
+        XCTAssertTrue(all.pauseOnMemoryCritical && all.pauseOnThermal && all.pauseOnHighCPU)
+    }
+
+    func testNewConditionsPauseWithTheirReason() {
+        XCTAssertEqual(decide { $0.memoryCritical = true }, .pause(.memoryCritical))
+        XCTAssertEqual(decide { $0.thermalSerious = true }, .pause(.thermal))
+        XCTAssertEqual(decide { $0.cpuBusy = true }, .pause(.highCPU))
+    }
+
+    func testNewRulesCanBeTurnedOffSeparately() {
+        var noMem = all; noMem.pauseOnMemoryCritical = false
+        XCTAssertEqual(decide({ $0.memoryCritical = true }, rules: noMem), .play)
+        XCTAssertEqual(decide({ $0.memoryCritical = true; $0.thermalSerious = true }, rules: noMem), .pause(.thermal))
+
+        var noThermal = all; noThermal.pauseOnThermal = false
+        XCTAssertEqual(decide({ $0.thermalSerious = true }, rules: noThermal), .play)
+        XCTAssertEqual(decide({ $0.thermalSerious = true; $0.cpuBusy = true }, rules: noThermal), .pause(.highCPU))
+
+        var noCPU = all; noCPU.pauseOnHighCPU = false
+        XCTAssertEqual(decide({ $0.cpuBusy = true }, rules: noCPU), .play)
+        XCTAssertEqual(decide({ $0.cpuBusy = true; $0.memoryCritical = true }, rules: noCPU), .pause(.memoryCritical))
+
+        let off = WallpaperPauseRules(pauseOnBattery: false, pauseOnLowPower: false, pauseWhenDesktopHidden: false,
+                                      pauseOnMemoryCritical: false, pauseOnThermal: false, pauseOnHighCPU: false)
+        XCTAssertEqual(decide({ $0.memoryCritical = true; $0.thermalSerious = true; $0.cpuBusy = true; $0.onBattery = true }, rules: off), .play)
+    }
+
+    func testNewRulesPriority() {
+        // Kilit / uyku önce; sonra pil, Düşük Güç; sonra bellek > ısı > CPU; en son tam ekran / örtülü.
+        let everything: (inout WallpaperPolicyInput) -> Void = {
+            $0.memoryCritical = true; $0.thermalSerious = true; $0.cpuBusy = true; $0.fullScreen = true; $0.desktopVisible = false
+        }
+        XCTAssertEqual(decide { everything(&$0); $0.locked = true }, .pause(.locked))
+        XCTAssertEqual(decide { everything(&$0); $0.onBattery = true }, .pause(.battery))
+        XCTAssertEqual(decide { everything(&$0); $0.lowPower = true }, .pause(.lowPower))
+        XCTAssertEqual(decide { everything(&$0) }, .pause(.memoryCritical))
+        XCTAssertEqual(decide { everything(&$0); $0.memoryCritical = false }, .pause(.thermal))
+        XCTAssertEqual(decide { everything(&$0); $0.memoryCritical = false; $0.thermalSerious = false }, .pause(.highCPU))
+        XCTAssertEqual(decide { everything(&$0); $0.memoryCritical = false; $0.thermalSerious = false; $0.cpuBusy = false }, .pause(.fullScreen))
+    }
+
+    func testForcePauseAndForcePlayWithNewRules() {
+        XCTAssertEqual(decide({ $0.memoryCritical = true }, override: .forcePause), .pause(.user))
+        // "Yine de oynat" kaynak kurallarını (bellek, ısı, CPU) da yok sayar.
+        XCTAssertEqual(decide({ $0.memoryCritical = true; $0.thermalSerious = true; $0.cpuBusy = true }, override: .forcePlay), .play)
+    }
+
+    func testNewStatusTexts() {
+        XCTAssertEqual(WallpaperPauseReason.memoryCritical.statusText, "Duraklatıldı: bellek baskısı kritik")
+        XCTAssertEqual(WallpaperPauseReason.thermal.statusText, "Duraklatıldı: Mac ısındı")
+        XCTAssertEqual(WallpaperPauseReason.highCPU.statusText, "Duraklatıldı: CPU çok yoğun")
+    }
+
+    func testMemoryLevelMappingOnlyCriticalPauses() {
+        XCTAssertFalse(WallpaperPolicy.isMemoryCritical(sysctlLevel: 1))   // normal
+        XCTAssertFalse(WallpaperPolicy.isMemoryCritical(sysctlLevel: 2))   // uyarı: oynamaya devam
+        XCTAssertTrue(WallpaperPolicy.isMemoryCritical(sysctlLevel: 4))    // kritik
+        XCTAssertFalse(WallpaperPolicy.isMemoryCritical(sysctlLevel: nil))
+    }
+
+    func testThermalMappingSeriousAndAbovePause() {
+        XCTAssertFalse(WallpaperPolicy.isThermalSerious(.nominal))
+        XCTAssertFalse(WallpaperPolicy.isThermalSerious(.fair))
+        XCTAssertTrue(WallpaperPolicy.isThermalSerious(.serious))
+        XCTAssertTrue(WallpaperPolicy.isThermalSerious(.critical))
+    }
+
+    /// Eski kayıt (yeni anahtarlar yok): mevcut değerler korunur, yeni kurallar AÇIK gelir.
+    func testOldRulesJSONWithoutNewKeysDecodesNewRulesAsOn() throws {
+        let json = Data(#"{"pauseOnBattery":false,"pauseOnLowPower":true,"pauseWhenDesktopHidden":false}"#.utf8)
+        let r = try JSONDecoder().decode(WallpaperPauseRules.self, from: json)
+        XCTAssertFalse(r.pauseOnBattery)
+        XCTAssertTrue(r.pauseOnLowPower)
+        XCTAssertFalse(r.pauseWhenDesktopHidden)
+        XCTAssertTrue(r.pauseOnMemoryCritical && r.pauseOnThermal && r.pauseOnHighCPU)
+        XCTAssertEqual(try JSONDecoder().decode(WallpaperPauseRules.self, from: Data("{}".utf8)), WallpaperPauseRules())
+    }
+}
+
+/// "CPU çok yoğunken dur" kapısı: 30 sn pencere ortalaması, histerezis, kısa sıçramalar.
+final class CPULoadGateTests: XCTestCase {
+    private let t0 = Date(timeIntervalSinceReferenceDate: 1_000_000)
+
+    /// `from`..`to` sn arası `step` aralıkla aynı yükü besler; son kararı döndürür.
+    @discardableResult
+    private func feed(_ gate: inout CPULoadGate, _ load: Double, from: TimeInterval, to: TimeInterval, step: TimeInterval = 2) -> Bool {
+        var result = gate.shouldPause
+        for s in stride(from: from, through: to, by: step) { result = gate.ingest(load, at: t0.addingTimeInterval(s)) }
+        return result
+    }
+
+    func testSustainedHighLoadPausesOnlyAfter30Seconds() {
+        var g = CPULoadGate()
+        XCTAssertFalse(feed(&g, 0.95, from: 0, to: 28))   // 28 sn: henüz değil
+        XCTAssertTrue(feed(&g, 0.95, from: 30, to: 30))   // 30 sn kesintisiz → dur
+    }
+
+    func testShortSpikeDoesNotPause() {
+        var g = CPULoadGate()
+        feed(&g, 0.30, from: 0, to: 40)
+        XCTAssertFalse(feed(&g, 1.0, from: 42, to: 50))   // 10 sn %100 sıçrama
+        XCTAssertFalse(feed(&g, 0.30, from: 52, to: 80))
+        XCTAssertFalse(g.shouldPause)
+    }
+
+    func testAverageJustBelowThresholdDoesNotPause() {
+        var g = CPULoadGate()
+        XCTAssertFalse(feed(&g, 0.84, from: 0, to: 120))
+    }
+
+    func testHysteresisKeepsPausedBetween60And85AndResumesBelow60() {
+        var g = CPULoadGate()
+        XCTAssertTrue(feed(&g, 0.95, from: 0, to: 30))
+        XCTAssertTrue(feed(&g, 0.70, from: 32, to: 120))  // %70 sürekli: hâlâ duraklatılmış (histerezis)
+        XCTAssertFalse(feed(&g, 0.20, from: 122, to: 160)) // %60 altı → devam
+        XCTAssertFalse(feed(&g, 0.70, from: 162, to: 240)) // %70'te yeniden durmaz
+    }
+
+    func testResumeHappensWithinTheWindowOnceAverageDrops() {
+        var g = CPULoadGate()
+        feed(&g, 1.0, from: 0, to: 40)
+        XCTAssertTrue(g.shouldPause)
+        // Yük birden %10'a düşer: 30 sn pencerede ortalama birkaç örnek sonra %60 altına iner, 30 sn beklemek gerekmez.
+        var resumedAt: TimeInterval?
+        for s in stride(from: 42.0, through: 80, by: 2) where resumedAt == nil {
+            if !g.ingest(0.10, at: t0.addingTimeInterval(s)) { resumedAt = s }
+        }
+        XCTAssertNotNil(resumedAt)
+        XCTAssertLessThan(resumedAt! - 40, 20)
+    }
+
+    func testGapResetsHistory() {
+        var g = CPULoadGate()
+        feed(&g, 0.95, from: 0, to: 20)
+        // Uyku / örnekleme kesintisi (> 15 sn): sayaç baştan.
+        XCTAssertFalse(feed(&g, 0.95, from: 60, to: 80))
+        XCTAssertTrue(feed(&g, 0.95, from: 82, to: 90))
+    }
+
+    func testIrregularIntervalsUseTimestampsNotSampleCount() {
+        var g = CPULoadGate()
+        XCTAssertFalse(feed(&g, 0.95, from: 0, to: 25, step: 5))
+        XCTAssertTrue(feed(&g, 0.95, from: 30, to: 30, step: 5))
+    }
+
+    func testResetClearsState() {
+        var g = CPULoadGate()
+        feed(&g, 0.95, from: 0, to: 30)
+        g.reset()
+        XCTAssertFalse(g.shouldPause)
+        XCTAssertTrue(g.samples.isEmpty)
+        XCTAssertNil(g.runStart)
     }
 }
 

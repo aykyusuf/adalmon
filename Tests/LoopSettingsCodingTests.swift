@@ -20,6 +20,29 @@ final class LoopSettingsCodingTests: XCTestCase {
         XCTAssertEqual(s.loop, LoopSettings(), "eksik döngü alanı varsayılan: 5 / 3 / çapraz geçiş 1,5")
     }
 
+    /// Bellek / ısı / CPU kuralları eklenmeden ÖNCE yazılmış kayıt: ayarlar silinmez, eski kural değerleri korunur, yeni kurallar AÇIK gelir.
+    func testOldSettingsWithoutNewPauseRulesKeepValuesAndDefaultNewRulesOn() throws {
+        let json = #"{"enabled":true,"rules":{"pauseOnBattery":false,"pauseOnLowPower":true,"pauseWhenDesktopHidden":false},"sameOnAllScreens":false,"defaultItemID":"\#(id)","rotationMinutes":15}"#
+        let s = try JSONDecoder().decode(WallpaperSettings.self, from: Data(json.utf8))
+        XCTAssertTrue(s.enabled, "ana şalter korunur (varsayılana düşülmedi)")
+        XCTAssertEqual(s.rotationMinutes, 15)
+        XCTAssertFalse(s.rules.pauseOnBattery)
+        XCTAssertTrue(s.rules.pauseOnLowPower)
+        XCTAssertFalse(s.rules.pauseWhenDesktopHidden)
+        XCTAssertTrue(s.rules.pauseOnMemoryCritical)
+        XCTAssertTrue(s.rules.pauseOnThermal)
+        XCTAssertTrue(s.rules.pauseOnHighCPU)
+    }
+
+    func testNewPauseRulesRoundTripInsideSettings() throws {
+        var s = WallpaperSettings()
+        s.rules.pauseOnMemoryCritical = false
+        s.rules.pauseOnHighCPU = false
+        let back = try JSONDecoder().decode(WallpaperSettings.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(back.rules, s.rules)
+        XCTAssertTrue(back.rules.pauseOnThermal)
+    }
+
     func testWallpaperSettingsRoundTripWithLoop() throws {
         var s = WallpaperSettings()
         s.loop = LoopSettings(trimStart: 8, trimEnd: 2, transition: .off, crossfadeSeconds: 2.2)

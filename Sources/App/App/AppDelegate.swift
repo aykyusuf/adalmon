@@ -59,7 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.statusBar = statusBar
         model.start()
         dockMode.start()
-        if !AppEnvironment.isRunningTests { WallpaperService.shared.start() } // ana şalter kapalıysa hiçbir şey yapmaz
+        if !AppEnvironment.isRunningTests {
+            WallpaperService.shared.start() // ana şalter kapalıysa hiçbir şey yapmaz
+            // CPU kuralı mevcut metrik ölçümünü kullanır (yeni zamanlayıcı yok); duvar kâğıdı kapalıysa anında döner.
+            let wallpaper = WallpaperService.shared.controller
+            model.onSnapshot = { [weak wallpaper] in wallpaper?.ingestCPU($0.cpu.total) }
+        }
         if !AppEnvironment.isRunningTests { SaverService.shared.launchCheck(wallpaper: .shared) } // kuruluysa paketi/videoları güncel tutar
         if model.prefs.showInDock { mainWindow.show() }
     }

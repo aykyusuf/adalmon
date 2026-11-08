@@ -12,6 +12,15 @@ struct WallpaperPauseRulesCard: View {
             rule("Masaüstü görünmüyorken dur",
                  "Pencereler masaüstünü örtüyorsa (2 sn'de bir, yalnızca oynarken), tam ekran uygulama varsa, ekran kilitli / ekran koruyucu / uykudaysa oynatmaz.",
                  isOn: $service.settings.rules.pauseWhenDesktopHidden)
+            rule("Bellek basıncı kritikken dur",
+                 "macOS bellek basıncını kritik bildirince durur, uyarı seviyesinde oynamaya devam eder; basınç düşünce kendiliğinden sürer.",
+                 isOn: $service.settings.rules.pauseOnMemoryCritical)
+            rule("Isınınca dur",
+                 "Mac ciddi derecede ısınınca (macOS ısı durumu \"ciddi\" ya da üstü) durur; soğuyunca devam eder.",
+                 isOn: $service.settings.rules.pauseOnThermal)
+            rule("CPU çok yoğunken dur",
+                 "Toplam CPU 30 sn boyunca ortalama %85'in üstündeyse durur; ortalama %60'ın altına inince devam eder. Kısa sıçramalar durdurmaz.",
+                 isOn: $service.settings.rules.pauseOnHighCPU)
         }
     }
 

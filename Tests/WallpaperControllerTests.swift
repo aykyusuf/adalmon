@@ -67,6 +67,82 @@ final class WallpaperControllerTests: XCTestCase {
         XCTAssertTrue(c.summary.isPlaying, "\"yine de oynat\" Düşük Güç kuralını yok sayar")
     }
 
+    func testMemoryCriticalAndThermalPauseWithReasonAndResume() throws {
+        let c = controller(screens: [screen("a", name: "Ana")])
+        c.apply(config([try item("v")]))
+        XCTAssertTrue(c.summary.isPlaying)
+        c.monitor.state.memoryCritical = true
+        c.reevaluate(poll: false)
+        XCTAssertEqual(c.summary.text, "Duraklatıldı: bellek baskısı kritik")
+        c.monitor.state.memoryCritical = false
+        c.monitor.state.thermalSerious = true
+        c.reevaluate(poll: false)
+        XCTAssertEqual(c.summary.text, "Duraklatıldı: Mac ısındı")
+        var cfg = c.config
+        cfg.settings.rules.pauseOnThermal = false
+        c.apply(cfg)
+        XCTAssertTrue(c.summary.isPlaying, "kural kapatılınca devam eder")
+        c.monitor.state.thermalSerious = false
+        c.reevaluate(poll: false)
+        XCTAssertTrue(c.summary.isPlaying)
+    }
+
+    func testHighCPUPausesAfterSustainedLoadAndResumesWithHysteresis() throws {
+        let c = controller(screens: [screen("a", name: "Ana")])
+        c.apply(config([try item("v")]))
+        let t0 = Date.now
+        for s in stride(from: 0.0, through: 28, by: 2) { c.ingestCPU(0.95, at: t0.addingTimeInterval(s)) }
+        XCTAssertTrue(c.summary.isPlaying, "30 sn dolmadan durmaz")
+        c.ingestCPU(0.95, at: t0.addingTimeInterval(30))
+        XCTAssertEqual(c.summary.text, "Duraklatıldı: CPU çok yoğun")
+        for s in stride(from: 32.0, through: 90, by: 2) { c.ingestCPU(0.70, at: t0.addingTimeInterval(s)) }
+        XCTAssertEqual(c.summary.text, "Duraklatıldı: CPU çok yoğun", "%60-85 arası: duraklatılmış kalır")
+        for s in stride(from: 92.0, through: 130, by: 2) { c.ingestCPU(0.10, at: t0.addingTimeInterval(s)) }
+        XCTAssertTrue(c.summary.isPlaying, "%60 altına inince devam")
+    }
+
+    func testHighCPURuleOffIgnoresSamplesAndClearsPause() throws {
+        let c = controller(screens: [screen("a", name: "Ana")])
+        c.apply(config([try item("v")]))
+        let t0 = Date.now
+        for s in stride(from: 0.0, through: 30, by: 2) { c.ingestCPU(1.0, at: t0.addingTimeInterval(s)) }
+        XCTAssertEqual(c.summary.text, "Duraklatıldı: CPU çok yoğun")
+        var cfg = c.config
+        cfg.settings.rules.pauseOnHighCPU = false
+        c.apply(cfg)
+        XCTAssertTrue(c.summary.isPlaying)
+        XCTAssertNil(c.cpuGate.runStart)
+        for s in stride(from: 32.0, through: 80, by: 2) { c.ingestCPU(1.0, at: t0.addingTimeInterval(s)) }
+        XCTAssertTrue(c.summary.isPlaying)
+        XCTAssertTrue(c.cpuGate.samples.isEmpty, "kural kapalıyken örnek tutulmaz")
+    }
+
+    func testDisabledWallpaperIgnoresCPUSamples() throws {
+        let c = controller(screens: [screen("a", name: "Ana")])
+        c.apply(config([try item("v")], enabled: false))
+        c.ingestCPU(1.0)
+        XCTAssertTrue(c.cpuGate.samples.isEmpty)
+        XCTAssertEqual(c.summary, .off)
+    }
+
+    func testMonitorReadsInjectedMemoryAndThermalWithoutStarting() {
+        var level: Int32? = 2
+        let m = WallpaperSystemMonitor(memoryLevelReader: { level }, thermalReader: { .fair })
+        XCTAssertFalse(m.refreshMemory(event: .warning), "uyarı seviyesi kritik sayılmaz")
+        XCTAssertFalse(m.state.memoryCritical)
+        level = 4
+        XCTAssertTrue(m.refreshMemory(event: .critical))
+        XCTAssertTrue(m.state.memoryCritical)
+        level = 1
+        XCTAssertTrue(m.refreshMemory(event: .normal))
+        XCTAssertFalse(m.state.memoryCritical)
+        // sysctl okunamazsa olay maskesi kullanılır.
+        level = nil
+        XCTAssertTrue(m.refreshMemory(event: .critical))
+        XCTAssertTrue(m.state.memoryCritical)
+        XCTAssertFalse(m.isStarted)
+    }
+
     func testCoveredAndFullScreenPause() throws {
         var occ: [String: OcclusionCheck.Result] = ["a": .init(coverage: 0.95, fullScreen: false)]
         let c = WallpaperController(isHeadless: true, screenProvider: { [self] in [screen("a", name: "Ana")] }, occlusionProvider: { _ in occ })

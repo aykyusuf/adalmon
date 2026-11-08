@@ -77,6 +77,8 @@ final class WallpaperController {
     @ObservationIgnored private var rotationTimer: Timer?
     @ObservationIgnored private var rotationRemaining: TimeInterval?
     @ObservationIgnored private var activity: NSObjectProtocol?
+    /// "CPU çok yoğunken dur" kapısı. Örnekler uygulamanın mevcut metrik örnekleyicisinden gelir (`ingestCPU`); ayrı zamanlayıcı yok.
+    @ObservationIgnored private(set) var cpuGate = CPULoadGate()
 
     init(isHeadless: Bool = false,
          screenProvider: @escaping @MainActor () -> [LiveScreen] = WallpaperController.liveScreens,
@@ -98,6 +100,7 @@ final class WallpaperController {
             screens = []
             return
         }
+        if !newConfig.settings.rules.pauseOnHighCPU { cpuGate.reset() }
         startObserversIfNeeded()
         syncRotation(previous: was)
         rebuildScreens()
@@ -168,7 +171,8 @@ final class WallpaperController {
             let occ = occlusion[info.key] ?? OcclusionCheck.Result(coverage: 0, fullScreen: false)
             let input = WallpaperPolicyInput(onBattery: sys.onBattery, lowPower: sys.lowPower,
                                              desktopVisible: !OcclusionCheck.isCovered(occ),
-                                             locked: monitor.policyLocked, displayAsleep: sys.displayAsleep, fullScreen: occ.fullScreen)
+                                             locked: monitor.policyLocked, displayAsleep: sys.displayAsleep, fullScreen: occ.fullScreen,
+                                             memoryCritical: sys.memoryCritical, thermalSerious: sys.thermalSerious, cpuBusy: cpuGate.shouldPause)
             let decision = WallpaperPolicy.decide(input, rules: rules, override: config.override)
             slot.apply(decision: decision)
             statuses.append(ScreenStatus(screen: info, itemName: byID[itemID]?.name, decision: decision))
@@ -276,6 +280,18 @@ final class WallpaperController {
         rotationFired()
     }
 
+    /// Sistem toplam CPU yükü (0…1). Mevcut metrik örnekleyicisinin her adımında çağrılır; özellik ya da kural kapalıyken
+    /// ya da video yokken hiçbir şey yapmaz. Karar yalnızca kapı değişince yeniden değerlendirilir.
+    func ingestCPU(_ load: Double, at time: Date = .now) {
+        guard config.settings.enabled, config.settings.rules.pauseOnHighCPU, anyVideoSlot else {
+            if cpuGate.runStart != nil { cpuGate.reset() }
+            return
+        }
+        let before = cpuGate.shouldPause
+        // poll: true: CPU duraklatmasında örtülme yoklaması durur; devam ederken güncel örtülme bilgisiyle karar verilsin.
+        if cpuGate.ingest(load, at: time) != before { reevaluate(poll: true) }
+    }
+
     private func pollTick() {
         let before = occlusion
         refreshOcclusion()
@@ -319,6 +335,7 @@ final class WallpaperController {
         for slot in slots.values { slot.teardown() }
         slots = [:]
         occlusion = [:]
+        cpuGate.reset()
     }
 
     // MARK: Canlı ekran bilgisi

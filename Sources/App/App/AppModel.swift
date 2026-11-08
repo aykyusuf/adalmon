@@ -487,6 +487,8 @@ final class AppModel {
     /// Panel açıkken 1 sn, kapalıyken `prefs.updateInterval` sn'de bir örnekle (pil).
     /// Her ölçüm adımının sonunda çağrılır (menü çubuğu çizimi).
     @ObservationIgnored var onStep: (() -> Void)?
+    /// Her yeni ölçümde (ör. duvar kâğıdının "CPU çok yoğunken dur" kuralı: ayrı örnekleyici açmadan bu ölçümü kullanır).
+    @ObservationIgnored var onSnapshot: ((SystemSnapshot) -> Void)?
 
     /// Ana pencere (Dock modu) açıkken de saniyede bir örnekle.
     @ObservationIgnored var mainWindowVisible = false {
@@ -584,6 +586,7 @@ final class AppModel {
     /// Yeni ölçümü yayınlar (testler/önizlemeler de gerçek bir ölçümü buradan verir).
     func apply(_ s: SystemSnapshot) {
         snapshot = s
+        onSnapshot?(s)
         battery.setTemperature(s.temperature?.battery)
         systemHistory.append(s, notify: mainWindowVisible || panelVisible)
         Self.push(&cpuHistory, s.cpu.total)
