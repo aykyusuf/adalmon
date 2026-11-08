@@ -9,6 +9,11 @@ final class SaverPlayback {
 
     var layer: CALayer { engine.hostLayer }
     var isActive: Bool { engine.isActive }
+    /// İlk video karesi görünür olunca (yalnızca ölçüm / iz için).
+    var onFirstFrame: (@MainActor () -> Void)? {
+        get { engine.onFirstFrame }
+        set { engine.onFirstFrame = newValue }
+    }
 
     init() {
         engine.hostLayer.backgroundColor = NSColor.clear.cgColor

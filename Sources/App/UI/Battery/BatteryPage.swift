@@ -56,8 +56,6 @@ struct BatteryPage: View {
                     if let devices, let prefs { DevicesTab(service: devices, prefs: prefs, battery: monitor) }
                 case .ios:
                     if let devices, let prefs { IOSDevicesTab(service: devices, prefs: prefs) }
-                case .charging:
-                    ChargingTab(model: ChargingModel.shared)
                 case .mac:
                     macContent
                 }

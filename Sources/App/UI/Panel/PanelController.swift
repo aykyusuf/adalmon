@@ -88,7 +88,6 @@ final class PanelController {
         a.openActivityMonitor = { [weak self] in self?.close(); Self.openActivityMonitor() }
         a.showCombined = { [weak self] in self?.setKind(.combined) }
         a.refreshBattery = { [weak self] in self?.model.battery.refreshNow() }
-        a.setLowPowerMode = { on in Task { await ChargingModel.shared.setLowPowerMode(on) } }
         a.setDevicePinned = { [weak self] id, name, pinned in self?.model.prefs.menuBar.setPinned(device: id, name: name, pinned) }
         return a
     }

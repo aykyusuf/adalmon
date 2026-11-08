@@ -117,3 +117,9 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 **Decisions:** şarj sınırı YOK (bu Mac'te CHTE/CH0B yok, kullanıcı "şarj sınırı olmasın"); libimobiledevice (dylib'ler repoda değil, tools/vendor-libimobiledevice.sh); AirPods canlı BLE + system_profiler yedek; pil geçmişi dakikada bir; her metrik ayrı panel (birleşik panel ayarda); duvar kâğıdı A + B deneysel, duraklatma kuralları varsayılan açık ama kapatılabilir; ekran koruyucu .saver da eklendi (4K).
 **Failed attempts:** Esc → PanelWindow.sendEvent/cancelOperation yetmedi (uygulama aktif değilken tuş öndeki uygulamaya gidiyor); ilk Aerial kaydı showInTopLevel=false yüzünden Ayarlar'da görünmedi (düzeltildi, elle yamalandı + WallpaperAgent yeniden başlatıldı); ⌘ kısayolları Dock modunda ana menü yokken çalışmıyordu (düzeltildi); kütüphane küçük resimleri taşıyordu (düzeltildi).
 **Disk:** her ajan sonrası /private/tmp/claude-501/adalmon-dd-* sil (kullanıcının diski ~%96 dolu).
+
+## Güncelleme (2026-11-08)
+- Root helper + Pil › Şarj sekmesi kodu tamamen kaldırıldı (kullanıcı kararı: faydası az, kalıcı root daemon istenmiyor).
+- Saver: poster `init`'te senkron çiziliyor, örtük 0,25 sn contents solması kaldırıldı. Gerçek host'ta ölçüm için: `/usr/bin/log stream --predicate 'subsystem == "com.example.adalmon" AND category == "saver"'`.
+- Sıradaki: Esc için Input Monitoring izni, menü çubuğuna pil kapsülü + canlı test.
+- Eski kurulumda `ditto` silinen dosyaları temizlemez; kurarken stale dosyaları kontrol et (`codesign --verify --deep --strict`).

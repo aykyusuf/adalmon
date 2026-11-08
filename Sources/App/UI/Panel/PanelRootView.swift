@@ -50,8 +50,7 @@ struct BatteryPanelSource {
         pinnedDeviceIDs = Set(model.prefs.menuBar.config.components.compactMap(\.deviceID))
         appsLoading = !model.battery.energyAppsLoaded
         devicesLoading = model.prefs.deviceMonitoring && model.devices.lastUpdated == nil
-        let helper = ChargingModel.shared
-        lowPowerControl = helper.featureEnabled && helper.installState.isEnabled && helper.status != nil ? .toggle : .readOnly
+        lowPowerControl = .readOnly
     }
 
     init(reading: BatteryReading?, lastRefresh: Date? = nil, apps: [BatteryEnergyApp] = [], devices: [DeviceBattery] = [],

@@ -117,6 +117,79 @@ final class SaverViewSmokeTests: XCTestCase {
         view.stopAnimation(); zero.stopAnimation()
     }
 
+    /// Listeye elle poster ekler (poster üretici testte verilmez).
+    private func writePoster() async throws {
+        let dir = tmp.appending(path: "Saver")
+        let list = try XCTUnwrap(SaverPlaylist.load(from: dir))
+        let posterName = list.items[0].id.uuidString + ".jpg"
+        let frame = await WallpaperMedia.frameImage(tmp.appending(path: "src0.mov"), kind: .video, maxPixel: 128, at: 0)
+        try XCTUnwrap(WallpaperMedia.jpegData(try XCTUnwrap(frame))).write(to: dir.appending(path: posterName))
+        var edited = list; edited.items[0].poster = posterName
+        try edited.encoded().write(to: SaverPaths.playlistURL(in: dir))
+    }
+
+    /// Soğuk başlangıç: poster `init`'te, pencere ve `startAnimation` beklenmeden ÇÖZÜLMÜŞ olarak katmandadır; oynatıcı kurulmaz.
+    func testPosterIsOnLayerRightAfterInitWithoutPlayer() async throws {
+        setenv("ADALMON_SAVER_DIR_FOR_TESTS", tmp.appending(path: "Saver").path, 1)
+        try await prepare(videos: 1)
+        try await writePoster()
+        let clock = ContinuousClock()
+        var view: ScreenSaverView?
+        let initTime = try clock.measure {
+            view = try XCTUnwrap(cls.init(frame: NSRect(x: 0, y: 0, width: 800, height: 500), isPreview: false))
+        }
+        let v = try XCTUnwrap(view)
+        XCTAssertNotNil(v.layer?.contents, "poster init'te görünmeli (startAnimation beklenmez)")
+        XCTAssertNil(playerLayer(of: v)?.player, "init oynatıcı kurmamalı (sahipsiz çözücü olmasın)")
+        XCTAssertTrue(v.layer?.animationKeys()?.isEmpty ?? true, "poster örtük animasyonla (siyahtan solarak) gelmemeli")
+        print("SAVER-COLDSTART init+poster=\(initTime)")
+
+        // Pencereye konup başlatılınca aynı poster kalır, ilk kare gelince video belirir.
+        let window = NSWindow(contentRect: v.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = v
+        let poster = v.layer?.contents as AnyObject?
+        let start = clock.now
+        v.startAnimation()
+        XCTAssertTrue(v.layer?.contents as AnyObject? === poster, "aynı poster yeniden çözülmemeli")
+        // Eski yol (işlem dışı `contents` ataması) siyahtan ~0,25 sn'lik örtük "contents" animasyonu üretiyordu.
+        XCTAssertFalse(v.layer?.animationKeys()?.contains("contents") ?? false, "poster örtük animasyonla gelmemeli")
+        let layer = try XCTUnwrap(playerLayer(of: v))
+        await waitUntil { layer.opacity > 0 }
+        XCTAssertGreaterThan(layer.opacity, 0, "ilk kare hazır olunca video katmanı belirmeli")
+        print("SAVER-COLDSTART startAnimation->firstFrame=\(clock.now - start)")
+
+        // Durdur + yeniden başlat: poster yerinde kalır (yeniden başlatmada siyah yok).
+        v.stopAnimation()
+        v.startAnimation()
+        XCTAssertNotNil(v.layer?.contents)
+        v.stopAnimation()
+    }
+
+    /// Pencerede görünürken poster atanması (yeniden başlatmada liste tazelenir) siyahtan örtük solma üretmemeli.
+    func testPosterSetWhileOnScreenHasNoImplicitFade() async throws {
+        setenv("ADALMON_SAVER_DIR_FOR_TESTS", tmp.appending(path: "Saver").path, 1)
+        try await prepare(videos: 1)
+        let view = try XCTUnwrap(cls.init(frame: NSRect(x: 0, y: 0, width: 800, height: 500), isPreview: false))
+        XCTAssertNil(view.layer?.contents, "poster dosyası yokken içerik boş")
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = view
+        view.startAnimation()
+        CATransaction.flush()
+        view.stopAnimation()
+        try await writePoster()
+        view.startAnimation()                // liste yeniden okunur, poster pencere içindeyken atanır
+        XCTAssertNotNil(view.layer?.contents)
+        XCTAssertFalse(view.layer?.animationKeys()?.contains("contents") ?? false, "poster ANINDA görünmeli (örtük solma yok)")
+        view.stopAnimation()
+        _ = window
+    }
+
+    func testMissingPlaylistInitDoesNotCrashAndHasNoPoster() throws {
+        let view = try XCTUnwrap(cls.init(frame: NSRect(x: 0, y: 0, width: 800, height: 500), isPreview: false))
+        XCTAssertNil(view.layer?.contents)
+        XCTAssertNil(playerLayer(of: view)?.player)
+    }
+
     func testMissingPlaylistShowsMessageWithoutCrashing() throws {
         let view = try XCTUnwrap(cls.init(frame: NSRect(x: 0, y: 0, width: 800, height: 500), isPreview: false))
         view.startAnimation()

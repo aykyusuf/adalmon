@@ -2,7 +2,7 @@ import Foundation
 
 /// Pil sayfasının üst bölmesi: Mac | Cihazlar | iPhone & iPad | Şarj.
 enum BatteryTab: String, CapsuleTabItem, Sendable {
-    case mac, devices, ios, charging
+    case mac, devices, ios
 
     var id: String { rawValue }
 
@@ -11,7 +11,6 @@ enum BatteryTab: String, CapsuleTabItem, Sendable {
         case .mac: "Mac"
         case .devices: "Cihazlar"
         case .ios: "iPhone & iPad"
-        case .charging: "Şarj"
         }
     }
 
@@ -20,7 +19,6 @@ enum BatteryTab: String, CapsuleTabItem, Sendable {
         case .mac: "laptopcomputer"
         case .devices: "headphones"
         case .ios: "iphone"
-        case .charging: "bolt.batteryblock"
         }
     }
 }
