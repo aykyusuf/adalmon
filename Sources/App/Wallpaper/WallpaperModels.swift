@@ -117,6 +117,10 @@ struct WallpaperSettings: Codable, Equatable, Sendable {
     var experimentalAerialAcknowledged = false
     /// Kilit ekranında / Sistem Ayarları'nda da göster (deneysel): açıkken geçerli duvar kâğıdı videosu Aerial listesine kaydedilir.
     var showInSystem = false
+    /// İçerik kaynağı: video kütüphanesi ya da canlı ajan ofisi (aynı anda yalnızca biri). Eski kayıtlarda yok → video.
+    var source: WallpaperSource = .video
+    /// Ofis kaynağının seçenekleri (ışık, arka plan, etiketler).
+    var office = OfficeWallpaperOptions()
 
     static let rotationChoices = [5, 15, 30, 60, 180, 1_440]
 }
@@ -137,6 +141,8 @@ extension WallpaperSettings {
         loop = (try? c.decodeIfPresent(LoopSettings.self, forKey: .loop)) ?? d.loop
         experimentalAerialAcknowledged = try c.decodeIfPresent(Bool.self, forKey: .experimentalAerialAcknowledged) ?? d.experimentalAerialAcknowledged
         showInSystem = try c.decodeIfPresent(Bool.self, forKey: .showInSystem) ?? d.showInSystem
+        source = (try? c.decodeIfPresent(WallpaperSource.self, forKey: .source)) ?? d.source   // bozuk değer → video
+        office = (try? c.decodeIfPresent(OfficeWallpaperOptions.self, forKey: .office)) ?? d.office
     }
 }
 

@@ -46,18 +46,43 @@ final class AgentMonitorModel {
         refreshSummary()
         schedulePrune()
         updateLivenessPolling()
-        lookUpUnknownModels(now: now)
+        lookUpUnknownModels(now: now, event: event)
     }
 
     /// Modeli bilinmeyen oturum için, hız sınırı izin veriyorsa arka plan kuyruğunda konuşma dosyasının yalnızca model alanını okur.
-    /// Yalnızca olay gelince tetiklenir (zamanlayıcı yok); model bilinince durur.
-    private func lookUpUnknownModels(now: Date) {
+    /// Yalnızca olay gelince tetiklenir (zamanlayıcı yok); model bilinince durur. Stop/SubagentStop/SessionEnd olayları geri
+    /// çekilmeyi atlayan (olay türü başına bir) zorunlu deneme yapar; PostToolUse ilk denemelerde 5 sn aralık kullanır.
+    private func lookUpUnknownModels(now: Date, event: AgentEvent) {
+        guard modelResolver != nil else { return }
+        let name = event.name
+        let force: String? = switch name {
+        case .stop, .subagentStop, .sessionEnd: event.event
+        default: nil
+        }
+        var ids = state.sessionsWithUnknownModel
+        if name == .sessionEnd { ids += state.endedSessionsWithUnknownModel.filter { $0 == event.sessionID } }
+        for id in ids.sorted() where lookups.shouldAttempt(id, now: now, fast: name == .postToolUse, force: force) {
+            startLookup(id)
+        }
+    }
+
+    private func startLookup(_ id: String) {
         guard let resolver = modelResolver else { return }
-        for id in state.sessionsWithUnknownModel.sorted() where lookups.shouldAttempt(id, now: now) {
-            Task.detached(priority: .utility) { [weak self] in
-                let model = resolver.latestModel(sessionID: id)
-                await self?.finishLookup(id, model: model)
-            }
+        Task.detached(priority: .utility) { [weak self] in
+            let model = resolver.latestModel(sessionID: id)
+            await self?.finishLookup(id, model: model)
+        }
+    }
+
+    /// Kapanış sonrası görünür kalma süresinde model hâlâ bilinmiyorsa tek bir son deneme (kısa gecikmeyle, dosya yazımı otursun).
+    static let finalLookupDelay: TimeInterval = 5
+
+    private func scheduleFinalLookup(_ id: String) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.finalLookupDelay), tolerance: .seconds(1))
+            guard let self, let s = self.state.sessions[id], s.status == .ended, s.badge == .unknown,
+                  self.lookups.shouldAttempt(id, now: .now, force: "final") else { return }
+            self.startLookup(id)
         }
     }
 
@@ -66,6 +91,7 @@ final class AgentMonitorModel {
         let adopted = model.map { next.adoptTranscriptModel($0, for: id) } ?? false
         lookups.finish(id, found: model != nil, now: .now)
         if adopted { commit(next) }
+        else if model == nil, state.sessions[id]?.status == .ended, state.sessions[id]?.badge == .unknown { scheduleFinalLookup(id) }
     }
 
     func prune(now: Date = .now) {

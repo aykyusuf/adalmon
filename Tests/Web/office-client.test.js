@@ -489,6 +489,93 @@ test('görünürlük: gizliyken çizim durur, görününce hızlıca devam eder'
   assert.ok(e.frames(2) >= 1);
 });
 
+// ---------- Etiket çakışma çözümü (OfficeLabelLayout portu) ----------
+const LM = { step: 16, height: 15, margin: 2 };
+const lblItems = (n, gap, _unused, widthsOf) => Array.from({ length: n }, (_, i) => {
+  return { id: 'a' + String(i).padStart(2, '0'), x: 100 + i * gap, y: 50, widths: (widthsOf || [96, 96, 84]).slice() };
+});
+const overlapsOf = (items, res) => {
+  const rects = items.map((it) => { const p = res.placements.get(it.id); const w = it.widths[Math.min(p.variant, it.widths.length - 1)] + LM.margin;
+    return { x: it.x - w / 2, y: it.y + p.level * LM.step, w, h: LM.height }; });
+  let n = 0;
+  for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
+    const a = rects[i], b = rects[j];
+    if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) n++;
+  }
+  return n;
+};
+
+test('etiket çözümü: 2 yan yana etiket, kademe 1 ile çözülür (metin kısalmaz)', async () => {
+  const api = await makeEnv().ready();
+  const items = lblItems(2, 60);                                  // 98 px genişlik, 60 px aralık: çakışır
+  const res = api.resolveLabels(items, LM);
+  assert.deepStrictEqual([...res.placements.values()].map((p) => p.level), [0, 1]);
+  assert.ok([...res.placements.values()].every((p) => p.variant === 0));
+  assert.strictEqual(res.overlaps, 0);
+  assert.strictEqual(overlapsOf(items, res), 0);
+});
+
+test('etiket çözümü: ayrık etiketler kademe 0 ve tam ad kalır', async () => {
+  const api = await makeEnv().ready();
+  const res = api.resolveLabels(lblItems(3, 200), LM);
+  assert.ok([...res.placements.values()].every((p) => p.level === 0 && p.variant === 0));
+  assert.strictEqual(res.overlaps, 0);
+});
+
+test('etiket çözümü: 3 yan yana etiket 3 kademeyi (0,1,2) kullanır, kısaltma gerekmez', async () => {
+  const api = await makeEnv().ready();
+  const res = api.resolveLabels(lblItems(3, 20), LM);
+  assert.deepStrictEqual([...res.placements.values()].map((p) => p.level), [0, 1, 2]);
+  assert.ok([...res.placements.values()].every((p) => p.variant === 0));
+  assert.strictEqual(res.overlaps, 0);
+});
+
+test('etiket çözümü: 6 yan yana etiket kademe sınırını (<=2) aşmaz ve metin biçimi kısalır', async () => {
+  const api = await makeEnv().ready();
+  const items = lblItems(6, 30, null, [150, 150, 90]);
+  const res = api.resolveLabels(items, LM);
+  const ps = [...res.placements.values()];
+  assert.ok(ps.every((p) => p.level >= 0 && p.level <= 2), 'kademe sınırı');
+  assert.ok(ps.every((p) => p.variant > 0), 'tüm odada kısaltma: ' + JSON.stringify(ps));
+  assert.strictEqual(res.overlaps, overlapsOf(items, res));
+});
+
+test('etiket çözümü: 12 yan yana etiket son biçimde de sığmaz; çakışma sayılır, kademe <= 2', async () => {
+  const api = await makeEnv().ready();
+  const items = lblItems(12, 30, null, [150, 110, 90]);
+  const res = api.resolveLabels(items, LM);
+  const ps = [...res.placements.values()];
+  assert.strictEqual(ps.length, 12);
+  assert.ok(ps.every((p) => p.variant === 2 && p.level <= 2));
+  assert.ok(res.overlaps > 0, 'kabul edilen çakışma raporlanır');
+  assert.strictEqual(res.overlaps, overlapsOf(items, res));
+});
+
+test('etiket çözümü: metin biçimleri (tam ad, önek atılmış, 14 karakter)', async () => {
+  const api = await makeEnv().ready();
+  assert.deepStrictEqual(Array.from(api.labelVariants('general-purpose')), ['general-purpose', 'general-purpo…']);
+  assert.deepStrictEqual(Array.from(api.labelVariants('crew-chief:implementer')), ['crew-chief:implementer', 'implementer']);
+  assert.deepStrictEqual(Array.from(api.labelVariants('plugin:very-long-agent-name')), ['plugin:very-long-agent-name', 'very-long-agent-name', 'very-long-age…']);
+  assert.deepStrictEqual(Array.from(api.labelVariants('★ adalmon')), ['★ adalmon']);
+  assert.deepStrictEqual(Array.from(api.labelVariants('kısa')), ['kısa']);
+});
+
+test('etiket çözümü: odada 5 "general-purpose" alt ajanı çizimde çakışmaz; yalnızca değişince yeniden hesaplanır', async () => {
+  const e = makeEnv({ dpr: 2 });
+  const api = await e.ready();
+  const subs = Array.from({ length: 5 }, (_, i) => member({ id: 's#' + i, label: 'general-purpose', role: { key: 'general-purpose', name: 'general-purpose', tint: '#3B7BFF', accessory: 'none', small: false, hoodie: false, known: true },
+    seat: 1 + i, seatInfo: { id: 1 + i, col: 1 + i, row: 8, kind: 'desk', facing: 'up', key: 800 + i } }));
+  e.sources[0].onmessage({ data: JSON.stringify(snapshot(e.clock, [room({ tier: 's4', stations: 4, capacity: 6, members: [execM({}), ...subs] })])) });
+  e.frames(3);
+  const r = api.rooms.get('sess1');
+  assert.ok(r.labelCache, 'önbellek oluştu');
+  assert.ok(r.labelCache.map.size >= 4, 'etiketler yerleşti: ' + r.labelCache.map.size);
+  assert.ok(r.labelCache.overlaps <= 3, 'çakışma çözümden sonra: ' + r.labelCache.overlaps);
+  const cache = r.labelCache;
+  api.draw(e.clock.t + 16);
+  assert.strictEqual(r.labelCache, cache, 'değişiklik yokken yeniden hesaplanmaz');
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {

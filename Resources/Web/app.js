@@ -937,17 +937,24 @@
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = room.alpha;
-    const bubbles = [];
+    const bubbles = [], shown = [];
     for (const o of overlays) {
       const a = o.a;
       const sx = r.x + (a.x - ox) * S, sy = r.y + (a.y - oy + o.drop) * S;
       hitActors.push({ a, x: sx - 9 * S * o.k, y: sy - 30 * S * o.k, w: 18 * S * o.k, h: 31 * S * o.k });
       if (a.alpha <= 0.01) continue;
-      drawLabel(a, o.lk, sx, sy);
-      const bub = bubbleOf(a);
-      if (bub && a.alpha >= 0.9) bubbles.push({ a, bub, sx, hy: sy - 29 * S * o.k });
+      shown.push({ o, sx, sy });
     }
-    drawBubbles(bubbles, r, t);
+    // Etiketler: aynı odadakilerin çakışma çözümü (OfficeLabelLayout portu), sonra çizim; balonlar etiketleri engel sayar.
+    const labelPlace = resolveRoomLabels(room, shown);
+    const obstacles = [];
+    for (const sh of shown) {
+      const a = sh.o.a;
+      obstacles.push(drawLabel(a, sh.o.lk, sh.sx, sh.sy, labelPlace.get(a.member.id)));
+      const bub = bubbleOf(a);
+      if (bub && a.alpha >= 0.9) bubbles.push({ a, bub, sx: sh.sx, hy: sh.sy - 29 * S * sh.o.k });
+    }
+    drawBubbles(bubbles, r, t, obstacles);
     if (td.boardPlacement) {
       const p = td.boardPlacement, def = layout.furniture[p.asset] || { w: 32, h: 32 };
       hitBoards.push({ room, x: r.x + (p.col * T - ox) * S, y: r.y + (p.row * T - oy) * S, w: def.w * S, h: def.h * S });
@@ -997,13 +1004,104 @@
     return text.length > 22 ? text.slice(0, 21) + '…' : text;
   }
 
-  function drawLabel(a, lk, sx, sy) {
-    const m = a.member, text = labelText(m), night = uiNight();
-    const fs = Math.round(10 * dpr);
-    ctx.font = `600 ${fs}px -apple-system, system-ui, sans-serif`;
+  // ---------- Etiket çakışma çözümü (Sources/App/Office/OfficeLabelLayout.swift portu) ----------
+  // Soldan sağa yerleştirme; çakışan etiket en çok 2 kademe (16 px) kaydırılır; yetmezse tüm odada metin biçimi kısalır:
+  // tam ad -> `eklenti:` öneki atılmış ad -> 14 karakter + "…"; yine olmazsa en az örtüşen kademe. Kademe yönü: web'de etiket
+  // ayakların ALTINDA durduğu için kademeler aşağı doğrudur (macOS'ta baş üstü olduğundan yukarı).
+  const LABEL = { maxLevel: 2, shortLimit: 14 };
+
+  function labelVariants(title) {
+    const out = [title];
+    const stripped = title.includes(':') && !title.startsWith('★') ? title.slice(title.lastIndexOf(':') + 1) : title;
+    if (stripped && !out.includes(stripped)) out.push(stripped);
+    const short = stripped.length <= LABEL.shortLimit ? stripped : stripped.slice(0, LABEL.shortLimit - 1) + '…';
+    if (!out.includes(short)) out.push(short);
+    return out;
+  }
+
+  // Ekran pikseli; items: { id, x (merkez), y (kademe 0 üst kenarı), widths[] }. Kademe adımı/yükseklik/boşluk dpr ile ölçeklenir.
+  function labelRect(item, variant, level, m) {
+    const w = item.widths[Math.min(variant, item.widths.length - 1)] + m.margin;
+    return { x: item.x - w / 2, y: item.y + level * m.step, w, h: m.height };
+  }
+
+  const rectsOverlap = (p, q) => p.x < q.x + q.w && q.x < p.x + p.w && p.y < q.y + q.h && q.y < p.y + p.h;
+  function overlapArea(p, q) {
+    const w = Math.min(p.x + p.w, q.x + q.w) - Math.max(p.x, q.x), h = Math.min(p.y + p.h, q.y + q.h) - Math.max(p.y, q.y);
+    return w > 0 && h > 0 ? w * h : 0;
+  }
+
+  function resolveLabels(items, m) {
+    const sorted = items.filter((i) => i.widths.length).sort((p, q) => (p.x - q.x) || (p.y - q.y) || (p.id < q.id ? -1 : p.id > q.id ? 1 : 0));
+    if (!sorted.length) return { placements: new Map(), overlaps: 0 };
+    const stages = Math.max(...sorted.map((i) => i.widths.length));
+    let result = new Map();
+    for (let stage = 0; stage < stages; stage++) {
+      const last = stage === stages - 1;
+      const placed = [], out = new Map();
+      let failed = false;
+      for (const item of sorted) {
+        const variant = Math.min(stage, item.widths.length - 1);
+        let chosen = null;
+        for (let level = 0; level <= LABEL.maxLevel; level++) {
+          const r = labelRect(item, variant, level, m);
+          if (!placed.some((p) => rectsOverlap(p, r))) { chosen = level; break; }
+        }
+        if (chosen === null) {
+          failed = true;
+          if (!last) break;
+          let best = { level: 0, area: Infinity };   // kabul edilen çakışma: en az kesişim alanı, eşitlikte en düşük kademe
+          for (let level = 0; level <= LABEL.maxLevel; level++) {
+            const r = labelRect(item, variant, level, m);
+            const area = placed.reduce((acc, p) => acc + overlapArea(p, r), 0);
+            if (area < best.area - 0.0001) best = { level, area };
+          }
+          chosen = best.level;
+        }
+        out.set(item.id, { variant, level: chosen });
+        placed.push(labelRect(item, variant, chosen, m));
+      }
+      if (!failed || last) result = out;
+      if (!failed) break;
+    }
+    const rects = sorted.map((i) => { const p = result.get(i.id); return p ? labelRect(i, p.variant, p.level, m) : null; }).filter(Boolean);
+    let overlaps = 0;
+    for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) if (rectsOverlap(rects[i], rects[j])) overlaps++;
+    return { placements: result, overlaps };
+  }
+
+  const labelMetrics = () => ({ step: Math.round(16 * dpr), height: Math.round(15 * dpr), margin: Math.round(2 * dpr) });
+
+  function labelFont() { return `600 ${Math.round(10 * dpr)}px -apple-system, system-ui, sans-serif`; }
+
+  // Pil genişliği: yazı + dolgular (drawLabel ile aynı hesap).
+  function labelWidth(text) {
+    ctx.font = labelFont();
+    return Math.ceil(ctx.measureText(text).width) + Math.round(6 * dpr) * 2 + Math.round(3 * dpr) * 2 + Math.round(3 * dpr);
+  }
+
+  // Yalnızca üye/metin/konum/ölçek (ve dpr) değişince yeniden hesaplanır; kararsız (yürüyen/ayrılan) oyuncular dışarıda kalır.
+  function resolveRoomLabels(room, shown) {
+    const cands = shown.filter((sh) => !moving(sh.o.a) && !sh.o.a.leaving);
+    const key = cands.map((sh) => `${sh.o.a.member.id}|${labelText(sh.o.a.member)}|${Math.round(sh.sx)}|${Math.round(sh.sy)}`).join(';') + `@${S}/${dpr}`;
+    if (room.labelCache && room.labelCache.key === key) return room.labelCache.map;
+    const items = cands.map((sh) => {
+      const variants = labelVariants(labelText(sh.o.a.member));
+      return { id: sh.o.a.member.id, x: Math.round(sh.sx), y: Math.round(sh.sy + 2 * dpr), variants, widths: variants.map(labelWidth) };
+    });
+    const res = resolveLabels(items, labelMetrics());
+    const map = new Map();
+    for (const it of items) { const p = res.placements.get(it.id); if (p) map.set(it.id, { text: it.variants[p.variant], level: p.level }); }
+    room.labelCache = { key, map, overlaps: res.overlaps };
+    return map;
+  }
+
+  function drawLabel(a, lk, sx, sy, place) {
+    const m = a.member, text = place ? place.text : labelText(m), night = uiNight();
+    ctx.font = labelFont();
     const tw = Math.ceil(ctx.measureText(text).width), h = Math.round(15 * dpr), pad = Math.round(6 * dpr), dot = Math.round(3 * dpr);
     const w = tw + pad * 2 + dot * 2 + Math.round(3 * dpr);
-    const x = Math.round(sx - w / 2), y = Math.round(sy + 2 * dpr);
+    const x = Math.round(sx - w / 2), y = Math.round(sy + 2 * dpr) + (place ? place.level * Math.round(16 * dpr) : 0);
     pill(x, y, w, h, night ? 'rgba(27,33,50,0.9)' : 'rgba(255,255,255,0.92)', night ? 'rgba(255,255,255,0.2)' : 'rgba(17,20,28,0.16)', true);
     const dotColor = m.kind === 'subagent' && m.role ? (m.role.tint || lk.shirt) : (m.appearance && m.appearance.tint) || lk.shirt;
     ctx.fillStyle = dotColor;
@@ -1011,11 +1109,12 @@
     ctx.fillStyle = night ? '#E8ECF5' : '#1B2030';
     ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
     ctx.fillText(text, x + pad + dot * 2 + Math.round(3 * dpr), y + h / 2 + 0.5);
+    return { x, y, w, h };
   }
 
   // Konuşma balonları: beyaz yuvarlak gövde + kuyruk + gölge; komşu balonla çakışan yukarı kayar.
-  function drawBubbles(list, room, t) {
-    const placed = [];
+  function drawBubbles(list, room, t, obstacles) {
+    const placed = (obstacles || []).slice();
     list.sort((p, q) => p.sx - q.sx || p.hy - q.hy);
     const fs = Math.round(10.5 * dpr);
     const tail = Math.round(4 * dpr), bh = Math.round(16 * dpr), pad = Math.round(7 * dpr), tip = Math.round(4 * dpr);
@@ -1442,7 +1541,7 @@
 
   if (TEST) {
     TEST.api = { apply, layoutRooms, frame, advance, draw, animating, prepare, buildCard, openCard, closeCard, escape, setFocus, bakeSheet, heartbeat, scheduleActors,
-                 rooms, tierData, light, wantNight, localNight, applyServerLighting, stepLight, poseOf, bubbleOf, lookOf, startCleaner, bfs, boardTile,
+                 rooms, tierData, light, labelVariants, resolveLabels, labelMetrics, wantNight, localNight, applyServerLighting, stepLight, poseOf, bubbleOf, lookOf, startCleaner, bfs, boardTile,
                  get S() { return S; }, get assets() { return assets; }, get layout() { return layout; }, get selected() { return selected; },
                  get focusId() { return focusId; }, get hitActors() { return hitActors; }, get hitBoards() { return hitBoards; }, get raf() { return raf; }, get needsRedraw() { return needsRedraw; },
                  set needsRedraw(v) { needsRedraw = v; } };

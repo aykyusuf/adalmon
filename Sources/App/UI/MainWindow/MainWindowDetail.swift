@@ -18,7 +18,7 @@ struct MainWindowDetail<SettingsContent: View>: View {
         case .rules: RulesPage(model: model)
         case .processes: ProcessesPage(model: model, router: router)
         case .battery: BatteryPage(monitor: model.battery, store: model.store, router: router, devices: model.devices, prefs: model.prefs)
-        case .wallpaper: WallpaperPage(service: .shared)
+        case .wallpaper: WallpaperPage(service: .shared, agentsEnabled: model.prefs.agentsEnabled) { router.open(.agents) }
         case .agentOffice: AgentOfficePage(model: model, router: router)
         case .settings(let settings): SettingsPage(section: settings) { settingsContent(settings) }
         }

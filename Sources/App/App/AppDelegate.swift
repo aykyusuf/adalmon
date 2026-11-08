@@ -67,6 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             WallpaperService.shared.start() // ana şalter kapalıysa hiçbir şey yapmaz
             // CPU kuralı mevcut metrik ölçümünü kullanır (yeni zamanlayıcı yok); duvar kâğıdı kapalıysa anında döner.
             let wallpaper = WallpaperService.shared.controller
+            // Ofis duvar kâğıdı kaynağı: canlı ajan oturumları + özellik anahtarı (okunan @Observable alanlar izlenir).
+            wallpaper.officeFeed = OfficeWallpaperFeed {
+                OfficeFeedSnapshot(members: OfficeMember.members(from: model.agents.monitor.state.orderedSessions), agentsEnabled: model.prefs.agentsEnabled)
+            }
             model.onSnapshot = { [weak wallpaper] in wallpaper?.ingestCPU($0.cpu.total) }
         }
         if !AppEnvironment.isRunningTests { SaverService.shared.launchCheck(wallpaper: .shared) } // kuruluysa paketi/videoları güncel tutar

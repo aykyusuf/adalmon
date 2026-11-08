@@ -54,6 +54,14 @@ final class OfficeScene: SKScene {
     private var dragStart: CGPoint?
     private var dragLast: CGPoint?
     private var dragging = false
+    /// Duvar kâğıdı: nil değilse etkileşimsiz genel bakış kamerası (tüm odalar ekrana sığar) ve etiket politikası geçerlidir.
+    var wallpaperLabels: OfficeLabelPolicy? {
+        didSet {
+            guard wallpaperLabels != oldValue else { return }
+            relayout(animated: false)
+            refreshLabels()
+        }
+    }
 
     /// true/false: sahnede çalışan animasyon var mı (ev sahibi bunu duraklatma kararında kullanır).
     var onAnimationStateChange: ((Bool) -> Void)?
@@ -201,7 +209,8 @@ final class OfficeScene: SKScene {
             return
         }
         let sizes = ordered.map { OfficeRoomSize(id: $0.id, width: $0.frameSize.width, height: $0.frameSize.height) }
-        arrangement = OfficeRoomArranger.best(sizes, viewWidth: size.width, viewHeight: size.height)
+        arrangement = wallpaperLabels != nil ? OfficeWallpaperCamera.bestArrangement(sizes, view: size)
+            : OfficeRoomArranger.best(sizes, viewWidth: size.width, viewHeight: size.height)
         let contentH = arrangement.contentHeight
         for cell in arrangement.cells {
             guard let room = rooms[cell.id] else { continue }
@@ -222,6 +231,11 @@ final class OfficeScene: SKScene {
 
     private func updateCamera(animated: Bool, recenter: Bool = false) {
         let content = arrangement.contentSize
+        if wallpaperLabels != nil {
+            let o = OfficeWallpaperCamera.overview(content: content, view: size, integerOnly: theme.integerZoomOnly)
+            applyCamera(zoom: o.zoom, center: o.center, animated: false)
+            return
+        }
         var z: CGFloat
         var center: CGPoint
         if let id = selectedRoomID, let cell = arrangement.cell(id: id) {
@@ -275,6 +289,12 @@ final class OfficeScene: SKScene {
 
     /// Ad etiketleri yalnızca yakından bakılırken: odak odası ya da (odaksızken) az kalabalık odalar, zoom ≥ 2.
     private func refreshLabels() {
+        if let policy = wallpaperLabels {
+            let on = OfficeWallpaperCamera.showsLabels(policy, zoom: Double(zoom))
+            let bubbles = OfficeWallpaperCamera.showsBubbles(policy, zoom: Double(zoom))
+            for room in rooms.values { room.setLabels(on); room.setBubbles(bubbles) }
+            return
+        }
         for room in rooms.values {
             let on = zoom >= 2 && (selectedRoomID == room.id || (selectedRoomID == nil && room.memberCount <= 4))
             room.setLabels(on)

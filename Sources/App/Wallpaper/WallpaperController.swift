@@ -4,6 +4,8 @@ import Observation
 
 /// Seçenek A: her ekran için masaüstü seviyesinde bir pencere + AVPlayerLayer. Kapalıyken HİÇBİR şey yoktur
 /// (pencere, zamanlayıcı, gözlemci). Duraklatılmışken kare çözülmez; son kare katmanda kalır.
+/// Kaynak `.office` ise aynı pencere/politika/gözlemciler kullanılır ama içerik video değil canlı ajan ofisidir (`OfficeSlot`);
+/// iki kaynak asla birlikte etkin değildir.
 @MainActor @Observable
 final class WallpaperController {
     struct Config: Equatable {
@@ -59,6 +61,12 @@ final class WallpaperController {
     @ObservationIgnored var screenProvider: @MainActor () -> [LiveScreen]
     @ObservationIgnored var occlusionProvider: @MainActor ([WallpaperScreenInfo]) -> [String: OcclusionCheck.Result]
     @ObservationIgnored let monitor = WallpaperSystemMonitor()
+    /// Ofis kaynağının ajan beslemesi (uygulama açılışında bağlanır). nil: boş sahne.
+    @ObservationIgnored var officeFeed: OfficeWallpaperFeed? {
+        didSet { if !officeSlots.isEmpty { trackOfficeFeed() } }
+    }
+    /// Ofis teması (mevcut `officeTheme` ayarı); testte değiştirilir.
+    @ObservationIgnored var themeProvider: () -> OfficeTheme = { OfficeTheme.stored() }
 
     struct LiveScreen {
         var info: WallpaperScreenInfo
@@ -69,6 +77,11 @@ final class WallpaperController {
 
     @ObservationIgnored private(set) var config = Config()
     @ObservationIgnored private var slots: [String: Slot] = [:]
+    @ObservationIgnored private var officeSlots: [String: OfficeSlot] = [:]
+    @ObservationIgnored private var officeSnapshot = OfficeFeedSnapshot()
+    @ObservationIgnored private var officeTrackingGeneration = 0
+    @ObservationIgnored private var defaultsToken: NSObjectProtocol?
+    @ObservationIgnored private var appliedTheme: OfficeTheme?
     @ObservationIgnored private var occlusion: [String: OcclusionCheck.Result] = [:]
     @ObservationIgnored private var rotation = PlaylistRotation(ids: [], mode: .single)
     @ObservationIgnored private var observersActive = false
@@ -88,13 +101,20 @@ final class WallpaperController {
         self.occlusionProvider = occlusionProvider
     }
 
+    /// Hangi ekranlarda video / ofis dilimi var (kaynak değişim testleri: ikisi aynı anda dolu olmaz).
+    var videoScreenKeys: [String] { slots.keys.sorted() }
+    var officeScreenKeys: [String] { officeSlots.keys.sorted() }
+    func officeSlotState(_ key: String) -> (decision: WallpaperDecision?, members: [OfficeMember], hasWindow: Bool)? {
+        officeSlots[key].map { ($0.lastDecision, $0.members, $0.hasWindow) }
+    }
+
     // MARK: Giriş noktası
 
     func apply(_ newConfig: Config) {
         let was = config
         config = newConfig
         guard newConfig.settings.enabled else {
-            if was.settings.enabled || observersActive || !slots.isEmpty { teardown() }
+            if was.settings.enabled || observersActive || !slots.isEmpty || !officeSlots.isEmpty { teardown() }
             summary = .off
             screenStatuses = []
             screens = []
@@ -113,6 +133,13 @@ final class WallpaperController {
         let live = screenProvider()
         let unique = ScreenMapping.unique(live.map(\.info))
         screens = unique
+        // Kaynak seçimi: ofis kaynağında video dilimleri (oynatıcılar dahil) tamamen kapanır; videoda ofis dilimleri kapanır.
+        if config.settings.source == .office {
+            dropVideoSlots()
+            rebuildOfficeSlots(live)
+            return
+        }
+        dropOfficeSlots()
         let available = Set(config.items.filter(\.fileExists).map(\.id))
         let assigned = ScreenMapping.assignments(screens: unique, sameOnAll: config.settings.sameOnAllScreens, defaultItem: effectiveDefaultItem,
                                                  perScreen: config.settings.perScreen, available: available)
@@ -161,6 +188,7 @@ final class WallpaperController {
         let rules = config.settings.rules
         if poll { refreshOcclusion() }
         let sys = monitor.state
+        if config.settings.source == .office { reevaluateOffice(rules: rules, sys: sys); return }
         var statuses: [ScreenStatus] = []
         let byID = Dictionary(config.items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         for info in screens {
@@ -168,18 +196,23 @@ final class WallpaperController {
                 statuses.append(ScreenStatus(screen: info, itemName: nil, decision: nil))
                 continue
             }
-            let occ = occlusion[info.key] ?? OcclusionCheck.Result(coverage: 0, fullScreen: false)
-            let input = WallpaperPolicyInput(onBattery: sys.onBattery, lowPower: sys.lowPower,
-                                             desktopVisible: !OcclusionCheck.isCovered(occ),
-                                             locked: monitor.policyLocked, displayAsleep: sys.displayAsleep, fullScreen: occ.fullScreen,
-                                             memoryCritical: sys.memoryCritical, thermalSerious: sys.thermalSerious, cpuBusy: cpuGate.shouldPause)
-            let decision = WallpaperPolicy.decide(input, rules: rules, override: config.override)
+            let decision = decide(for: info, sys: sys, rules: rules)
             slot.apply(decision: decision)
             statuses.append(ScreenStatus(screen: info, itemName: byID[itemID]?.name, decision: decision))
         }
         screenStatuses = statuses
         updateSummary(byID: byID)
         updateTimers()
+    }
+
+    /// Bir ekran için politika kararı (video ve ofis kaynağı AYNI girdileri/sebepleri kullanır).
+    private func decide(for info: WallpaperScreenInfo, sys: WallpaperSystemMonitor.State, rules: WallpaperPauseRules) -> WallpaperDecision {
+        let occ = occlusion[info.key] ?? OcclusionCheck.Result(coverage: 0, fullScreen: false)
+        let input = WallpaperPolicyInput(onBattery: sys.onBattery, lowPower: sys.lowPower,
+                                         desktopVisible: !OcclusionCheck.isCovered(occ),
+                                         locked: monitor.policyLocked, displayAsleep: sys.displayAsleep, fullScreen: occ.fullScreen,
+                                         memoryCritical: sys.memoryCritical, thermalSerious: sys.thermalSerious, cpuBusy: cpuGate.shouldPause)
+        return WallpaperPolicy.decide(input, rules: rules, override: config.override)
     }
 
     private func updateSummary(byID: [UUID: WallpaperItem]) {
@@ -206,12 +239,14 @@ final class WallpaperController {
     // MARK: Zamanlayıcılar (yalnızca gerektiğinde)
 
     private var anyVideoSlot: Bool { slots.values.contains { $0.isVideo } }
+    /// Politikanın (örtülme yoklaması, CPU kapısı) anlamlı olduğu içerik var mı: oynayabilen video ya da ofis sahnesi.
+    private var hasLiveContent: Bool { anyVideoSlot || !officeSlots.isEmpty }
 
     private var shouldPoll: Bool {
         guard !isHeadless, config.settings.rules.pauseWhenDesktopHidden else { return false }
         // Fiziksel/pil sebebiyle durmuşken yoklama gerekmez (olay gelince yeniden değerlendirilir).
         return screenStatuses.contains { s in
-            guard let d = s.decision, slots[s.id]?.isVideo == true else { return false }
+            guard let d = s.decision, slots[s.id]?.isVideo == true || officeSlots[s.id] != nil else { return false }
             switch d {
             case .play, .pause(.covered), .pause(.fullScreen): return true
             default: return false
@@ -283,7 +318,7 @@ final class WallpaperController {
     /// Sistem toplam CPU yükü (0…1). Mevcut metrik örnekleyicisinin her adımında çağrılır; özellik ya da kural kapalıyken
     /// ya da video yokken hiçbir şey yapmaz. Karar yalnızca kapı değişince yeniden değerlendirilir.
     func ingestCPU(_ load: Double, at time: Date = .now) {
-        guard config.settings.enabled, config.settings.rules.pauseOnHighCPU, anyVideoSlot else {
+        guard config.settings.enabled, config.settings.rules.pauseOnHighCPU, hasLiveContent else {
             if cpuGate.runStart != nil { cpuGate.reset() }
             return
         }
@@ -299,8 +334,111 @@ final class WallpaperController {
     }
 
     private func refreshOcclusion() {
-        guard config.settings.rules.pauseWhenDesktopHidden, anyVideoSlot else { occlusion = [:]; return }
+        guard config.settings.rules.pauseWhenDesktopHidden, hasLiveContent else { occlusion = [:]; return }
         occlusion = occlusionProvider(screens)
+    }
+
+    // MARK: Ofis kaynağı
+
+    private func dropVideoSlots() {
+        guard !slots.isEmpty else { return }
+        for slot in slots.values { slot.teardown() }
+        slots = [:]
+        rotationTimer?.invalidate(); rotationTimer = nil
+        rotationRemaining = nil
+        if let a = activity { ProcessInfo.processInfo.endActivity(a); activity = nil }
+    }
+
+    private func dropOfficeSlots() {
+        officeTrackingGeneration += 1
+        if let token = defaultsToken { NotificationCenter.default.removeObserver(token); defaultsToken = nil }
+        guard !officeSlots.isEmpty else { return }
+        for slot in officeSlots.values { slot.teardown() }
+        officeSlots = [:]
+        appliedTheme = nil
+    }
+
+    /// Her ekrana aynı ofis sahnesi (ofis kaynağında ekran başına atama yoktur).
+    private func rebuildOfficeSlots(_ live: [LiveScreen]) {
+        let theme = themeProvider()
+        appliedTheme = theme
+        var seen = Set<String>()
+        for entry in live where seen.insert(entry.info.key).inserted {
+            let slot: OfficeSlot
+            if let existing = officeSlots[entry.info.key] { slot = existing }
+            else {
+                slot = OfficeSlot(key: entry.info.key, frame: entry.frame, headless: isHeadless)
+                officeSlots[entry.info.key] = slot
+            }
+            slot.update(frame: entry.frame)
+            slot.configure(options: config.settings.office, theme: theme, members: officeSnapshot.visibleMembers)
+        }
+        for key in officeSlots.keys where !seen.contains(key) { officeSlots.removeValue(forKey: key)?.teardown() }
+        trackOfficeFeed()
+        if !isHeadless, defaultsToken == nil, !officeSlots.isEmpty {
+            // Ofis sayfasından tema değişince duvar kâğıdı da değişsin (yalnızca ofis kaynağı etkinken gözlenir).
+            defaultsToken = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.config.settings.source == .office, self.appliedTheme != self.themeProvider() else { return }
+                    self.rebuildScreens()
+                }
+            }
+        }
+    }
+
+    /// Ajan beslemesini okur ve okunan @Observable alanları izler; değişince bir kez daha okuyup yeniden izler. Besleme yoksa boş sahne.
+    private func trackOfficeFeed() {
+        officeTrackingGeneration += 1
+        let generation = officeTrackingGeneration
+        guard !officeSlots.isEmpty else { return }
+        guard let feed = officeFeed else { applyOfficeSnapshot(OfficeFeedSnapshot()); return }
+        if isHeadless { applyOfficeSnapshot(feed.snapshot()); return }
+        let snapshot = withObservationTracking { feed.snapshot() } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.officeTrackingGeneration == generation else { return }
+                self.trackOfficeFeed()
+            }
+        }
+        applyOfficeSnapshot(snapshot)
+    }
+
+    /// Testler/UI: beslemeyi yeniden oku (izleme olmayan headless yolu).
+    func refreshOfficeFeed() {
+        guard config.settings.source == .office, !officeSlots.isEmpty else { return }
+        trackOfficeFeed()
+        updateOfficeSummary()
+    }
+
+    private func applyOfficeSnapshot(_ snapshot: OfficeFeedSnapshot) {
+        let changedSummary = snapshot.sessionCount != officeSnapshot.sessionCount || snapshot.agentsEnabled != officeSnapshot.agentsEnabled
+        officeSnapshot = snapshot
+        for slot in officeSlots.values { slot.setMembers(snapshot.visibleMembers) }
+        if changedSummary { updateOfficeSummary() }
+    }
+
+    private func reevaluateOffice(rules: WallpaperPauseRules, sys: WallpaperSystemMonitor.State) {
+        var statuses: [ScreenStatus] = []
+        for info in screens {
+            guard let slot = officeSlots[info.key] else {
+                statuses.append(ScreenStatus(screen: info, itemName: nil, decision: nil))
+                continue
+            }
+            let decision = decide(for: info, sys: sys, rules: rules)
+            slot.apply(decision: decision)
+            statuses.append(ScreenStatus(screen: info, itemName: "Ajan ofisi", decision: decision))
+        }
+        screenStatuses = statuses
+        updateOfficeSummary()
+        updateTimers()
+    }
+
+    private func updateOfficeSummary() {
+        guard config.settings.enabled, config.settings.source == .office else { return }
+        let active = screenStatuses.filter { $0.decision != nil }
+        guard !active.isEmpty else { summary = .noContent; return }
+        let detail = officeSnapshot.agentsEnabled ? "Ajan ofisi · \(officeSnapshot.sessionCount) oturum" : "Ajan ofisi · ajan özelliği kapalı"
+        if active.contains(where: { $0.decision == .play }) { summary = .playing(detail); return }
+        if case .pause(let reason)? = active.first?.decision { summary = .paused(reason, detail) }
     }
 
     // MARK: Gözlemciler
@@ -334,6 +472,7 @@ final class WallpaperController {
         observersActive = false
         for slot in slots.values { slot.teardown() }
         slots = [:]
+        dropOfficeSlots()
         occlusion = [:]
         cpuGate.reset()
     }

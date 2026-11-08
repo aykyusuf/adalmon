@@ -157,8 +157,68 @@ final class TranscriptModelReaderTests: XCTestCase {
             count += 1
             t.finish("s", found: false, now: now)
         }
+        XCTAssertEqual(t.attempts(for: "s"), 5)
+        for d in [480.0, 960, 1920] {
+            now = now.addingTimeInterval(d)
+            XCTAssertTrue(t.shouldAttempt("s", now: now))
+            t.finish("s", found: false, now: now)
+        }
         XCTAssertEqual(t.attempts(for: "s"), ModelLookupTracker.maxAttempts)
-        XCTAssertFalse(t.shouldAttempt("s", now: now.addingTimeInterval(100_000)), "en çok 5 deneme")
+        XCTAssertEqual(ModelLookupTracker.maxAttempts, 8)
+        XCTAssertFalse(t.shouldAttempt("s", now: now.addingTimeInterval(1_000_000)), "en çok 8 deneme")
+    }
+
+    func testLookupTrackerFastIntervalsForPostToolUse() {
+        var t = ModelLookupTracker()
+        var now = Date(timeIntervalSince1970: 1_000_000)
+        for n in 1...3 {
+            XCTAssertTrue(t.shouldAttempt("s", now: now, fast: true), "hızlı deneme \(n)")
+            t.finish("s", found: false, now: now)
+            XCTAssertFalse(t.shouldAttempt("s", now: now.addingTimeInterval(4.9), fast: true))
+            now = now.addingTimeInterval(5)
+        }
+        XCTAssertTrue(t.shouldAttempt("s", now: now, fast: true), "4. deneme")
+        t.finish("s", found: false, now: now)
+        XCTAssertFalse(t.shouldAttempt("s", now: now.addingTimeInterval(29), fast: true), "4. denemeden sonra 30 sn")
+        now = now.addingTimeInterval(30)
+        XCTAssertTrue(t.shouldAttempt("s", now: now, fast: true))
+        t.finish("s", found: false, now: now)
+        XCTAssertFalse(t.shouldAttempt("s", now: now.addingTimeInterval(59), fast: true), "sonra 60 sn")
+        XCTAssertTrue(t.shouldAttempt("s", now: now.addingTimeInterval(60), fast: true))
+        // Hızlı olmayan olay aynı oturumda 5 sn aralığı kullanmaz.
+        var u = ModelLookupTracker()
+        let t0 = Date(timeIntervalSince1970: 7)
+        XCTAssertTrue(u.shouldAttempt("x", now: t0)); u.finish("x", found: false, now: t0)
+        XCTAssertFalse(u.shouldAttempt("x", now: t0.addingTimeInterval(6)))
+    }
+
+    func testLookupTrackerForcedAttemptSkipsBackoffOncePerKind() {
+        var t = ModelLookupTracker()
+        let now = Date(timeIntervalSince1970: 1_000)
+        XCTAssertTrue(t.shouldAttempt("s", now: now)); t.finish("s", found: false, now: now)
+        XCTAssertFalse(t.shouldAttempt("s", now: now.addingTimeInterval(1)), "olağan deneme geri çekilmede")
+        XCTAssertTrue(t.shouldAttempt("s", now: now.addingTimeInterval(1), force: "Stop"))
+        t.finish("s", found: false, now: now.addingTimeInterval(1))
+        XCTAssertFalse(t.shouldAttempt("s", now: now.addingTimeInterval(2), force: "Stop"), "aynı tür bir kez")
+        XCTAssertTrue(t.shouldAttempt("s", now: now.addingTimeInterval(2), force: "SubagentStop"))
+        t.finish("s", found: false, now: now.addingTimeInterval(2))
+        XCTAssertTrue(t.shouldAttempt("s", now: now.addingTimeInterval(3), force: "SessionEnd"))
+        t.finish("s", found: false, now: now.addingTimeInterval(3))
+        XCTAssertTrue(t.shouldAttempt("s", now: now.addingTimeInterval(4), force: "final"))
+        t.finish("s", found: true, now: now.addingTimeInterval(4))
+        XCTAssertFalse(t.shouldAttempt("s", now: now.addingTimeInterval(5), force: "Other"), "başarıda durur")
+        XCTAssertEqual(t.attempts(for: "s"), 1, "zorunlu denemeler olağan sayaca girmez")
+    }
+
+    func testLookupTrackerForcedAttemptIgnoresCap() {
+        var t = ModelLookupTracker()
+        var now = Date(timeIntervalSince1970: 0)
+        for _ in 0..<ModelLookupTracker.maxAttempts {
+            XCTAssertTrue(t.shouldAttempt("s", now: now)); t.finish("s", found: false, now: now)
+            now = now.addingTimeInterval(100_000)
+        }
+        XCTAssertFalse(t.shouldAttempt("s", now: now))
+        XCTAssertTrue(t.shouldAttempt("s", now: now, force: "Stop"))
     }
 
     func testLookupTrackerStopsOnSuccessAndForgets() {
@@ -199,6 +259,75 @@ final class TranscriptModelReaderTests: XCTestCase {
         for _ in 0..<100 where monitor.state.sessions["a"]?.badge == .unknown { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(monitor.state.sessions["a"]?.badge, .opus)
         XCTAssertEqual(monitor.state.sessions["b"]?.badge, .unknown)
+        monitor.reset()
+    }
+
+    /// Çağrı sayan sahte çözücü: ilk `failures` çağrıda nil, sonra model.
+    private final class CountingResolver: SessionModelResolving, @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        let failures: Int
+        init(failures: Int) { self.failures = failures }
+        var count: Int { lock.lock(); defer { lock.unlock() }; return calls }
+        func latestModel(sessionID: String) -> String? {
+            lock.lock(); defer { lock.unlock() }
+            calls += 1
+            return calls > failures ? "claude-sonnet-4-6" : nil
+        }
+    }
+
+    @MainActor
+    private func waitUntil(_ cond: () -> Bool) async throws {
+        for _ in 0..<150 where !cond() { try await Task.sleep(for: .milliseconds(20)) }
+    }
+
+    @MainActor
+    func testMonitorStopEventForcesLookupDespiteBackoff() async throws {
+        let resolver = CountingResolver(failures: 1)
+        let monitor = AgentMonitorModel(modelResolver: resolver)
+        let t0 = Date()
+        monitor.ingest(AgentEvent(event: "UserPromptSubmit", sessionID: "a"), now: t0)
+        try await waitUntil { resolver.count >= 1 }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(monitor.state.sessions["a"]?.badge, .unknown)
+        monitor.ingest(AgentEvent(event: "PreToolUse", sessionID: "a"), now: t0.addingTimeInterval(1))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(resolver.count, 1, "geri çekilme sürerken olağan olay aramaz")
+        monitor.ingest(AgentEvent(event: "Stop", sessionID: "a"), now: t0.addingTimeInterval(2))
+        try await waitUntil { monitor.state.sessions["a"]?.badge != .unknown }
+        XCTAssertEqual(resolver.count, 2)
+        XCTAssertEqual(monitor.state.sessions["a"]?.badge, .sonnet)
+        monitor.reset()
+    }
+
+    @MainActor
+    func testMonitorSessionEndLooksUpEndedSession() async throws {
+        let resolver = CountingResolver(failures: 1)
+        let monitor = AgentMonitorModel(modelResolver: resolver)
+        let t0 = Date()
+        monitor.ingest(AgentEvent(event: "UserPromptSubmit", sessionID: "a"), now: t0)
+        try await waitUntil { resolver.count >= 1 }
+        try await Task.sleep(for: .milliseconds(100))
+        monitor.ingest(AgentEvent(event: "SessionEnd", sessionID: "a"), now: t0.addingTimeInterval(1))
+        try await waitUntil { monitor.state.sessions["a"]?.badge != .unknown }
+        XCTAssertEqual(monitor.state.sessions["a"]?.status, .ended)
+        XCTAssertEqual(monitor.state.sessions["a"]?.badge, .sonnet)
+        monitor.reset()
+    }
+
+    @MainActor
+    func testMonitorFinalLookupAfterSessionEnd() async throws {
+        let resolver = CountingResolver(failures: 2)
+        let monitor = AgentMonitorModel(modelResolver: resolver)
+        monitor.ingest(AgentEvent(event: "UserPromptSubmit", sessionID: "a"))
+        try await waitUntil { resolver.count >= 1 }
+        try await Task.sleep(for: .milliseconds(100))
+        monitor.ingest(AgentEvent(event: "SessionEnd", sessionID: "a"))
+        try await waitUntil { resolver.count >= 2 }
+        XCTAssertEqual(monitor.state.sessions["a"]?.badge, .unknown)
+        try await Task.sleep(for: .seconds(AgentMonitorModel.finalLookupDelay + 3))
+        XCTAssertEqual(resolver.count, 3, "kapanış sonrası son deneme")
+        XCTAssertEqual(monitor.state.sessions["a"]?.badge, .sonnet)
         monitor.reset()
     }
 

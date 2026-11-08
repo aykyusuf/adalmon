@@ -69,7 +69,8 @@ final class WallpaperService {
 
     private func pushConfig() {
         controller.apply(.init(settings: settings, items: items, override: userOverride))
-        noteAerialSource()
+        // Aerial kaydı video içindir: ofis kaynağında kayda dokunulmaz (ne yenilenir ne geri alınır).
+        if settings.source == .video { noteAerialSource() }
     }
 
     // MARK: Kütüphane

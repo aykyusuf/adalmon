@@ -4,6 +4,9 @@ import SwiftUI
 struct WallpaperPage: View {
     @Bindable var service: WallpaperService
     var saver: SaverService = .shared
+    /// Ofis kaynağı yalnızca ajan özelliği açıkken anlamlıdır; kapalıysa kartta uyarı gösterilir.
+    var agentsEnabled = true
+    var openAgents: () -> Void = {}
 
     var body: some View {
         ScrollView {
@@ -13,10 +16,19 @@ struct WallpaperPage: View {
                         .toggleStyle(.switch)
                 }
                 WallpaperStatusCard(service: service)
-                WallpaperLibraryCard(service: service)
-                WallpaperDisplaysCard(service: service)
-                WallpaperPlaylistCard(service: service)
-                WallpaperPlaybackCard(service: service)
+                WallpaperSourceCard(service: service)
+                if service.settings.source == .office {
+                    WallpaperOfficeCard(service: service, agentsEnabled: agentsEnabled, openAgents: openAgents)
+                }
+                // Ofis kaynağında video kartları sönük ve devre dışı (düzen aynı kalır).
+                Group {
+                    WallpaperLibraryCard(service: service)
+                    WallpaperDisplaysCard(service: service)
+                    WallpaperPlaylistCard(service: service)
+                    WallpaperPlaybackCard(service: service)
+                }
+                .opacity(service.settings.source == .office ? 0.4 : 1)
+                .disabled(service.settings.source == .office)
                 WallpaperPauseRulesCard(service: service)
                 WallpaperSaverCard(wallpaper: service, saver: saver)
             }

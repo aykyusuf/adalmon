@@ -6,7 +6,9 @@ struct WallpaperPauseRulesCard: View {
 
     var body: some View {
         RulesCard(title: "Duraklatma kuralları", systemImage: "pause.circle",
-                  subtitle: "Duraklatılınca video çözülmez, son kare ekranda kalır; kural kalkınca kaldığı yerden devam eder.") {
+                  subtitle: service.settings.source == .office
+                  ? "Duraklatılınca sahne çizilmez, son kare ekranda kalır; kural kalkınca kaldığı yerden devam eder."
+                  : "Duraklatılınca video çözülmez, son kare ekranda kalır; kural kalkınca kaldığı yerden devam eder.") {
             rule("Pildeyken dur", "Mac şarjda değilken oynatmaz.", isOn: $service.settings.rules.pauseOnBattery)
             rule("Düşük Güç Modunda dur", "macOS Düşük Güç Modu açıkken oynatmaz.", isOn: $service.settings.rules.pauseOnLowPower)
             rule("Masaüstü görünmüyorken dur",

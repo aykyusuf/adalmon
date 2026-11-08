@@ -239,6 +239,11 @@ struct AgentState: Equatable, Sendable {
         sessions.values.filter { $0.status != .ended && $0.badge == .unknown }.map(\.id)
     }
 
+    /// Modeli bilinmeyen, SessionEnd ile kapanmış ama henüz listeden düşmemiş oturumların kimlikleri (son deneme için).
+    var endedSessionsWithUnknownModel: [String] {
+        sessions.values.filter { $0.status == .ended && $0.badge == .unknown }.map(\.id)
+    }
+
     /// Konuşma dosyasından bulunan modeli yazar; yalnızca oturum hâlâ modelsizse (hook araya model getirmediyse).
     @discardableResult
     mutating func adoptTranscriptModel(_ model: String, for sessionID: String) -> Bool {

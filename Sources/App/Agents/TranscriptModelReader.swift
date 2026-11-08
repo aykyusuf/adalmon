@@ -119,27 +119,46 @@ struct TranscriptModelResolver: SessionModelResolving {
     }
 }
 
-/// Bilinmeyen model aramalarının hız sınırı (saf): oturum başına en çok `maxAttempts` deneme, ilki hemen, sonrakiler
-/// `baseDelay * 2^(n-1)` sonra; başarıda durur. Zamanlayıcı yok: yalnızca olay gelince `shouldAttempt` sorulur.
+/// Bilinmeyen model aramalarının hız sınırı (saf): oturum başına en çok `maxAttempts` olağan deneme, ilki hemen; başarısız
+/// denemeden sonra `baseDelay * 2^n` (n: önceki yavaş bekleme sayısı) beklenir. PostToolUse ile gelen (`fast`) denemelerde ilk
+/// `fastAttempts` deneme için bekleme `fastDelay`dir. Ek olarak `force` ile verilen her olay türü (Stop, SubagentStop, SessionEnd,
+/// kapanış sonrası son deneme) oturum başına bir kez geri çekilmeyi ve üst sınırı atlar. Başarıda durur. Zamanlayıcı yok: yalnızca
+/// olay gelince `shouldAttempt` sorulur.
 struct ModelLookupTracker: Equatable, Sendable {
-    static let maxAttempts = 5
+    static let maxAttempts = 8
     static let baseDelay: TimeInterval = 30
+    static let fastDelay: TimeInterval = 5
+    static let fastAttempts = 3
 
     private struct Entry: Equatable, Sendable {
         var attempts = 0
+        var slowWaits = 0
         var nextAt = Date.distantPast
         var inFlight = false
+        var inFlightFast = false
+        var inFlightForced = false
         var resolved = false
+        var forced: Set<String> = []
     }
 
     private var entries: [String: Entry] = [:]
 
     /// Deneme hakkı varsa true döner ve denemeyi başlamış sayar (`finish` ile bitirilmeli).
-    mutating func shouldAttempt(_ id: String, now: Date) -> Bool {
+    /// `fast`: olay PostToolUse. `force`: olay türü anahtarı; oturum başına bir kez geri çekilmeyi ve üst sınırı atlar.
+    mutating func shouldAttempt(_ id: String, now: Date, fast: Bool = false, force: String? = nil) -> Bool {
         var e = entries[id] ?? Entry()
-        guard !e.resolved, !e.inFlight, e.attempts < Self.maxAttempts, now >= e.nextAt else { return false }
+        guard !e.resolved, !e.inFlight else { return false }
+        if let force {
+            guard !e.forced.contains(force) else { return false }
+            e.forced.insert(force)
+            e.inFlightForced = true
+        } else {
+            guard e.attempts < Self.maxAttempts, now >= e.nextAt else { return false }
+            e.attempts += 1
+            e.inFlightForced = false
+            e.inFlightFast = fast
+        }
         e.inFlight = true
-        e.attempts += 1
         entries[id] = e
         return true
     }
@@ -147,7 +166,17 @@ struct ModelLookupTracker: Equatable, Sendable {
     mutating func finish(_ id: String, found: Bool, now: Date) {
         guard var e = entries[id] else { return }
         e.inFlight = false
-        if found { e.resolved = true } else { e.nextAt = now.addingTimeInterval(Self.baseDelay * pow(2, Double(e.attempts - 1))) }
+        if found {
+            e.resolved = true
+        } else if !e.inFlightForced {
+            if e.inFlightFast, e.attempts <= Self.fastAttempts {
+                e.nextAt = now.addingTimeInterval(Self.fastDelay)
+            } else {
+                e.nextAt = now.addingTimeInterval(Self.baseDelay * pow(2, Double(e.slowWaits)))
+                e.slowWaits += 1
+            }
+        }
+        e.inFlightForced = false
         entries[id] = e
     }
 
