@@ -443,4 +443,50 @@ final class OfficeV3Tests: XCTestCase {
         XCTAssertEqual(AgentWebSnapshotBuilder.lightingJSON(now: noon, mode: .night, timeZone: utc)["resolvedNight"] as? Bool, true)
         XCTAssertEqual(AgentWebSnapshotBuilder.lightingJSON(now: noon, mode: .day, timeZone: utc)["mode"] as? String, "day")
     }
+
+    // MARK: Görünümün yerinde yenilenmesi (model/rol sonradan öğrenilir)
+
+    func testAppearanceRefreshesInPlaceWhenModelAndRoleAreLearnedLater() throws {
+        for theme in [OfficeTheme.pixel, .vector] {
+            let scene = OfficeScene(assets: try assets(), size: CGSize(width: 1000, height: 640), theme: theme)
+            func team(_ badge: AgentModelBadge, subLabel: String) -> [OfficeMember] {
+                [OfficeMember(id: "s", parentID: nil, kind: .session, label: "oturum", badge: badge, status: .tool("Bash"), groupIndex: 0),
+                 OfficeMember(id: "s#0", parentID: "s", kind: .subagent, label: subLabel, badge: badge, status: .tool("Bash"), groupIndex: 0)]
+            }
+            scene.apply(members: team(.unknown, subLabel: "agent"), animated: false)
+            let room = try XCTUnwrap(scene.room("s"))
+            room.setLabels(true)
+            let lead = try XCTUnwrap(room.actors["s"]), sub = try XCTUnwrap(room.actors["s#0"])
+            let before = lead.appearance, subBefore = sub.appearance
+            let spec = OfficeVectorCharacter.spec(for: before)
+            XCTAssertEqual(before.badgeText, "?")
+            XCTAssertTrue(lead.labelBuilt && sub.labelBuilt)
+            let pos = lead.root.position, tile = lead.tile, behavior = lead.behavior
+            let bodyBefore = lead.body, dotBefore = sub.labelDot?.color
+
+            scene.apply(members: team(.sonnet, subLabel: "reviewer"), animated: false)
+            XCTAssertTrue(room.actors["s"] === lead, "düğüm yeniden kurulmadı")
+            XCTAssertTrue(lead.body === bodyBefore)
+            XCTAssertEqual(lead.appearance.badgeText, "SONNET", "rozetle aynı anda")
+            XCTAssertNotEqual(lead.appearance, before)
+            XCTAssertNotEqual(OfficeVectorCharacter.spec(for: lead.appearance).key, spec.key, "look/aksesuar anahtarı değişti")
+            XCTAssertEqual(lead.appearance.accessory, .cap)
+            XCTAssertEqual(lead.root.position, pos)
+            XCTAssertEqual(lead.tile, tile)
+            XCTAssertEqual(lead.behavior, behavior)
+            if theme == .pixel {
+                XCTAssertEqual(Double(lead.body.colorBlendFactor), lead.appearance.tintBlend, accuracy: 0.001)
+                XCTAssertNotNil(lead.accessory, "sonnet başlığı sonradan eklendi")
+            }
+            // Alt ajan: rol (agentType) sonradan gelince ton/aksesuar/etiket yenilenir; model rengi nokta olarak kalır.
+            XCTAssertNotEqual(sub.appearance, subBefore)
+            XCTAssertEqual(sub.appearance.role?.name, OfficeRoles.style(forAgentType: "reviewer").name)
+            XCTAssertNotEqual(sub.appearance.role?.name, subBefore.role?.name)
+            XCTAssertTrue(sub.labelBuilt, "etiket yeni rolle yeniden kuruldu")
+            if theme == .vector {
+                XCTAssertNotEqual(sub.labelDot?.color, dotBefore)
+                XCTAssertEqual(sub.labelTitle, OfficeRoomNode.truncated(OfficeRoles.style(forAgentType: "reviewer").name, 22))
+            }
+        }
+    }
 }

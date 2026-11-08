@@ -719,6 +719,7 @@ final class OfficeRoomNode {
         if previous == m { return }   // değişmeyen karaktere dokunulmaz
         let old = previous.status
         actor.member = m
+        refreshAppearance(actor, labelChanged: previous.label != m.label || previous.groupIndex != m.groupIndex)
         let behavior = OfficeBehavior.behavior(for: m.status, atDesk: actor.seat.kind == .desk, executive: actor.isExecutive)
         if m.status.isWorking { actor.idleSince = nil } else if actor.idleSince == nil || old.isWorking { actor.idleSince = now }
         let bubbleChanged = evaluateBubble(actor, now: now)
@@ -735,6 +736,38 @@ final class OfficeRoomNode {
         } else if !actor.moving && !actor.away {
             applyPose(actor)
             if celebrate && animated { hop(actor) }
+        }
+    }
+
+    /// Model/rol sonradan öğrenilince (rozet "bilinmiyor" → gerçek model, alt ajan rolü) aktörün görünümünü YERİNDE yeniler:
+    /// düğüm, konum, oturma ve animasyon durumu korunur; yalnızca doku/ton/aksesuar/etiket yeniden kurulur.
+    private func refreshAppearance(_ a: OfficeActor, labelChanged: Bool = false) {
+        let look = OfficeAppearance.appearance(for: a.member)
+        let lookChanged = look != a.appearance
+        guard lookChanged || labelChanged else { return }
+        a.appearance = look
+        if lookChanged {
+            if theme == .pixel {
+                a.body.color = SKColor(red: look.tint.r, green: look.tint.g, blue: look.tint.b, alpha: 1)
+                a.body.colorBlendFactor = look.tintBlend
+                a.accessory?.removeFromParent(); a.accessory = nil
+                a.roleAccessory?.removeFromParent(); a.roleAccessory = nil
+                buildAccessory(a)
+            }
+            applyScale(a)
+            // Duran karakterin dokusu hemen yenilenir; yürüyen/zıplayan/giden karakter bir sonraki karede yeni dokuyu alır.
+            if !a.moving, !a.away, !a.leaving, !a.hopping, actors[a.member.id] === a { applyPose(a) }
+        }
+        if a.labelBuilt {
+            // Etiket (metin, renk noktası, genişlik) yeni görünüme göre baştan kurulur.
+            a.label.removeAllChildren()
+            a.label.removeFromParent()
+            a.labelBuilt = false
+            a.labelPill = nil; a.labelName = nil; a.labelDot = nil
+            a.labelVariants = []; a.labelWidths = []
+            a.labelVariant = 0; a.labelBodyW = 0
+            refreshLabel(a)
+            positionAccessoryAndBubble(a)
         }
     }
 
