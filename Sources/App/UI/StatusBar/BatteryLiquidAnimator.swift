@@ -115,9 +115,43 @@ enum BatteryFrameRenderer {
     }
 }
 
+/// Şimşeğin sabit görüntüsü (bir kez çizilir; "nefes" Core Animation'da, uygulama CPU'su harcamaz).
+enum BoltRenderer {
+    /// Yuvarlak birleşimler ve ölçek büyümesi kesilmesin diye şimşek dikdörtgeninin çevresindeki pay (pt).
+    static let pad: CGFloat = 1
+
+    /// Şimşek dikdörtgeni + pay (bileşik görüntü koordinatlarında).
+    static func frame(capsule: CGRect, size: BatteryGlyphOptions.Size) -> CGRect {
+        BatteryGlyph.boltRect(size, capsule: capsule).insetBy(dx: -pad, dy: -pad)
+    }
+
+    static func image(_ state: BatteryGlyphState, statusColors: Bool, size: BatteryGlyphOptions.Size,
+                      appearance: NSAppearance, scale: CGFloat) -> NSImage {
+        let s = BatteryGlyph.boltSize(BatteryGlyph.metrics(size))
+        let imageSize = CGSize(width: s.width + 2 * pad, height: s.height + 2 * pad)
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(ceil(imageSize.width * scale)),
+                                         pixelsHigh: Int(ceil(imageSize.height * scale)), bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return NSImage(size: imageSize) }
+        rep.size = imageSize
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        appearance.performAsCurrentDrawingAppearance {
+            BatteryGlyph.boltColor(statusColors: statusColors, state).setFill()
+            BatteryGlyph.boltPath(in: CGRect(origin: CGPoint(x: pad, y: pad), size: s)).fill()
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: imageSize)
+        image.addRepresentation(rep)
+        return image
+    }
+}
+
 /// Mac pili menü çubuğu öğesinin canlı sıvı animasyonu. Tikte çizim yok: önceden hazırlanmış gövde karesi, bir kez
 /// çizilmiş "gövdesiz" taban görüntünün üstüne bindirilir ve sonuç önbelleğe alınır → döngü tamamlanınca yalnızca
 /// `button.image` ataması kalır. Görünmezken, ekran uykudayken, oturum kilitliyken ya da Hareketi Azalt açıkken durur.
+/// Şimşek ayrı bir katmandır (sabit görüntü); "nefesi" CABasicAnimation/CAKeyframeAnimation ile render sunucusunda döner
+/// (uygulama tarafında çizim/timer yok); animasyon durunca (görünmez, uyku, kilit, Düşük Güç, kaldırma) katmandan silinir.
 @MainActor
 final class BatteryLiquidAnimator {
     struct Target {
@@ -128,6 +162,8 @@ final class BatteryLiquidAnimator {
         var rect: CGRect
         var frameKey: BatteryFrameKey
         var appearance: NSAppearance? = nil
+        /// Şimşeği olan tam pil durumu (güç kademesi dahil); `nil` → şimşek yok. Şimşek tabanda değil, ayrı katmandadır.
+        var bolt: BatteryGlyphState? = nil
     }
 
     /// Hareket izni değişti (Hareketi Azalt / Düşük Güç): denetleyici statik ↔ canlı yeniden çizsin.
@@ -141,6 +177,13 @@ final class BatteryLiquidAnimator {
     private var overlay: CALayer?
     private var overlayBounds: CGRect = .zero
     private var cgFrames: [Int: CGImage] = [:]
+    /// Şimşek katmanı (sabit görüntü + Core Animation nefesi); şimşek yoksa `nil`.
+    private(set) var boltLayer: CALayer?
+    private var boltImage: (key: BoltImageKey, image: NSImage)?
+    /// Katmanda şu an çalışan nefes (`nil` → statik).
+    private(set) var boltAnimation: BatteryGlyph.BoltAnimation?
+    /// Düğmesiz (test) yolda şimşeği de içeren taban.
+    private var staticBase: NSImage?
     private var frameIndex = 0
     private var timer: Timer?
     private(set) var plan: BatteryAnimationPolicy.Plan?
@@ -149,6 +192,16 @@ final class BatteryLiquidAnimator {
     private var displayedLevel: Double?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     static let transitionDuration: TimeInterval = 0.4
+
+    private struct BoltImageKey: Equatable {
+        var charging: Bool
+        var plugged: Bool
+        var tier: ChargeTier?
+        var statusColors: Bool
+        var size: BatteryGlyphOptions.Size
+        var scale: CGFloat
+        var appearance: String
+    }
 
     init() {
         env.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -172,6 +225,7 @@ final class BatteryLiquidAnimator {
             cgFrames = [:]
         }
         composites = [:]
+        staticBase = nil
         let newLevel = Double(new.frameKey.state.level)
         if let old = target, old.itemKey == new.itemKey, timer != nil,
            let shown = displayedLevel, abs(shown - newLevel) >= 0.5 {
@@ -199,6 +253,7 @@ final class BatteryLiquidAnimator {
         target = nil
         frames = nil
         composites = [:]
+        staticBase = nil
         cgFrames = [:]
         transition = nil
         displayedLevel = nil
@@ -229,6 +284,7 @@ final class BatteryLiquidAnimator {
             overlay = layer
         }
         layer.contentsScale = target.frameKey.scale
+        installBolt(for: target, host: host)
         overlayBounds = .zero
         layoutOverlay()
     }
@@ -237,21 +293,97 @@ final class BatteryLiquidAnimator {
         overlay?.removeFromSuperlayer()
         overlay = nil
         overlayBounds = .zero
+        removeBolt()
+    }
+
+    // MARK: Şimşek katmanı
+
+    private func installBolt(for target: Target, host: CALayer) {
+        guard let state = target.bolt, BatteryGlyph.showsBolt(state) else { removeBolt(); return }
+        let layer: CALayer
+        if let boltLayer, boltLayer.superlayer === host {
+            layer = boltLayer
+        } else {
+            boltLayer?.removeAllAnimations()
+            boltLayer?.removeFromSuperlayer()
+            boltAnimation = nil
+            layer = CALayer()
+            layer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "frame": NSNull(),
+                             "opacity": NSNull(), "transform": NSNull()]
+            layer.contentsGravity = .resize
+            layer.isOpaque = false
+            host.addSublayer(layer)
+            boltLayer = layer
+        }
+        let appearance = target.appearance ?? NSAppearance(named: .darkAqua)!
+        let scale = target.frameKey.scale
+        let key = BoltImageKey(charging: state.isCharging, plugged: state.isPluggedIn, tier: state.chargeTier,
+                               statusColors: target.frameKey.statusColors, size: target.frameKey.size, scale: scale,
+                               appearance: appearance.name.rawValue)
+        if boltImage?.key != key {
+            boltImage = (key, BoltRenderer.image(state, statusColors: key.statusColors, size: key.size,
+                                                 appearance: appearance, scale: scale))
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.contentsScale = scale
+        layer.contents = boltImage.flatMap { Self.cgImage($0.image) }
+        CATransaction.commit()
+        updateBoltAnimation()
+    }
+
+    private func removeBolt() {
+        boltLayer?.removeAllAnimations()
+        boltLayer?.removeFromSuperlayer()
+        boltLayer = nil
+        boltImage = nil
+        boltAnimation = nil
+    }
+
+    /// Nefes yalnızca zamanlayıcı planı varsa (görünür, uyanık, kilitsiz, Hareketi Azalt kapalı) ve Düşük Güç kapalıyken çalışır;
+    /// değişmediyse dokunulmaz (her `show`'da yeniden başlayıp takılmasın), değiştiyse kesintisiz yeniden kurulur.
+    private func updateBoltAnimation() {
+        guard let boltLayer, let state = target?.bolt, let frameKey = target?.frameKey else { return }
+        let desired = plan != nil && !env.lowPower ? BatteryGlyph.boltAnimation(state, motion: frameKey.animation) : nil
+        let running = !(boltLayer.animationKeys() ?? []).isEmpty
+        guard desired != boltAnimation || running != (desired != nil) else { return }
+        boltLayer.removeAllAnimations()
+        boltAnimation = desired
+        guard let desired else { return }
+        let ease = CAMediaTimingFunction(name: .easeInEaseOut)
+        func breath(_ keyPath: String, rest: Float, peak: Float) -> CAKeyframeAnimation {
+            let a = CAKeyframeAnimation(keyPath: keyPath)
+            a.values = [rest, peak, rest]
+            a.keyTimes = [0, 0.5, 1]
+            a.timingFunctions = [ease, ease]
+            a.duration = desired.duration
+            a.repeatCount = .infinity
+            return a
+        }
+        boltLayer.add(breath("opacity", rest: 1, peak: desired.minOpacity), forKey: "bolt.opacity")
+        if desired.scales {
+            boltLayer.add(breath("transform.scale", rest: 1, peak: Float(desired.maxScale)), forKey: "bolt.scale")
+        }
     }
 
     /// Katmanı düğme içinde, görüntünün (ortalanmış) üstünde gövde dikdörtgenine yerleştirir; yalnızca düğme boyutu değişince.
     private func layoutOverlay() {
-        guard let overlay, let target, let button = target.button, button.bounds != overlayBounds else { return }
+        guard overlay != nil, let target, let button = target.button, button.bounds != overlayBounds else { return }
         overlayBounds = button.bounds
         var origin = button.cell?.imageRect(forBounds: button.bounds).origin
         if origin == nil || button.cell?.imageRect(forBounds: button.bounds).size == .zero {
             origin = CGPoint(x: (button.bounds.width - target.base.size.width) / 2, y: (button.bounds.height - target.base.size.height) / 2)
         }
         let o = origin ?? .zero
-        let y = button.isFlipped ? o.y + target.base.size.height - target.rect.maxY : o.y + target.rect.minY
+        /// Bileşik görüntü koordinatındaki (altta başlayan) dikdörtgeni düğme katmanı koordinatına çevirir.
+        func layerFrame(_ r: CGRect) -> CGRect {
+            let y = button.isFlipped ? o.y + target.base.size.height - r.maxY : o.y + r.minY
+            return CGRect(x: o.x + r.minX, y: y, width: r.width, height: r.height)
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        overlay.frame = CGRect(x: o.x + target.rect.minX, y: y, width: target.rect.width, height: target.rect.height)
+        overlay?.frame = layerFrame(target.rect)
+        boltLayer?.frame = layerFrame(BoltRenderer.frame(capsule: target.rect, size: target.frameKey.size))
         CATransaction.commit()
     }
 
@@ -282,8 +414,22 @@ final class BatteryLiquidAnimator {
         (image.representations.first as? NSBitmapImageRep)?.cgImage
     }
 
+    /// Düğmesiz (test) yolda şimşek tabana elle bindirilir; düğmeli yolda taban şimşeksizdir (şimşek katmanda).
+    private func baseImage(_ target: Target) -> NSImage {
+        guard target.button == nil, let state = target.bolt, BatteryGlyph.showsBolt(state) else { return target.base }
+        if let staticBase { return staticBase }
+        let appearance = target.appearance ?? NSAppearance(named: .darkAqua)!
+        let bolt = BoltRenderer.image(state, statusColors: target.frameKey.statusColors, size: target.frameKey.size,
+                                      appearance: appearance, scale: target.frameKey.scale)
+        let image = MenuBarComposer.composite(base: target.base, overlay: bolt,
+                                              at: BoltRenderer.frame(capsule: target.rect, size: target.frameKey.size))
+        staticBase = image
+        return image
+    }
+
     private func currentImage() -> NSImage {
         guard let target, let frames else { return NSImage() }
+        let base = baseImage(target)
         if let transition {
             let p = min(1, (ProcessInfo.processInfo.systemUptime - transition.start) / Self.transitionDuration)
             let eased = p < 0.5 ? 2 * p * p : 1 - pow(-2 * p + 2, 2) / 2
@@ -292,10 +438,10 @@ final class BatteryLiquidAnimator {
             if p >= 1 { self.transition = nil }
             // Geçiş kareleri tek seferlik; önbelleğe girmez.
             let capsule = BatteryFrameRenderer.frame(target.frameKey, appearance: target.appearance, level: level, index: frameIndex)
-            return MenuBarComposer.composite(base: target.base, overlay: capsule, at: target.rect)
+            return MenuBarComposer.composite(base: base, overlay: capsule, at: target.rect)
         }
         if let cached = composites[frameIndex] { return cached }
-        let image = MenuBarComposer.composite(base: target.base, overlay: frames.images[frameIndex], at: target.rect)
+        let image = MenuBarComposer.composite(base: base, overlay: frames.images[frameIndex], at: target.rect)
         composites[frameIndex] = image
         return image
     }
@@ -311,6 +457,7 @@ final class BatteryLiquidAnimator {
     // MARK: Yaşam döngüsü
 
     private func reevaluate() {
+        defer { updateBoltAnimation() }
         if let forced = visibilityOverride {
             env.visible = forced
         } else if let window = target?.button?.window {

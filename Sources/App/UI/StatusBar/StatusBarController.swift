@@ -71,12 +71,12 @@ final class StatusBarController: NSObject {
                let index = MenuBarComposer.animatedBatteryIndex(in: group.items),
                let rect = MenuBarComposer.animatedBatteryRect(in: group.items, config: config, values: values) {
                 // Taban (gövdesiz) bir kez çizilir; kareler animatörde önceden hazırlanır.
-                let base = MenuBarComposer.bitmap(MenuBarComposer.image(for: group.items, config: config, values: values, battery: .hidden),
+                let base = MenuBarComposer.bitmap(MenuBarComposer.image(for: group.items, config: config, values: values, battery: .layered),
                                                   appearance: appearance, scale: scale)
                 let frameKey = BatteryFrameKey(state: battery, options: group.items[index].battery,
                                                appearance: appearance.name, scale: scale)
                 image = batteryAnimator.show(.init(itemKey: group.key, button: button, base: base, rect: rect,
-                                                    frameKey: frameKey, appearance: appearance))
+                                                    frameKey: frameKey, appearance: appearance, bolt: battery))
             } else if group.items.isEmpty {
                 image = MenuBarComposer.placeholderImage()
             } else {

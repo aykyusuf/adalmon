@@ -67,12 +67,17 @@ final class BatteryLiquidGlyphTests: XCTestCase {
             XCTAssertLessThanOrEqual(text, inner.width - 2, "\(size)")
             XCTAssertEqual(font.pointSize, mm.font, "\(size): 100 küçülmeden sığar")
             XCTAssertEqual(BatteryGlyph.contentFont(mm, text: "78", innerWidth: inner.width).pointSize, mm.font)
-            // Şimşek ≈ 9–10 pt (Orta), gövdeden kısa, dar.
+            // Şimşek gövdenin ~%88'i (Orta ≈ 12,5 pt), gövdeden kısa, dar.
             let bolt = BatteryGlyph.boltSize(mm)
             XCTAssertLessThan(bolt.height, mm.body.height)
             XCTAssertLessThan(bolt.width, bolt.height * 0.7)
         }
-        XCTAssertEqual(BatteryGlyph.boltSize(m[1]).height, 9.5, accuracy: 0.5)
+        XCTAssertEqual(BatteryGlyph.boltSize(m[1]).height, 12.5, accuracy: 0.01)
+        XCTAssertEqual(BatteryGlyph.boltSize(m[1]).width, 7, accuracy: 0.01)
+        XCTAssertEqual(BatteryGlyph.boltGap, 4, "şimşek–gövde boşluğu (eskiden 2)")
+        let slots = order.map { BatteryGlyph.boltSlot(BatteryGlyph.metrics($0), state(50, charging: true)) }
+        XCTAssertEqual(slots, [10, 11, 11.5], "yuva = şimşek genişliği + 4 pt boşluk")
+        XCTAssertEqual(BatteryGlyph.boltSlot(m[1], state(50)), 0, "pilde yuva yok")
     }
 
     func testFillHeightLevels() {
@@ -456,6 +461,175 @@ final class BatteryLiquidGlyphTests: XCTestCase {
         XCTAssertTrue(button.image === first || button.image == nil, "tikte button.image atanmaz")
         animator.visibilityOverride = false
         XCTAssertFalse(animator.isRunning, "görünmezken durur")
+        animator.clear()
+    }
+
+    // MARK: Şimşek animasyonu
+
+    func testBoltAnimationTable() {
+        let G = BatteryGlyph.self
+        let expected: [(Double, TimeInterval)] = [(3, 2.4), (10, 1.8), (30, 1.3), (60, 0.9)]
+        for (watts, duration) in expected {
+            let live = G.boltAnimation(state(50, charging: true, watts: watts), motion: .live)
+            XCTAssertEqual(live, .init(duration: duration, minOpacity: 0.55, maxScale: 1.08), "\(watts) W Canlı")
+            let light = G.boltAnimation(state(50, charging: true, watts: watts), motion: .light)
+            XCTAssertEqual(light, .init(duration: duration * 1.5, minOpacity: 0.55, maxScale: 1), "\(watts) W Hafif: ölçek yok, süre x1.5")
+            XCTAssertNil(G.boltAnimation(state(50, charging: true, watts: watts), motion: .off), "Kapalı → statik")
+        }
+        let drain = state(71, plugged: true, watts: -6)
+        XCTAssertEqual(G.boltAnimation(drain, motion: .live), .init(duration: 1.2, minOpacity: 0.35, maxScale: 1), "güç yetmiyor: belirgin yanıp sönme")
+        XCTAssertEqual(G.boltAnimation(drain, motion: .light)?.duration ?? 0, 1.8, accuracy: 1e-9)
+        XCTAssertNil(G.boltAnimation(state(100, plugged: true, full: true, watts: 0), motion: .live), "fişte-şarj yok → statik")
+        XCTAssertNil(G.boltAnimation(state(60), motion: .live), "pilde şimşek yok")
+    }
+
+    @MainActor
+    private func boltFixture(_ s: BatteryGlyphState, motion: BatteryGlyphOptions.Animation = .live, statusColors: Bool = true)
+        -> (button: NSStatusBarButton, target: BatteryLiquidAnimator.Target, base: NSImage) {
+        let button = NSStatusBarButton(frame: NSRect(x: 0, y: 0, width: 60, height: 22))
+        var values = WidgetValues.sample
+        values.battery = s
+        let mac = MenuBarComponent(.batteryLevel, visual: .batteryCapsule, battery: .init(statusColors: statusColors, motion: motion))
+        let config = MenuBarConfig(components: [mac])
+        let appearance = NSAppearance(named: .darkAqua)!
+        let base = MenuBarComposer.bitmap(MenuBarComposer.image(for: [mac], config: config, values: values, battery: .layered),
+                                          appearance: appearance, scale: 2)
+        let rect = MenuBarComposer.animatedBatteryRect(in: [mac], config: config, values: values)!
+        button.image = base
+        let key = BatteryFrameKey(state: s, options: mac.battery, appearance: .darkAqua, scale: 2)
+        return (button, .init(itemKey: "bat", button: button, base: base, rect: rect, frameKey: key, appearance: appearance, bolt: s), base)
+    }
+
+    /// Taban görüntüde (şimşek bölgesi) çizilmiş piksel var mı.
+    private func hasInk(_ image: NSImage, in rect: CGRect) -> Bool {
+        guard let rep = image.representations.first as? NSBitmapImageRep else { return false }
+        let scale = CGFloat(rep.pixelsWide) / image.size.width
+        for y in Int(rect.minY * scale)..<Int(ceil(rect.maxY * scale)) {
+            for x in Int(rect.minX * scale)..<Int(ceil(rect.maxX * scale)) {
+                // rep üstten alta; görüntü koordinatı alttan başlar.
+                if (rep.colorAt(x: x, y: rep.pixelsHigh - 1 - y)?.alphaComponent ?? 0) > 0.05 { return true }
+            }
+        }
+        return false
+    }
+
+    @MainActor
+    func testBoltLayerBuiltOnRealButtonWhileCharging() throws {
+        let animator = BatteryLiquidAnimator()
+        animator.visibilityOverride = true
+        let f = boltFixture(state(64, charging: true, watts: 30))   // hızlı → 1.3 sn
+        let image = animator.show(f.target)
+        XCTAssertTrue(image === f.base)
+        let layer = try XCTUnwrap(animator.boltLayer, "şarjda şimşek katmanı var")
+        XCTAssertTrue(layer.superlayer === f.button.layer)
+        XCTAssertNotNil(layer.contents)
+        XCTAssertEqual(layer.contentsScale, 2)
+        XCTAssertEqual(Set(layer.animationKeys() ?? []), ["bolt.opacity", "bolt.scale"], "Canlı: opaklık + ölçek")
+        let opacity = try XCTUnwrap(layer.animation(forKey: "bolt.opacity") as? CAKeyframeAnimation)
+        XCTAssertEqual(opacity.duration, 1.3, accuracy: 1e-9, "hızlı kademe")
+        XCTAssertEqual(opacity.repeatCount, .infinity)
+        XCTAssertEqual((opacity.values as? [Float]) ?? [], [1, 0.55, 1])
+        XCTAssertEqual(opacity.timingFunctions?.count, 2)
+        let scale = try XCTUnwrap(layer.animation(forKey: "bolt.scale") as? CAKeyframeAnimation)
+        XCTAssertEqual((scale.values as? [Float]) ?? [], [1, 1.08, 1])
+        // Konum: gövdenin solunda, şimşek boyutunda (+1 pt pay), 4 pt boşlukla.
+        let caps = f.target.rect
+        let bolt = BatteryGlyph.boltRect(.medium, capsule: caps)
+        XCTAssertEqual(bolt.maxX + BatteryGlyph.boltGap, caps.minX, accuracy: 0.01)
+        let origin = f.button.cell?.imageRect(forBounds: f.button.bounds).origin ?? .zero
+        let expectedY = f.button.isFlipped ? origin.y + f.base.size.height - (bolt.maxY + 1) : origin.y + bolt.minY - 1
+        XCTAssertEqual(layer.frame.minX, origin.x + bolt.minX - 1, accuracy: 0.01)
+        XCTAssertEqual(layer.frame.minY, expectedY, accuracy: 0.01)
+        XCTAssertEqual(layer.frame.size, CGSize(width: bolt.width + 2, height: bolt.height + 2))
+        // Taban görüntüde şimşek yok (çift görünmesin).
+        XCTAssertFalse(hasInk(f.base, in: bolt), "animasyonlu katman varken tabana çizilmez")
+        // Aynı durumla yeniden gösterim animasyonu yeniden başlatmaz.
+        let before = layer.animation(forKey: "bolt.opacity")
+        _ = animator.show(f.target)
+        XCTAssertTrue(animator.boltLayer === layer)
+        XCTAssertTrue(layer.animation(forKey: "bolt.opacity") === before, "kesintisiz: aynı animasyon nesnesi")
+        // Kademe değişince süre güncellenir.
+        var veryFast = f.target
+        veryFast.bolt = state(64, charging: true, watts: 60)
+        _ = animator.show(veryFast)
+        XCTAssertEqual((layer.animation(forKey: "bolt.opacity") as? CAKeyframeAnimation)?.duration ?? 0, 0.9, accuracy: 1e-9)
+        // Durdurunca (görünmez) animasyon kalkar, katman statik kalır; yeniden görününce kurulur.
+        animator.visibilityOverride = false
+        XCTAssertNil(layer.animationKeys()?.first, "görünmezken animasyon kaldırılır")
+        XCTAssertNotNil(animator.boltLayer)
+        animator.visibilityOverride = true
+        XCTAssertEqual(Set(layer.animationKeys() ?? []), ["bolt.opacity", "bolt.scale"])
+        animator.clear()
+        XCTAssertNil(animator.boltLayer, "öğe kaldırılınca katman gider")
+        XCTAssertNil(layer.superlayer)
+        XCTAssertNil(layer.animationKeys()?.first)
+    }
+
+    @MainActor
+    func testBoltLayerLightPluggedAndDrain() throws {
+        let animator = BatteryLiquidAnimator()
+        animator.visibilityOverride = true
+        let light = boltFixture(state(64, charging: true, watts: 3), motion: .light)   // yavaş 2.4 × 1.5
+        _ = animator.show(light.target)
+        let layer = try XCTUnwrap(animator.boltLayer)
+        XCTAssertEqual(layer.animationKeys() ?? [], ["bolt.opacity"], "Hafif: yalnızca opaklık")
+        XCTAssertEqual((layer.animation(forKey: "bolt.opacity") as? CAKeyframeAnimation)?.duration ?? 0, 3.6, accuracy: 1e-9)
+        animator.clear()
+
+        let plugged = boltFixture(state(100, plugged: true, full: true, watts: 0))
+        _ = animator.show(plugged.target)
+        let staticLayer = try XCTUnwrap(animator.boltLayer, "fişte dolu: şimşek var")
+        XCTAssertTrue((staticLayer.animationKeys() ?? []).isEmpty, "fişte-şarj yok → statik")
+        animator.clear()
+
+        let drain = boltFixture(state(71, plugged: true, watts: -6))
+        _ = animator.show(drain.target)
+        let drainLayer = try XCTUnwrap(animator.boltLayer)
+        XCTAssertEqual(drainLayer.animationKeys() ?? [], ["bolt.opacity"], "yetmiyor: yalnızca opaklık")
+        let a = try XCTUnwrap(drainLayer.animation(forKey: "bolt.opacity") as? CAKeyframeAnimation)
+        XCTAssertEqual(a.duration, 1.2, accuracy: 1e-9)
+        XCTAssertEqual((a.values as? [Float]) ?? [], [1, 0.35, 1])
+        animator.clear()
+    }
+
+    @MainActor
+    func testNoBoltLayerOnBatteryAndOffDrawsBoltInBase() throws {
+        let animator = BatteryLiquidAnimator()
+        animator.visibilityOverride = true
+        var f = boltFixture(state(60))
+        f.target.bolt = nil
+        _ = animator.show(f.target)
+        XCTAssertNil(animator.boltLayer, "pilde şimşek katmanı yok")
+        animator.clear()
+
+        // Kapalı mod: animatör kullanılmaz, şimşek statik tabana çizilir.
+        var values = WidgetValues.sample
+        values.battery = state(64, charging: true, watts: 30)
+        let off = MenuBarComponent(.batteryLevel, visual: .batteryCapsule, battery: .init(motion: .off))
+        let live = MenuBarComponent(.batteryLevel, visual: .batteryCapsule)
+        XCTAssertFalse(BatteryGlyph.isAnimatable(off), "Kapalı → animatör yok")
+        let dark = NSAppearance(named: .darkAqua)!
+        func base(_ c: MenuBarComponent, _ render: BatteryCapsuleRender) -> NSImage {
+            MenuBarComposer.bitmap(MenuBarComposer.image(for: [c], config: MenuBarConfig(components: [c]), values: values, battery: render),
+                                   appearance: dark, scale: 2)
+        }
+        let caps = MenuBarComposer.animatedBatteryRect(in: [live], config: MenuBarConfig(components: [live]), values: values)!
+        let boltArea = BatteryGlyph.boltRect(.medium, capsule: caps)
+        XCTAssertTrue(hasInk(base(off, .flat), in: boltArea), "Kapalı: şimşek statik tabanda")
+        XCTAssertFalse(hasInk(base(live, .layered), in: boltArea), ".layered: şimşek tabanda yok")
+        XCTAssertTrue(hasInk(base(live, .hidden), in: boltArea), ".hidden: şimşek tabanda kalır")
+    }
+
+    @MainActor
+    func testButtonlessPathCompositesBoltIntoBase() {
+        let animator = BatteryLiquidAnimator()
+        let f = boltFixture(state(64, charging: true, watts: 30))
+        var t = f.target
+        t.button = nil
+        let image = animator.show(t)
+        XCTAssertNil(animator.boltLayer)
+        let bolt = BatteryGlyph.boltRect(.medium, capsule: t.rect)
+        XCTAssertTrue(hasInk(image, in: bolt), "düğmesiz yolda şimşek bileşik görüntüde")
         animator.clear()
     }
 

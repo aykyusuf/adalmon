@@ -231,6 +231,8 @@ enum BatteryCapsuleRender: Equatable, Sendable {
     case flat
     case wave(phase: Double, amplitude: CGFloat)
     case hidden
+    /// Gövde de şimşek de çizilmez: ikisi de ayrı katmandır (şimşek `BatteryLiquidAnimator`'da Core Animation ile nefes alır).
+    case layered
 }
 
 /// "Dolgulu sıvı pil": yuvarlak köşeli gövde + sağda uç, içi seviye kadar renkli sıvı, üstünde kalın yüzde; şarjda ve
@@ -288,13 +290,53 @@ enum BatteryGlyph {
         return NSFont(descriptor: rounded, size: points) ?? base
     }
 
-    /// Gövdenin solundaki ayrı şimşek (Juicy gibi): ince, ≈ 9,5 pt yüksek (Orta), parlamasız.
+    /// Gövdenin solundaki ayrı şimşek: ince, ≈ 12,5 pt yüksek (Orta; gövdenin ~%88'i), parlamasız.
     static func boltSize(_ m: Metrics) -> CGSize {
-        let h = (m.body.height * 0.68 * 2).rounded() / 2
+        let h = (m.body.height * 0.88 * 2).rounded() / 2
         return CGSize(width: (h * 0.55 * 2).rounded() / 2, height: h)
     }
     /// Şimşek ile gövde arası.
-    static let boltGap: CGFloat = 2
+    static let boltGap: CGFloat = 4
+
+    /// Şimşeğin dikdörtgeni (gövde dikdörtgeninin solunda, dikey ortalı, yarım noktaya hizalı).
+    static func boltRect(_ size: BatteryGlyphOptions.Size, capsule: CGRect) -> CGRect {
+        let s = boltSize(metrics(size))
+        return CGRect(x: capsule.minX - boltGap - s.width, y: ((capsule.midY - s.height / 2) * 2).rounded() / 2,
+                      width: s.width, height: s.height)
+    }
+
+    /// Şimşeğin "nefes" animasyonu: bir tam döngü `duration` sn; opaklık 1 → `minOpacity` → 1 ve (varsa) ölçek 1 → `maxScale` → 1.
+    struct BoltAnimation: Equatable, Sendable {
+        var duration: TimeInterval
+        var minOpacity: Float
+        var maxScale: CGFloat
+        var scales: Bool { maxScale > 1 }
+    }
+
+    /// Şarj kademesine göre döngü süresi (sn): yavaş 2.4, orta 1.8, hızlı 1.3, çok hızlı 0.9.
+    static func boltBreathDuration(_ tier: ChargeTier) -> TimeInterval {
+        switch tier {
+        case .insufficient: 1.2
+        case .slow: 2.4
+        case .medium: 1.8
+        case .fast: 1.3
+        case .veryFast: 0.9
+        }
+    }
+
+    /// `nil` → şimşek statik (Kapalı, fişte-şarj-yok, şimşek yok). Hafif: yalnızca opaklık, süre ×1.5; Canlı: opaklık + hafif ölçek.
+    /// Güç yetmiyor (turuncu): daha belirgin, yavaş yanıp sönme (opaklık 1 → 0.35, ölçeksiz).
+    static func boltAnimation(_ state: BatteryGlyphState, motion: BatteryGlyphOptions.Animation) -> BoltAnimation? {
+        guard motion != .off, showsBolt(state) else { return nil }
+        let light = motion == .light
+        let stretch = light ? 1.5 : 1.0
+        if state.chargeTier == .insufficient {
+            return BoltAnimation(duration: boltBreathDuration(.insufficient) * stretch, minOpacity: 0.35, maxScale: 1)
+        }
+        guard state.isCharging else { return nil }
+        return BoltAnimation(duration: boltBreathDuration(state.chargeTier ?? .medium) * stretch, minOpacity: 0.55,
+                             maxScale: light ? 1 : 1.08)
+    }
 
     /// Gövdenin solunda şimşeğe ayrılan yer (şimşek yoksa 0).
     static func boltSlot(_ m: Metrics, _ state: BatteryGlyphState?) -> CGFloat {
@@ -465,12 +507,8 @@ enum BatteryGlyph {
 
     /// Gövdenin solundaki ince şimşek (dikey ortalı, yarım noktaya hizalı). Gövde karelerinin dışında → taban görüntüde.
     static func drawBolt(_ state: BatteryGlyphState, options: BatteryGlyphOptions, capsule: CGRect) {
-        let m = metrics(options.size)
-        let s = boltSize(m)
-        let x = capsule.minX - boltGap - s.width
-        let y = ((capsule.midY - s.height / 2) * 2).rounded() / 2
         boltColor(statusColors: options.statusColors, state).setFill()
-        boltPath(in: CGRect(x: x, y: y, width: s.width, height: s.height)).fill()
+        boltPath(in: boltRect(options.size, capsule: capsule)).fill()
     }
 
     /// Pilde ve %20'nin altında: kırmızı nabız.
@@ -489,10 +527,10 @@ enum BatteryGlyph {
         if let symbol = state.deviceSymbol {
             WidgetGraphics.symbol(symbol, in: CGRect(x: rect.minX, y: rect.midY - 7, width: deviceIconWidth, height: 14), color: .labelColor)
         }
-        // Şimşek gövdenin dışında: animasyonda da (gövde .hidden) taban görüntüde kalır.
-        if showsBolt(state) { drawBolt(state, options: c.battery, capsule: capsule) }
+        // Şimşek gövdenin dışında: gövde .hidden iken taban görüntüde kalır; .layered iken ayrı (animasyonlu) katmandır.
+        if showsBolt(state), render != .layered { drawBolt(state, options: c.battery, capsule: capsule) }
         switch render {
-        case .hidden: break
+        case .hidden, .layered: break
         // Cihaz pilleri her zaman sakin (düz) çizilir.
         case .flat: drawCapsule(state, options: c.battery, level: Double(state.level), in: capsule, wave: nil)
         case .wave(let phase, let amplitude):
