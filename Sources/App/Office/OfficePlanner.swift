@@ -303,9 +303,9 @@ struct OfficeAppearance: Equatable, Sendable {
     }
 
     /// Düğüm ölçeği: Haiku bir tam piksel küçük (zoom-1)/zoom: nearest ile bozulmaz. Zoom 1'de küçültme yok.
-    static func spriteScale(small: Bool, zoom: Int) -> Double {
+    static func spriteScale(small: Bool, zoom: Double) -> Double {
         guard small, zoom >= 2 else { return 1 }
-        return Double(zoom - 1) / Double(zoom)
+        return (zoom - 1) / zoom
     }
 
     /// Ofisin pencereye sığan en büyük tam sayı yakınlaştırması (en az 1).

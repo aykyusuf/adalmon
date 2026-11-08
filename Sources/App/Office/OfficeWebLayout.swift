@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Tarayıcı ofisi için `GET /v1/layout`: oda şablonları (zemin/duvar karoları, mobilya yerleşimi, koltuklar, yürüme yolları),
@@ -22,12 +23,17 @@ enum OfficeWebLayout {
         var tiers: [String: Any] = [:]
         var seatsByTier: [OfficeRoomTier: [OfficeSeat]] = [:]
         var usedAssets = Set<String>()
+        var vectorBackgrounds: [String: Any] = [:]
         for tier in OfficeRoomTier.allCases {
             let layout = OfficeRoomTemplates.layout(tier, floor: floorColor, wall: wallColor)
             let grid = OfficeGrid(layout: layout, assets: catalog)
             guard let spots = OfficeSpots.derive(layout: layout, assets: catalog, grid: grid) else { return nil }
             seatsByTier[tier] = spots.seats
             tiers[tierKeys[tier]!] = tierJSON(tier, layout: layout, grid: grid, spots: spots, catalog: catalog, used: &usedAssets)
+            if let baked = OfficeVectorArt.bakeRoom(layout: layout, catalog: catalog, bounds: layout.visibleBounds), let png = OfficeArt.pngData(baked.image) {
+                vectorBackgrounds[tier.key] = ["image": "data:image/png;base64," + png.base64EncodedString(), "w": baked.image.width, "h": baked.image.height,
+                                               "windows": baked.windows.map { [$0.minX, $0.minY, $0.width, $0.height] }]
+            }
         }
 
         var furniture: [String: Any] = [:]
@@ -55,8 +61,8 @@ enum OfficeWebLayout {
         }
 
         let root: [String: Any] = [
-            "v": 3, "tileSize": 16,
-            "v3": v3JSON(),
+            "v": 3, "tileSize": 16, "theme": "vector",
+            "v3": v3JSON(vectorBackgrounds: vectorBackgrounds, catalog: catalog),
             "characters": [
                 "file": "characters/char_%d.png", "sheetWidth": OfficeCharacterSheet.sheetWidth, "sheetHeight": OfficeCharacterSheet.sheetHeight,
                 "frameWidth": OfficeCharacterSheet.frameWidth, "frameHeight": OfficeCharacterSheet.frameHeight,
@@ -80,7 +86,7 @@ enum OfficeWebLayout {
 
     /// Ofis v3 sözleşmesi: roller, bilgisayarlar, ışık, boşta/temizlikçi/taşıyıcı sabitleri ve Swift'te üretilen dokular (data URI).
     /// Tarayıcı bunları yeniden çizmek zorunda değildir (tek doğruluk kaynağı Swift).
-    static func v3JSON() -> [String: Any] {
+    static func v3JSON(vectorBackgrounds: [String: Any] = [:], catalog: [String: OfficeAsset] = [:]) -> [String: Any] {
         let roles: [[String: Any]] = OfficeRoles.knownKeys.map { key in
             let r = OfficeRoles.style(forAgentType: key)
             return ["key": r.key, "tint": r.tintHex, "accessory": r.accessory.rawValue, "place": r.accessory.place.rawValue, "small": r.small, "hoodie": r.hoodie, "labelColor": OfficeRoles.hex(r.labelColor)]
@@ -112,6 +118,27 @@ enum OfficeWebLayout {
             "carrier": ["steps": OfficeCarrier.sequence(withCarrier: true).map(\.rawValue), "dropSeconds": OfficeCarrier.dropDuration, "growFade": OfficeCarrier.growFade,
                         "character": 1, "tint": [0.9, 0.55, 0.15], "tintBlend": 0.5, "prop": "box"],
             "generated": generated,
+            "vector": vectorJSON(backgrounds: vectorBackgrounds, catalog: catalog),
+        ]
+    }
+
+    /// Vektör tema (4x PNG data URI'leri). `generated` ile AYNI anahtarlar (bilgisayarlar, lamba) + `glows`, `furniture` (varlık kimliği → PNG),
+    /// `door`, `boardWrite`, `windows` ve oda başına pişirilmiş `backgrounds`. Mantıksal boyut = PNG / `scale`. Bkz. docs/OFFICE-V4.md.
+    static func vectorJSON(backgrounds: [String: Any], catalog: [String: OfficeAsset]) -> [String: Any] {
+        func uri(_ img: CGImage?) -> String? { img.flatMap { OfficeArt.pngData($0) }.map { "data:image/png;base64," + $0.base64EncodedString() } }
+        var generated: [String: String] = [:]
+        for name in OfficeVectorArt.artNames { if let u = uri(OfficeVectorArt.art(name)) { generated[name] = u } }
+        var furniture: [String: String] = [:]
+        for (id, a) in catalog where OfficeVectorArt.furnitureIDs.contains(id) { if let u = uri(OfficeVectorArt.furniture(a)) { furniture[id] = u } }
+        let lp = OfficeLightParams.vector
+        return [
+            "theme": "vector", "scale": OfficeTheme.vectorScale, "filter": "linear", "generated": generated, "furniture": furniture,
+            "door": uri(OfficeVectorArt.door()) ?? "", "boardWrite": OfficeVectorArt.boardFrames().compactMap { uri($0) },
+            "boardWriteOrigin": [OfficeVectorArt.boardWriteOrigin.x, OfficeVectorArt.boardWriteOrigin.y],
+            "windowDay": uri(OfficeVectorArt.windowImage(night: false)) ?? "", "windowNight": uri(OfficeVectorArt.windowImage(night: true)) ?? "",
+            "backgrounds": backgrounds,
+            "lighting": ["multiplyColor": OfficeLightParams.duskFactor, "washColor": lp.overlayRGB, "washAlpha": lp.overlayAlpha, "bulbAlpha": lp.bulbAlpha,
+                          "poolAlpha": lp.poolAlpha, "boardAlpha": lp.boardAlpha, "screenAlpha": lp.screenAlpha, "windowAlpha": lp.windowAlpha] as [String: Any],
         ]
     }
 

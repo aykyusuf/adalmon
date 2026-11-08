@@ -28,6 +28,7 @@ struct OfficeWindowRoot: View {
                 .help("Pencere tüm masaüstlerinde (Space) görünür")
             Menu {
                 Toggle("Şeffaf başlık çubuğu", isOn: $state.settings.transparentTitlebar)
+                OfficeThemeMenu()
                 OfficeLightingMenu()
             } label: {
                 Label("Seçenekler", systemImage: "ellipsis.circle")

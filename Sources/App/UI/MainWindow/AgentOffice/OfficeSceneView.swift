@@ -73,6 +73,7 @@ struct OfficeSceneView: NSViewRepresentable {
     /// Odaklanılan oda (tıklama/Esc sahneden, "Hepsini göster" sayfadan değiştirir).
     @Binding var selectedRoom: String?
     var lightingMode: OfficeLightingMode = .auto
+    var theme: OfficeTheme = .default
     @Binding var card: OfficeDetailCard?
 
     @MainActor
@@ -86,6 +87,7 @@ struct OfficeSceneView: NSViewRepresentable {
         /// Sahne ile bağlama son eşitlenen odak (sahnenin eşzamansız bildirimi güncellemeyle yarışmasın).
         var knownSelection: String?
         var knownLighting: OfficeLightingMode?
+        var knownTheme: OfficeTheme?
         /// Bağlamaya son yazılan kart (kapat düğmesi bağlamayı nil yapınca sahneyi de kapatmak için).
         var pushedCard: OfficeDetailCard?
 
@@ -152,7 +154,8 @@ struct OfficeSceneView: NSViewRepresentable {
         view.allowsTransparency = false
         context.coordinator.view = view
         guard let assets = OfficeAssets.shared else { return view }
-        let scene = OfficeScene(assets: assets, size: view.bounds.size)
+        let scene = OfficeScene(assets: assets, size: view.bounds.size, theme: theme)
+        context.coordinator.knownTheme = theme
         let coordinator = context.coordinator
         let selection = $selectedRoom
         scene.onAnimationStateChange = { [weak coordinator] _ in coordinator?.refreshRunState() }
@@ -180,6 +183,11 @@ struct OfficeSceneView: NSViewRepresentable {
         guard let scene = c.scene else { return }
         let selection = $selectedRoom
         c.setSelection = { id in DispatchQueue.main.async { selection.wrappedValue = id } }
+        if c.knownTheme != theme {
+            c.knownTheme = theme
+            scene.setTheme(theme)
+            c.refreshRunState()
+        }
         if c.knownLighting != lightingMode {
             c.knownLighting = lightingMode
             scene.setLightingMode(lightingMode, animated: view.isReallyVisible)

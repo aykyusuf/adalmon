@@ -303,7 +303,7 @@ final class OfficeRoomTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(s.zoom, overviewZoom)
         XCTAssertGreaterThan(s.zoom, 1, "odaya yakınlaşıldı")
         let focused = OfficeCamera.focus(on: cell.rect, content: s.arrangement.contentSize, view: s.size)
-        XCTAssertEqual(s.zoom, focused.zoom)
+        XCTAssertEqual(s.zoom, CGFloat(focused.zoom))
         XCTAssertEqual(s.cameraCenter, focused.center)
         // Aynı odaya tekrar tıklayınca geri çıkar.
         let p2 = viewPoint(of: cell)

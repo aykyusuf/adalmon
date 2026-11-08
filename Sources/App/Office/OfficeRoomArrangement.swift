@@ -83,6 +83,20 @@ enum OfficeRoomArranger {
 /// Kamera: tamsayı zoom'a sığdırma, odaya odaklanma, kaydırma sınırı, görünüm ↔ içerik koordinatı.
 enum OfficeCamera {
     static let maxZoom = 6
+    /// Vektör temada kesirli zoom üst sınırı.
+    static let maxVectorZoom = 8.0
+
+    /// Vektör tema: içeriği pencereye (kenar boşluğuyla, içerik zaten `OfficeRoomArranger.margin` taşır) sığdıran KESİRLİ zoom; en az 1, en çok 8.
+    static func fitScale(view: CGSize, content: CGSize, maxZoom: Double = OfficeCamera.maxVectorZoom) -> Double {
+        guard content.width > 0, content.height > 0 else { return 1 }
+        return min(maxZoom, max(1, min(view.width / content.width, view.height / content.height)))
+    }
+
+    /// Vektör tema: odaya (kenar boşluğuyla) kesirli yakınlaşma.
+    static func focusScale(on rect: CGRect, content: CGSize, view: CGSize, margin: Double = 12) -> (zoom: Double, center: CGPoint) {
+        let z = fitScale(view: view, content: CGSize(width: rect.width + margin * 2, height: rect.height + margin * 2))
+        return (z, clamp(center: CGPoint(x: rect.midX, y: rect.midY), content: content, view: view, zoom: z))
+    }
 
     /// İçeriği pencereye sığdıran en büyük tamsayı zoom (en az 1: büyük sahnede küçülmez, kaydırılır).
     static func fitZoom(view: CGSize, content: CGSize, maxZoom: Int = OfficeCamera.maxZoom) -> Int {
@@ -90,9 +104,13 @@ enum OfficeCamera {
     }
 
     /// Merkezi içerik sınırlarına kıstırır; içerik o eksende pencereden küçükse ortalar.
-    static func clamp(center: CGPoint, content: CGSize, view: CGSize, zoom: Int) -> CGPoint {
+    static func clamp(center: CGPoint, content: CGSize, view: CGSize, zoom: Int) -> CGPoint { clamp(center: center, content: content, view: view, zoom: Double(zoom)) }
+    static func viewport(center: CGPoint, view: CGSize, zoom: Int) -> CGRect { viewport(center: center, view: view, zoom: Double(zoom)) }
+    static func contentPoint(fromView p: CGPoint, view: CGSize, center: CGPoint, zoom: Int) -> CGPoint { contentPoint(fromView: p, view: view, center: center, zoom: Double(zoom)) }
+
+    static func clamp(center: CGPoint, content: CGSize, view: CGSize, zoom: Double) -> CGPoint {
         func axis(_ c: Double, _ content: Double, _ view: Double) -> Double {
-            let half = view / Double(max(1, zoom)) / 2
+            let half = view / max(1, zoom) / 2
             if content <= half * 2 { return content / 2 }
             return min(max(c, half), content - half)
         }
@@ -107,14 +125,14 @@ enum OfficeCamera {
     }
 
     /// Pencerenin içerik koordinatındaki görünen dikdörtgeni.
-    static func viewport(center: CGPoint, view: CGSize, zoom: Int) -> CGRect {
-        let w = view.width / Double(max(1, zoom)), h = view.height / Double(max(1, zoom))
+    static func viewport(center: CGPoint, view: CGSize, zoom: Double) -> CGRect {
+        let w = view.width / max(1, zoom), h = view.height / max(1, zoom)
         return CGRect(x: center.x - w / 2, y: center.y - h / 2, width: w, height: h)
     }
 
     /// Görünüm noktası (sol-alt başlangıçlı, y yukarı) → içerik noktası (y aşağı).
-    static func contentPoint(fromView p: CGPoint, view: CGSize, center: CGPoint, zoom: Int) -> CGPoint {
-        let z = Double(max(1, zoom))
+    static func contentPoint(fromView p: CGPoint, view: CGSize, center: CGPoint, zoom: Double) -> CGPoint {
+        let z = max(1, zoom)
         return CGPoint(x: center.x + (p.x - view.width / 2) / z, y: center.y - (p.y - view.height / 2) / z)
     }
 }

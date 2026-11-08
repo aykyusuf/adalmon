@@ -135,6 +135,7 @@ final class OfficeRoomNode {
     let id: String
     let tier: OfficeRoomTier
     let assets: OfficeAssets
+    let theme: OfficeTheme
     let kit: OfficeRoomKit
     /// Yalnızca yönetici bölgesinin karolarının yürünür olduğu ızgara: volta rotaları bölgeden çıkmaz.
     private let zoneGrid: OfficeGrid?
@@ -150,6 +151,8 @@ final class OfficeRoomNode {
     /// Gece ışığı katmanı (yalnızca gece + görünür odada kurulur) ve ekran parıltıları.
     private(set) var nightWanted = false
     private var nightRoot: SKNode?
+    /// Vektör tema: gece pencereleri (ışık örtüsünün altında kalan, karakterlerin arkasındaki katman).
+    private var nightWindows: SKNode?
     private var screenGlows: [Int: SKSpriteNode] = [:]
     /// Temizlikçi / taşıyıcı durumu (oda başına bir kerede bir).
     private(set) var cleanerDueAt: Date?
@@ -161,7 +164,7 @@ final class OfficeRoomNode {
     private var awayLounge: Set<Int> = []
     /// Yönetici beyaz tahtasının üstündeki "yazıyor" katmanı (yalnızca yönetici yazarken kurulur/oynar).
     private var boardOverlay: SKSpriteNode?
-    private(set) var zoom = 1
+    private(set) var zoom: CGFloat = 1
     private(set) var labelsOn = false
     /// Metin balonları yalnızca yakından bakılırken (zoom ≥ 2) ve görünür/odaklı odalarda kurulur (düğüm tasarrufu); "…" balonu uzakta kalır.
     private(set) var bubblesOn = false
@@ -190,11 +193,12 @@ final class OfficeRoomNode {
             if isVisible && bubblesOn { for a in actors.values { renderBubble(a) } }
             if isVisible && nightWanted && nightRoot == nil { setNight(true, animated: false) }
             nightRoot?.isHidden = !(isVisible && nightWanted)
+            nightWindows?.isHidden = !(isVisible && nightWanted)
         }
     }
 
-    init(id: String, tier: OfficeRoomTier, assets: OfficeAssets) {
-        self.id = id; self.tier = tier; self.assets = assets
+    init(id: String, tier: OfficeRoomTier, assets: OfficeAssets, theme: OfficeTheme = .pixel) {
+        self.id = id; self.tier = tier; self.assets = assets; self.theme = theme
         let kit = assets.kit(tier)
         self.kit = kit
         zoneGrid = kit.spots.zone.map { kit.grid.restricted(to: $0) }
@@ -225,14 +229,15 @@ final class OfficeRoomNode {
     // MARK: Kurulum
 
     private func buildWorld() {
-        let bg = SKSpriteNode(texture: kit.background)
+        let bg = SKSpriteNode(texture: assets.background(tier, theme: theme))
+        bg.size = CGSize(width: kit.worldWidth, height: kit.worldHeight)
         bg.anchorPoint = .zero
         bg.zPosition = 0
         content.addChild(bg)
 
         let b = kit.bounds
         for (i, f, a) in kit.dynamicFurniture {
-            guard let tex = assets.furnitureTexture(a.id) else { continue }
+            guard let tex = assets.furnitureTexture(a.id, theme: theme) else { continue }
             let node = SKSpriteNode(texture: tex)
             node.anchorPoint = CGPoint(x: 0.5, y: 0)
             node.size = CGSize(width: a.width, height: a.height)
@@ -245,7 +250,7 @@ final class OfficeRoomNode {
             if a.id == "PC_FRONT_OFF" { configureComputer(node, pc: i) } else if a.id.hasSuffix("_OFF") { pcNodes[i] = node }
         }
 
-        if let door = assets.doorTexture() {
+        if let door = assets.doorTexture(theme: theme) {
             let node = SKSpriteNode(texture: door)
             node.anchorPoint = .zero
             node.size = CGSize(width: 16, height: 32)
@@ -281,7 +286,7 @@ final class OfficeRoomNode {
         layoutChrome()
     }
 
-    func setZoom(_ z: Int) {
+    func setZoom(_ z: CGFloat) {
         zoom = z
         for a in actors.values { applyScale(a) }
         for a in leavingActors { applyScale(a) }
@@ -302,7 +307,7 @@ final class OfficeRoomNode {
     }
 
     private func layoutChrome() {
-        let z = CGFloat(zoom)
+        let z = zoom
         plaque.setScale(1 / z)
         plaque.position = CGPoint(x: 2, y: CGFloat(kit.worldHeight) + 3)
         let height: CGFloat = 20
@@ -425,7 +430,7 @@ final class OfficeRoomNode {
             d.zPosition = 1
             a.label.addChild(d)
         }
-        a.label.setScale(1 / CGFloat(zoom))
+        a.label.setScale(1 / zoom)
         positionAccessoryAndBubble(a)
     }
 
@@ -488,9 +493,9 @@ final class OfficeRoomNode {
     }
 
     private func applyScale(_ a: OfficeActor) {
-        let s = CGFloat(OfficeAppearance.spriteScale(small: a.appearance.small, zoom: zoom))
+        let s = CGFloat(OfficeAppearance.spriteScale(small: a.appearance.small, zoom: Double(zoom)))
         a.body.setScale(s)
-        a.label.setScale(1 / CGFloat(zoom))
+        a.label.setScale(1 / zoom)
         a.accessory?.setScale(s)
         positionAccessoryAndBubble(a)
     }
@@ -684,7 +689,7 @@ final class OfficeRoomNode {
         guard let index = kit.spots.boardIndex else { return }
         if writing {
             if boardOverlay == nil {
-                let frames = assets.boardWriteTextures
+                let frames = assets.boardFrames(theme: theme)
                 guard let first = frames.first else { return }
                 let node = SKSpriteNode(texture: first)
                 node.anchorPoint = .zero
@@ -700,7 +705,7 @@ final class OfficeRoomNode {
             guard let node = boardOverlay else { return }
             node.isHidden = false
             if node.action(forKey: "write") == nil {
-                node.run(.repeatForever(.animate(with: assets.boardWriteTextures, timePerFrame: 0.5, resize: false, restore: false)), withKey: "write")
+                node.run(.repeatForever(.animate(with: assets.boardFrames(theme: theme), timePerFrame: 0.5, resize: false, restore: false)), withKey: "write")
             }
         } else if let node = boardOverlay {
             node.removeAction(forKey: "write")
@@ -821,7 +826,7 @@ final class OfficeRoomNode {
     private func setPC(_ a: OfficeActor) {
         guard let pc = a.seat.pcIndex, let node = pcNodes[pc], pcOccupied[pc] == a.member.id else { return }
         node.removeAction(forKey: "screen")
-        if let c = pcComputer[pc], let f = assets.computerFrames(c) {
+        if let c = pcComputer[pc], let f = assets.computerFrames(c, theme: theme) {
             if a.behavior.pcOn, !f.on.isEmpty {
                 node.run(.repeatForever(.animate(with: f.on, timePerFrame: 0.45, resize: false, restore: false)), withKey: "screen")
             } else {
@@ -843,7 +848,7 @@ final class OfficeRoomNode {
         placeRoleAccessory(a)
         a.label.position = CGPoint(x: 0, y: labelY(a))
         if let tb = a.textBubble, !tb.node.isHidden {
-            tb.node.setScale(1 / CGFloat(zoom))
+            tb.node.setScale(1 / zoom)
             tb.setFlipped(a.root.position.x > CGFloat(kit.worldWidth) / 2)
             resolveBubbleOverlaps()
         }
@@ -860,14 +865,14 @@ final class OfficeRoomNode {
     private func labelY(_ a: OfficeActor) -> CGFloat {
         let s = a.body.yScale
         let top = headTop(a) + (a.accessory?.size.height ?? 0) * s + 3
-        let stagger: CGFloat = a.seat.kind == .lounge && a.seat.tile.col % 2 != 0 ? 14 / CGFloat(zoom) : 0
+        let stagger: CGFloat = a.seat.kind == .lounge && a.seat.tile.col % 2 != 0 ? 14 / zoom : 0
         return top + stagger
     }
 
     /// Metin balonlarını yerleştirir: etiketin (varsa) üstünde; komşu balonla çakışan balon dikeyde yukarı kayar (balon boyu kadar),
     /// çakışma kalmayana dek. Soldan sağa sırayla yerleştirilir (sol balon sabit, sağdaki kayar).
     private func resolveBubbleOverlaps() {
-        let z = CGFloat(zoom)
+        let z = zoom
         let tail = OfficePixelArt.speechBubbleTailX / z
         let step = (OfficeTextBubble.height + 1) / z
         var placed: [CGRect] = []
@@ -980,7 +985,7 @@ final class OfficeRoomNode {
         if let pc = a.seat.pcIndex, pcOccupied[pc] == id {
             pcOccupied[pc] = nil
             pcNodes[pc]?.removeAction(forKey: "screen")
-            if let c = pcComputer[pc], let f = assets.computerFrames(c) { pcNodes[pc]?.texture = f.off }
+            if let c = pcComputer[pc], let f = assets.computerFrames(c, theme: theme) { pcNodes[pc]?.texture = f.off }
             updateScreenGlow(pc, on: false)
         }
         if let s = a.awaySeatID { awayLounge.remove(s); a.awaySeatID = nil }
@@ -1079,7 +1084,7 @@ final class OfficeRoomNode {
             ?? OfficeComputer.pick(roomID: id, seatID: 10_000 + i)
         pcComputer[i] = c
         node.size = CGSize(width: 16, height: 32)
-        if let f = assets.computerFrames(c) { node.texture = f.off }
+        if let f = assets.computerFrames(c, theme: theme) { node.texture = f.off }
         pcNodes[i] = node
     }
 
@@ -1112,54 +1117,80 @@ final class OfficeRoomNode {
         nightWanted = on
         if on { buildNightIfNeeded() }
         guard let root = nightRoot else { return }
-        root.removeAction(forKey: "fade")
         let target: CGFloat = on ? 1 : 0
-        if animated && isVisible {
-            root.isHidden = false
-            root.run(.sequence([.fadeAlpha(to: target, duration: OfficeLighting.crossfade), .run { [weak root] in root?.isHidden = target == 0 }]), withKey: "fade")
-        } else {
-            root.alpha = target
-            root.isHidden = target == 0 || !isVisible
+        for node in [root] + (nightWindows.map { [$0] } ?? []) {
+            node.removeAction(forKey: "fade")
+            if animated && isVisible {
+                node.isHidden = false
+                node.run(.sequence([.fadeAlpha(to: target, duration: OfficeLighting.crossfade), .run { [weak node] in node?.isHidden = target == 0 }]), withKey: "fade")
+            } else {
+                node.alpha = target
+                node.isHidden = target == 0 || !isVisible
+            }
         }
         for a in actors.values { if let pc = a.seat.pcIndex, pcOccupied[pc] == a.member.id { updateScreenGlow(pc, on: a.behavior.pcOn) } }
     }
 
-    /// Gece katmanı: koyu lacivert multiply örtü, tavan lambası (geniş sıcak ışık), her masada lamba + ışık havuzu, tahta lambası.
-    /// Statik sprite'lar (animasyon yok); oda görünmezken gizli. Dokular `OfficeAssets` içinde paylaşılır.
+    /// Gece katmanı: hafif lacivert multiply örtü, tavan lambası (geniş sıcak ışık), her masada lamba + ışık havuzu, tahta lambası.
+    /// Vektör temada ayrıca parlak gece pencereleri ve zemine mavi ay ışığı vurgusu. Statik sprite'lar (animasyon yok); oda görünmezken gizli.
     private func buildNightIfNeeded() {
         guard nightRoot == nil, isVisible else { return }
         let w = CGFloat(kit.worldWidth), h = CGFloat(kit.worldHeight), b = kit.bounds
+        let lp = theme.lighting
+        let vec = theme == .vector
         let root = SKNode()
         root.zPosition = 4000
         root.alpha = 0
         root.isHidden = true
-        let dim = SKSpriteNode(color: SKColor(red: 0.14, green: 0.18, blue: 0.40, alpha: 1), size: CGSize(width: w, height: h))
+        let dim = SKSpriteNode(color: SKColor(red: lp.multiplyColor[0], green: lp.multiplyColor[1], blue: lp.multiplyColor[2], alpha: 1), size: CGSize(width: w, height: h))
         dim.anchorPoint = .zero
-        dim.alpha = CGFloat(OfficeLighting.nightOverlayAlpha)
+        dim.alpha = CGFloat(lp.multiplyNodeAlpha)
         dim.blendMode = .multiply
         root.addChild(dim)
+        if lp.hasWash {
+            let wash = SKSpriteNode(color: SKColor(red: lp.overlayRGB[0], green: lp.overlayRGB[1], blue: lp.overlayRGB[2], alpha: 1), size: CGSize(width: w, height: h))
+            wash.anchorPoint = .zero
+            wash.alpha = CGFloat(lp.overlayAlpha)
+            wash.zPosition = 0.5
+            root.addChild(wash)
+        }
         func glow(_ name: String, size: CGSize, at p: CGPoint, alpha: CGFloat) {
-            guard let t = assets.artTexture(name) else { return }
+            guard let t = assets.artTexture(vec ? "v" + name : name, theme: theme) else { return }
             let g = SKSpriteNode(texture: t, size: size)
             g.position = p; g.blendMode = .add; g.alpha = alpha; g.zPosition = 1
             root.addChild(g)
         }
         func sprite(_ name: String, at p: CGPoint) {
-            guard let t = assets.artTexture(name) else { return }
-            let n = SKSpriteNode(texture: t, size: t.size())
+            guard let t = assets.artTexture(name, theme: theme) else { return }
+            let n = SKSpriteNode(texture: t, size: vec ? (OfficeVectorArt.artSize(name) ?? t.size()) : t.size())
             n.anchorPoint = CGPoint(x: 0.5, y: 0)
             n.position = p; n.zPosition = 2
             root.addChild(n)
         }
-        glow("glow_bulb", size: CGSize(width: w * 1.3, height: h * 1.15), at: CGPoint(x: w / 2, y: h * 0.55), alpha: 0.85)
+        glow("glow_bulb", size: CGSize(width: w * 1.3, height: h * 1.15), at: CGPoint(x: w / 2, y: h * 0.55), alpha: CGFloat(lp.bulbAlpha))
         for (_, f, a) in kit.dynamicFurniture where a.id == "DESK_FRONT" || a.id == "SMALL_TABLE_FRONT" {
             let x = CGFloat((f.col - b.minCol) * 16) + (a.id == "DESK_FRONT" ? 24 : 16)
             let y = h - CGFloat((f.row - b.minRow) * 16) - 14
-            glow("glow_pool", size: CGSize(width: 64, height: 36), at: CGPoint(x: x, y: y - 3), alpha: 0.9)
+            glow("glow_pool", size: CGSize(width: 64, height: 36), at: CGPoint(x: x, y: y - 3), alpha: CGFloat(lp.poolAlpha))
             sprite("lamp", at: CGPoint(x: x, y: y - 1))
         }
         for f in kit.layout.furniture where f.assetID == "WHITEBOARD" {
-            glow("glow_pool", size: CGSize(width: 60, height: 36), at: CGPoint(x: CGFloat((f.col - b.minCol) * 16 + 16), y: h - CGFloat((f.row - b.minRow) * 16 + 14)), alpha: 0.5)
+            glow("glow_pool", size: CGSize(width: 60, height: 36), at: CGPoint(x: CGFloat((f.col - b.minCol) * 16 + 16), y: h - CGFloat((f.row - b.minRow) * 16 + 14)), alpha: CGFloat(lp.boardAlpha))
+        }
+        if vec, let tex = assets.windowTexture(night: true) {
+            let back = SKNode()
+            back.zPosition = 0.05
+            back.alpha = 0
+            back.isHidden = true
+            for r in OfficeVectorArt.windowRects(layout: kit.layout, catalog: assets.catalog) {
+                let x = r.midX - CGFloat(b.minCol * 16), y = h - (r.midY - CGFloat(b.minRow * 16))
+                let n = SKSpriteNode(texture: tex, size: r.size)
+                n.position = CGPoint(x: x, y: y)
+                back.addChild(n)
+                glow("glow_moon", size: CGSize(width: 26, height: 44), at: CGPoint(x: x, y: y - 22), alpha: CGFloat(lp.windowAlpha))
+            }
+            content.addChild(back)
+            nightWindows = back
         }
         content.addChild(root)
         nightRoot = root
@@ -1169,11 +1200,11 @@ final class OfficeRoomNode {
     private func updateScreenGlow(_ pc: Int, on: Bool) {
         guard let root = nightRoot else { return }
         if !on { screenGlows[pc]?.isHidden = true; return }
-        if screenGlows[pc] == nil, let t = assets.artTexture("glow_screen"), pc < kit.layout.furniture.count {
+        if screenGlows[pc] == nil, let t = assets.artTexture(theme == .vector ? "vglow_screen" : "glow_screen", theme: theme), pc < kit.layout.furniture.count {
             let f = kit.layout.furniture[pc], b = kit.bounds
             let g = SKSpriteNode(texture: t, size: CGSize(width: 30, height: 20))
             g.position = CGPoint(x: CGFloat((f.col - b.minCol) * 16 + 8), y: CGFloat(kit.worldHeight) - CGFloat((f.row - b.minRow) * 16 + 6))
-            g.blendMode = .add; g.zPosition = 3
+            g.blendMode = .add; g.zPosition = 3; g.alpha = CGFloat(theme.lighting.screenAlpha)
             root.addChild(g)
             screenGlows[pc] = g
         }

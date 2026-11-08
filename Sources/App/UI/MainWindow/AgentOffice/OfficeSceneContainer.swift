@@ -6,10 +6,12 @@ struct OfficeSceneContainer: View {
     let members: [OfficeMember]
     @Binding var selectedRoom: String?
     @AppStorage(OfficeLighting.defaultsKey) private var lightingRaw = OfficeLightingMode.auto.rawValue
+    @AppStorage(OfficeTheme.defaultsKey) private var themeRaw = OfficeTheme.default.rawValue
     @State private var card: OfficeDetailCard?
 
     var body: some View {
-        OfficeSceneView(members: members, selectedRoom: $selectedRoom, lightingMode: OfficeLightingMode(rawValue: lightingRaw) ?? .auto, card: $card)
+        OfficeSceneView(members: members, selectedRoom: $selectedRoom, lightingMode: OfficeLightingMode(rawValue: lightingRaw) ?? .auto,
+                        theme: OfficeTheme(rawValue: themeRaw) ?? .default, card: $card)
             .overlay(alignment: .topTrailing) {
                 if let card {
                     OfficeCardView(card: card) { self.card = nil }
@@ -34,6 +36,23 @@ struct OfficeLightingMenu: View {
         .pickerStyle(.menu)
         .fixedSize()
         .help("Ofis ışığı: Otomatik (yerel saate göre gece 19:30–06:30), Gün ya da Gece")
+    }
+}
+
+/// "Tema: Vektör / Piksel" menüsü (sayfa başlığı ve ayrı pencere seçenek menüsü).
+struct OfficeThemeMenu: View {
+    @AppStorage(OfficeTheme.defaultsKey) private var themeRaw = OfficeTheme.default.rawValue
+
+    var body: some View {
+        let theme = OfficeTheme(rawValue: themeRaw) ?? .default
+        Picker(selection: $themeRaw) {
+            ForEach(OfficeTheme.allCases, id: \.rawValue) { t in Text(t.title).tag(t.rawValue) }
+        } label: {
+            Label("Tema: \(theme.title)", systemImage: theme == .vector ? "square.on.circle" : "squareshape.split.3x3")
+        }
+        .pickerStyle(.menu)
+        .fixedSize()
+        .help("Ofis görünümü: Vektör (modern, keskin) ya da Piksel (eski)")
     }
 }
 

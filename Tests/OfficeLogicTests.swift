@@ -324,7 +324,7 @@ final class OfficeLogicTests: XCTestCase {
         XCTAssertEqual(scene.roomCount, 1, "ajan yokken tek boş oda")
         XCTAssertEqual(scene.room(OfficeRoomPlanner.emptyRoomID)?.tier, .medium)
         let emptyZoom = OfficeCamera.fitZoom(view: CGSize(width: 1000, height: 640), content: scene.arrangement.contentSize)
-        XCTAssertEqual(scene.zoom, emptyZoom)
+        XCTAssertEqual(scene.zoom, CGFloat(emptyZoom))
         scene.apply(members: [member("s1", status: .idle), member("s2", status: .done)], animated: false)
         XCTAssertEqual(scene.actorCount, 2)
         XCTAssertEqual(scene.roomCount, 2, "oturum başına oda")
@@ -339,7 +339,7 @@ final class OfficeLogicTests: XCTestCase {
         XCTAssertFalse(scene.isAnimating)
         XCTAssertEqual(changes, [true, false])
         scene.size = CGSize(width: 700, height: 460)
-        XCTAssertEqual(scene.zoom, OfficeCamera.fitZoom(view: CGSize(width: 700, height: 460), content: scene.arrangement.contentSize),
+        XCTAssertEqual(scene.zoom, CGFloat(OfficeCamera.fitZoom(view: CGSize(width: 700, height: 460), content: scene.arrangement.contentSize)),
                        "yeniden boyutlandırmada uyum zoom'u yeniden hesaplanır")
     }
 

@@ -25,6 +25,7 @@ struct AgentOfficePage: View {
                         Button("Hepsini göster", systemImage: "rectangle.grid.2x2") { selectedRoom = nil }
                             .help("Odadan çık, tüm odaları göster (Esc)")
                     }
+                    OfficeThemeMenu()
                     OfficeLightingMenu()
                     demoMenu
                     Button("Ayrı pencerede aç", systemImage: "arrow.up.forward.square") { router.openOfficeWindow() }

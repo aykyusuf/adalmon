@@ -19,7 +19,10 @@ final class OfficeScene: SKScene {
     private var order: [String] = []
     private var dying: [OfficeRoomNode] = []
     private(set) var arrangement = OfficeRoomArranger.arrange([], columns: 1)
-    private(set) var zoom = 1
+    /// Kamera yakınlaştırması: piksel temada tamsayı, vektör temada kesirli (1…8).
+    private(set) var zoom: CGFloat = 1
+    /// Görünüm teması (doku katmanı). Mantık temadan bağımsızdır.
+    private(set) var theme: OfficeTheme
     /// Kamera merkezi (içerik koordinatı, y aşağı).
     private(set) var cameraCenter = CGPoint.zero
     private var panCenter = CGPoint.zero
@@ -74,8 +77,9 @@ final class OfficeScene: SKScene {
 
     private static func count(_ n: SKNode) -> Int { n.children.reduce(1) { $0 + count($1) } }
 
-    init(assets: OfficeAssets, size: CGSize = CGSize(width: 960, height: 600)) {
+    init(assets: OfficeAssets, size: CGSize = CGSize(width: 960, height: 600), theme: OfficeTheme = .pixel) {
         self.assets = assets
+        self.theme = theme
         planner = OfficeRoomPlanner(seats: assets.kits.mapValues { $0.spots.seats })
         super.init(size: size)
         scaleMode = .resizeFill
@@ -93,6 +97,22 @@ final class OfficeScene: SKScene {
     override func didChangeSize(_ oldSize: CGSize) {
         relayout(animated: false)
         onActivity?()
+    }
+
+    // MARK: Tema
+
+    /// Temayı değiştirir: odalar yeni dokularla yeniden kurulur (mantık/planlayıcı durumu korunur), kamera yeniden hesaplanır.
+    func setTheme(_ newTheme: OfficeTheme) {
+        guard newTheme != theme else { return }
+        theme = newTheme
+        for r in rooms.values { destroy(r) }
+        for r in dying { destroy(r) }
+        for r in world.children where r !== selectionFrame && r !== tooltipNode { r.removeAllActions(); r.removeFromParent() }
+        rooms = [:]; order = []; dying = []; grown = []
+        if let s = selectionFrame.parent { _ = s } else { world.addChild(selectionFrame) }
+        if let t = tooltipNode, t.parent == nil { world.addChild(t) }
+        cameraPlaced = false
+        apply(members: lastMembers, animated: false)
     }
 
     // MARK: Üyeleri uygulama
@@ -124,7 +144,7 @@ final class OfficeScene: SKScene {
                     destroy(old)
                 }
             }
-            let node = OfficeRoomNode(id: rp.id, tier: rp.tier, assets: assets)
+            let node = OfficeRoomNode(id: rp.id, tier: rp.tier, assets: assets, theme: theme)
             node.setNight(isNight, animated: false)
             node.onAnimationChange = { [weak self] in self?.notifyAnimationState() }
             node.setZoom(zoom)
@@ -202,24 +222,29 @@ final class OfficeScene: SKScene {
 
     private func updateCamera(animated: Bool, recenter: Bool = false) {
         let content = arrangement.contentSize
-        var z: Int
+        var z: CGFloat
         var center: CGPoint
         if let id = selectedRoomID, let cell = arrangement.cell(id: id) {
-            let f = OfficeCamera.focus(on: cell.rect, content: content, view: size)
-            z = f.zoom; center = f.center
+            if theme.integerZoomOnly {
+                let f = OfficeCamera.focus(on: cell.rect, content: content, view: size)
+                z = CGFloat(f.zoom); center = f.center
+            } else {
+                let f = OfficeCamera.focusScale(on: cell.rect, content: content, view: size)
+                z = CGFloat(f.zoom); center = f.center
+            }
             if !recenter && cameraPlaced && zoom == z { center = OfficeCamera.clamp(center: cameraCenter, content: content, view: size, zoom: z) }
         } else {
-            z = OfficeCamera.fitZoom(view: size, content: content)
+            z = theme.integerZoomOnly ? CGFloat(OfficeCamera.fitZoom(view: size, content: content)) : CGFloat(OfficeCamera.fitScale(view: size, content: content))
             center = OfficeCamera.clamp(center: panCenter, content: content, view: size, zoom: z)
             panCenter = center
         }
         applyCamera(zoom: z, center: center, animated: animated && cameraPlaced)
     }
 
-    private func applyCamera(zoom z: Int, center: CGPoint, animated: Bool) {
+    private func applyCamera(zoom z: CGFloat, center: CGPoint, animated: Bool) {
         cameraCenter = center
         let pos = CGPoint(x: center.x, y: arrangement.contentHeight - center.y)
-        let scale = 1 / CGFloat(z)
+        let scale = 1 / z
         if animated {
             track(cameraNode, key: "camera", .group([.move(to: pos, duration: Self.transitionDuration), .scale(to: scale, duration: Self.transitionDuration)]))
         } else {
@@ -275,7 +300,7 @@ final class OfficeScene: SKScene {
     private func updateSelectionFrame() {
         guard let id = selectedRoomID, let cell = arrangement.cell(id: id) else { selectionFrame.isHidden = true; return }
         selectionFrame.isHidden = false
-        let t = 2 / CGFloat(zoom), pad: CGFloat = 4
+        let t = 2 / zoom, pad: CGFloat = 4
         let x = CGFloat(cell.x) - pad, w = CGFloat(cell.width) + pad * 2
         let y = CGFloat(arrangement.contentHeight - cell.y - cell.height) - pad, h = CGFloat(cell.height) + pad * 2
         let rects = [CGRect(x: x, y: y, width: w, height: t), CGRect(x: x, y: y + h - t, width: w, height: t),
@@ -326,7 +351,7 @@ final class OfficeScene: SKScene {
 
     /// Kamera merkezini (görünüm piksel farkı / zoom) kaydırır; içerik pencereye sığıyorsa etkisizdir.
     private func pan(dx: CGFloat, dy: CGFloat) {
-        let z = CGFloat(zoom)
+        let z = zoom
         let moved = CGPoint(x: cameraCenter.x + dx / z, y: cameraCenter.y + dy / z)
         let c = OfficeCamera.clamp(center: moved, content: arrangement.contentSize, view: size, zoom: zoom)
         guard c != cameraCenter else { return }
@@ -446,8 +471,8 @@ final class OfficeScene: SKScene {
         tooltipLabel?.text = card.tooltip
         let w = (tooltipLabel?.frame.width ?? 40) + 10
         tooltipBG?.size = CGSize(width: w, height: 14)
-        node.setScale(1 / CGFloat(zoom))
-        node.position = CGPoint(x: h.room.root.position.x + top.x, y: h.room.root.position.y + top.y + 10 / CGFloat(zoom))
+        node.setScale(1 / zoom)
+        node.position = CGPoint(x: h.room.root.position.x + top.x, y: h.room.root.position.y + top.y + 10 / zoom)
         node.isHidden = false
         onActivity?()
     }

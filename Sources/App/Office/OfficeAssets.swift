@@ -184,6 +184,10 @@ final class OfficeAssets {
     let catalog: [String: OfficeAsset]
     let kits: [OfficeRoomTier: OfficeRoomKit]
     private var furnitureTextures: [String: SKTexture] = [:]
+    private var vectorFurnitureTextures: [String: SKTexture] = [:]
+    private var vectorBackgrounds: [OfficeRoomTier: SKTexture] = [:]
+    /// Vektör pişirilmiş arka plan toplam bayt (RGBA8): bellek bütçesi ölçümü için.
+    private(set) var vectorBackgroundBytes = 0
     private var characterTextures: [Int: [SKTexture]] = [:]
 
     private static var cached: OfficeAssets?
@@ -281,7 +285,43 @@ final class OfficeAssets {
 
     // MARK: Mobilya
 
-    func furnitureTexture(_ assetID: String) -> SKTexture? {
+    /// Vektör doku: yumuşak (linear) süzme; büyük dokularda mipmap (uzaklaşınca titreme olmaz).
+    static func smooth(_ cg: CGImage, mipmaps: Bool = false) -> SKTexture {
+        let t = SKTexture(cgImage: cg)
+        t.filteringMode = .linear
+        t.usesMipmaps = mipmaps
+        return t
+    }
+
+    /// Oda kademesinin arka planı: piksel (`kit.background`) ya da vektör (tier başına BİR kez pişirilir, odalar paylaşır).
+    func background(_ tier: OfficeRoomTier, theme: OfficeTheme) -> SKTexture {
+        let kit = kit(tier)
+        guard theme == .vector else { return kit.background }
+        if let t = vectorBackgrounds[tier] { return t }
+        guard let baked = OfficeVectorArt.bakeRoom(layout: kit.layout, catalog: catalog, bounds: kit.bounds) else { return kit.background }
+        vectorBackgroundBytes += baked.image.width * baked.image.height * 4
+        let t = Self.smooth(baked.image, mipmaps: true)
+        vectorBackgrounds[tier] = t
+        return t
+    }
+
+    func windowTexture(night: Bool) -> SKTexture? {
+        let key = night ? "__window_night" : "__window_day"
+        if let t = vectorFurnitureTextures[key] { return t }
+        guard let img = OfficeVectorArt.windowImage(night: night) else { return nil }
+        let t = Self.smooth(img)
+        vectorFurnitureTextures[key] = t
+        return t
+    }
+
+    func furnitureTexture(_ assetID: String, theme: OfficeTheme = .pixel) -> SKTexture? {
+        if theme == .vector, let a = catalog[assetID], OfficeVectorArt.furnitureIDs.contains(assetID) {
+            if let t = vectorFurnitureTextures[assetID] { return t }
+            guard let img = OfficeVectorArt.furniture(a) else { return nil }
+            let t = Self.smooth(img)
+            vectorFurnitureTextures[assetID] = t
+            return t
+        }
         if let t = furnitureTextures[assetID] { return t }
         guard let a = catalog[assetID], let img = Self.load(root.appending(path: "furniture/\(a.file)")) else { return nil }
         let t = Self.nearest(SKTexture(cgImage: img))
@@ -349,7 +389,15 @@ final class OfficeAssets {
     private var artTextures: [String: SKTexture] = [:]
 
     /// `OfficeArt` dokusu (önbellekli; ışık sprite'ları yumuşak, piksel-art `.nearest`).
-    func artTexture(_ name: String) -> SKTexture? {
+    func artTexture(_ name: String, theme: OfficeTheme = .pixel) -> SKTexture? {
+        if theme == .vector, OfficeVectorArt.hasArt(name) {
+            let key = "v:" + name
+            if let t = artTextures[key] { return t }
+            guard let img = OfficeVectorArt.art(name) else { return nil }
+            let t = Self.smooth(img)
+            artTextures[key] = t
+            return t
+        }
         if let t = artTextures[name] { return t }
         guard let img = OfficeArt.image(name) else { return nil }
         let t = SKTexture(cgImage: img)
@@ -359,13 +407,27 @@ final class OfficeAssets {
     }
 
     /// Bilgisayar dokuları: kapalı + 3 ekran karesi.
-    func computerFrames(_ c: OfficeComputer) -> (off: SKTexture, on: [SKTexture])? {
-        guard let off = artTexture(OfficeArt.computerName(c, frame: nil)) else { return nil }
-        let on = (0..<3).compactMap { artTexture(OfficeArt.computerName(c, frame: $0)) }
+    func computerFrames(_ c: OfficeComputer, theme: OfficeTheme = .pixel) -> (off: SKTexture, on: [SKTexture])? {
+        guard let off = artTexture(OfficeArt.computerName(c, frame: nil), theme: theme) else { return nil }
+        let on = (0..<3).compactMap { artTexture(OfficeArt.computerName(c, frame: $0), theme: theme) }
         return (off, on)
     }
 
-    func doorTexture() -> SKTexture? { OfficePixelArt.door.map { Self.nearest(SKTexture(cgImage: $0)) } }
+    func doorTexture(theme: OfficeTheme = .pixel) -> SKTexture? {
+        if theme == .vector {
+            if let t = vectorFurnitureTextures["__door"] { return t }
+            guard let img = OfficeVectorArt.door() else { return nil }
+            let t = Self.smooth(img)
+            vectorFurnitureTextures["__door"] = t
+            return t
+        }
+        return OfficePixelArt.door.map { Self.nearest(SKTexture(cgImage: $0)) }
+    }
+
+    private(set) lazy var vectorBoardFrames: [SKTexture] = OfficeVectorArt.boardFrames().map { Self.smooth($0) }
+
+    /// Beyaz tahta "yazıyor" kareleri (tema başına).
+    func boardFrames(theme: OfficeTheme) -> [SKTexture] { theme == .vector ? vectorBoardFrames : boardWriteTextures }
 }
 
 private final class OfficeAssetsMarker {}
