@@ -123,3 +123,11 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 - Saver: poster `init`'te senkron çiziliyor, örtük 0,25 sn contents solması kaldırıldı. Gerçek host'ta ölçüm için: `/usr/bin/log stream --predicate 'subsystem == "com.example.adalmon" AND category == "saver"'`.
 - Sıradaki: Esc için Input Monitoring izni, menü çubuğuna pil kapsülü + canlı test.
 - Eski kurulumda `ditto` silinen dosyaları temizlemez; kurarken stale dosyaları kontrol et (`codesign --verify --deep --strict`).
+
+## Handoff (2026-11-09 gece) — son commit c09f05c, Ofis v3 çalışıyor
+**Bitti ve kurulu:** Claude ajan izleme (plugin 1.3.0: hook → 127.0.0.1 dinleyici → durum modeli; session_title, pid canlılık, model okuma [transcript model alanı], hedef gösterimi opt-in), menü çubuğu Ajanlar paneli, Ajan ofisi (⌘9, oda başına oda, yönetici alanı, balonlar), ayrı pencere (⌥⌘9), tarayıcı görünümü (`agentsWebEnabled`; /, /v1/state, /v1/layout, /v1/stream; token+Host+Origin), açık kalma süresi (CPU paneli/birleşik panel/Genel bakış), pil sıvı animasyonu (10 stil, şimşek).
+**Gece testi (gerçek):** `claude -p … --model haiku` ile 3 oturum ve 10 alt ajanlı oturum açıldı; hepsi paneldeki/odadaki listede ve Chrome'daki web görünümünde göründü (alt ajanlar `crew-chief:scanner`, oda "large" 12 üye). `-p` oturumlarında model "unknown" kalıyor (SessionStart.model gelmiyor, transcript kısa sürede kapanıyor).
+**Düzeltilen web hataları:** Sec-Fetch-Site cross-site üst düzey gezinme 403 (artık navigate'e izin), mobilya dosyaları `furniture/` öneksiz 404 (istemcide düzeltildi).
+**Bilinen sorun:** web istemcisinde yönetici karakteri yarı saydam/duvarda; web layout'u eski şablonlar. Ofis v3 sonrası vektör yeniden tasarımla düzelecek.
+**Süren iş:** Ofis v3 ajanı (masalar ajan sayısıyla büyür, taşıyıcı/temizlikçi, gece modu, iMac/MacBook, crew rolleri, interaktif kart, /v1 sözleşmesi docs/OFFICE-V3.md). Bitince: build+kur+commit; sonra vektör 2D yeniden tasarım (kodla çizilen, net), web istemcisini eşle, canlı duvar kâğıdına taşı.
+**Karar/kısıt (bu session):** alt ajan en fazla Sonnet (karmaşık: high, basit: medium), Opus yok. Kurulumda `osascript quit` bazen kapatmıyor: `killall Adalmon` + süreç başlangıç saatini doğrula. Temiz kurulum için `git worktree add --detach /private/tmp/claude-501/adalmon-wt HEAD` (+ Vendor/libimobiledevice kopyala) kullanıldı.
