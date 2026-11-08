@@ -18,6 +18,8 @@ final class AgentMonitorModel {
     /// Menü çubuğu öğesi yalnızca bunu gözler.
     private(set) var summary = AgentSummary()
 
+    /// Durum her değiştiğinde (olay, budama, canlılık, sıfırlama) çağrılır; tarayıcı görünümü bunu SSE'ye çevirir. Zamanlayıcı yok.
+    @ObservationIgnored var onStateChange: (@MainActor (AgentState) -> Void)?
     @ObservationIgnored private var pruneTask: Task<Void, Never>?
     @ObservationIgnored private var livenessTask: Task<Void, Never>?
     @ObservationIgnored private let probe: ProcessLivenessProbing
@@ -40,7 +42,7 @@ final class AgentMonitorModel {
         lastEventAt = now
         var next = state
         guard next.apply(event, now: now) else { return }
-        state = next
+        commit(next)
         refreshSummary()
         schedulePrune()
         updateLivenessPolling()
@@ -63,13 +65,13 @@ final class AgentMonitorModel {
         var next = state
         let adopted = model.map { next.adoptTranscriptModel($0, for: id) } ?? false
         lookups.finish(id, found: model != nil, now: .now)
-        if adopted { state = next }
+        if adopted { commit(next) }
     }
 
     func prune(now: Date = .now) {
         var next = state
         guard !next.prune(now: now).isEmpty else { return }
-        state = next
+        commit(next)
         lookups.retain(Set(state.sessions.keys))
         refreshSummary()
         updateLivenessPolling()
@@ -78,8 +80,8 @@ final class AgentMonitorModel {
     /// Pid'li oturumların süreçlerini bir kez yoklar; ölü bulunanlar kapanır (kısa süre sonra düşer). Zamanlayıcı bunu çağırır.
     func pollLiveness(now: Date = .now) {
         var next = state
-        if !next.applyLiveness(using: probe, now: now).isEmpty { state = next; refreshSummary() }
-        else if next != state { state = next } // yalnızca süreç başlangıcı kaydedildi
+        if !next.applyLiveness(using: probe, now: now).isEmpty { commit(next); refreshSummary() }
+        else if next != state { commit(next) } // yalnızca süreç başlangıcı kaydedildi
         schedulePrune()
         updateLivenessPolling()
     }
@@ -88,7 +90,7 @@ final class AgentMonitorModel {
     func clearTargets() {
         var next = state
         next.clearTargets()
-        if next != state { state = next }
+        if next != state { commit(next) }
     }
 
     /// Dinleyici kapanınca listeyi boşalt.
@@ -97,10 +99,15 @@ final class AgentMonitorModel {
         pruneTask = nil
         livenessTask?.cancel()
         livenessTask = nil
-        state = AgentState()
+        commit(AgentState())
         lookups.removeAll()
         lastEventAt = nil
         refreshSummary()
+    }
+
+    private func commit(_ next: AgentState) {
+        state = next
+        onStateChange?(next)
     }
 
     private func refreshSummary() {

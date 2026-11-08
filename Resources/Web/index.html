@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Adalmon Ofis</title>
+<link rel="stylesheet" href="/style.css?t=__ADALMON_TOKEN__">
+</head>
+<body>
+<header id="bar">
+  <span id="dot" class="dot off"></span>
+  <span id="conn">bağlanıyor…</span>
+  <span id="counts"></span>
+  <span class="spacer"></span>
+  <button id="back" type="button" hidden>Esc &middot; Tüm odalar</button>
+</header>
+<main id="stage">
+  <canvas id="scene" aria-label="Ajan ofisi"></canvas>
+  <div id="empty" hidden>
+    <h1>Henüz Claude Code oturumu yok</h1>
+    <p>Bir Claude Code oturumu başlattığınızda odası burada belirir. Adalmon'daki Claude eklentisi kurulu olmalı.</p>
+  </div>
+  <div id="error" hidden></div>
+</main>
+<script src="/app.js?t=__ADALMON_TOKEN__"></script>
+</body>
+</html>

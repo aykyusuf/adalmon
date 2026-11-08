@@ -26,6 +26,10 @@ struct AgentOfficePage: View {
                             .help("Odadan çık, tüm odaları göster (Esc)")
                     }
                     demoMenu
+                    Button("Ayrı pencerede aç", systemImage: "arrow.up.forward.square") { router.openOfficeWindow() }
+                        .labelStyle(.iconOnly)
+                        .help("Ofisi ayrı, yeniden boyutlandırılabilir bir pencerede aç (⌥⌘9)")
+                        .accessibilityLabel("Ayrı pencerede aç")
                 }
             }
             OfficeSceneView(members: OfficeMember.members(from: sessions), selectedRoom: $selectedRoom)

@@ -1,0 +1,23 @@
+:root { color-scheme: dark; --bg: #14161c; --fg: #e6e8ee; --muted: #8b90a0; --line: #262a35; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; overflow: hidden; }
+body { display: flex; flex-direction: column; }
+#bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 12px;
+  border-bottom: 1px solid var(--line); background: #191c24; color: var(--muted); }
+#bar .spacer { flex: 1; }
+#counts { color: var(--fg); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #8b90a0; }
+.dot.on { background: #4cd964; }
+.dot.wait { background: #ffb020; }
+.dot.off { background: #ff5b5b; }
+#back { font: inherit; color: var(--fg); background: #232734; border: 1px solid var(--line); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+#back:hover { background: #2c3142; }
+#stage { position: relative; flex: 1 1 auto; min-height: 0; }
+#scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+#empty, #error { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 24px; pointer-events: none; }
+#empty h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+#empty p, #error { color: var(--muted); max-width: 420px; margin: 0; }
+#error { color: #ff8a8a; }
+[hidden] { display: none !important; }

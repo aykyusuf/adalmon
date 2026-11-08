@@ -3,6 +3,8 @@ import Network
 
 /// Yalnızca 127.0.0.1'de dinleyen yerel olay alıcısı (Network.framework). Olay yoksa hiçbir iş yapmaz (zamanlayıcı yok);
 /// bağlantı başına 5 sn'lik tek seferlik zaman aşımı vardır. Token loga yazılmaz.
+/// Tarayıcı görünümü (`AgentWebStore` verilmişse): aynı dinleyicide GET/HEAD (sayfa, varlık, durum, SSE). SSE bağlantıları zaman
+/// aşımından muaftır; yalnızca istemci varken 15 sn'lik bir keep-alive zamanlayıcısı çalışır (istemci yoksa zamanlayıcı yok).
 final class AgentEventServer: @unchecked Sendable {
     enum State: Equatable, Sendable {
         case stopped
@@ -16,15 +18,23 @@ final class AgentEventServer: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "adalmon.agents.server", qos: .utility)
     private let token: String
+    private let web: AgentWebStore?
+    private let keepAliveInterval: TimeInterval
     private let onEvent: @Sendable (AgentEvent) -> Void
     private let onState: @Sendable (State) -> Void
     // Aşağıdakilere yalnızca `queue` üzerinden erişilir.
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var generation = 0
+    private var port: UInt16 = 0
+    private var sseClients: [ObjectIdentifier: NWConnection] = [:]
+    private var keepAlive: DispatchSourceTimer?
 
-    init(token: String, onEvent: @escaping @Sendable (AgentEvent) -> Void, onState: @escaping @Sendable (State) -> Void) {
+    init(token: String, web: AgentWebStore? = nil, keepAliveInterval: TimeInterval = 15,
+         onEvent: @escaping @Sendable (AgentEvent) -> Void, onState: @escaping @Sendable (State) -> Void) {
         self.token = token
+        self.web = web
+        self.keepAliveInterval = keepAliveInterval
         self.onEvent = onEvent
         self.onState = onState
     }
@@ -53,6 +63,53 @@ final class AgentEventServer: @unchecked Sendable {
         listener = nil
         for connection in connections.values { connection.cancel() }
         connections = [:]
+        sseClients = [:]
+        keepAlive?.cancel()
+        keepAlive = nil
+    }
+
+    /// Bağlı tüm SSE istemcilerine yeni anlık görüntüyü yollar (yalnızca durum değişince çağrılır; istemci yoksa iş yok).
+    func broadcast(_ json: Data) {
+        queue.async { [self] in
+            guard !sseClients.isEmpty else { return }
+            let frame = AgentWebRouter.sseEvent(json)
+            for connection in sseClients.values { send(frame, on: connection) }
+        }
+    }
+
+    /// Tarayıcı görünümü kapanınca açık akışları keser.
+    func closeStreams() {
+        queue.async { [self] in
+            for connection in sseClients.values { connection.cancel() }
+            sseClients = [:]
+            updateKeepAlive()
+        }
+    }
+
+    /// Test/teşhis: bağlı SSE istemcisi sayısı.
+    func sseClientCount() async -> Int {
+        await withCheckedContinuation { continuation in queue.async { [self] in continuation.resume(returning: sseClients.count) } }
+    }
+
+    private func send(_ data: Data, on connection: NWConnection) {
+        connection.send(content: data, completion: .contentProcessed { error in if error != nil { connection.cancel() } })
+    }
+
+    private func updateKeepAlive() {
+        if sseClients.isEmpty {
+            keepAlive?.cancel()
+            keepAlive = nil
+            return
+        }
+        guard keepAlive == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + keepAliveInterval, repeating: keepAliveInterval, leeway: .milliseconds(Int(keepAliveInterval * 100)))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            for connection in self.sseClients.values { self.send(AgentWebRouter.sseKeepAlive, on: connection) }
+        }
+        timer.resume()
+        keepAlive = timer
     }
 
     private func startLocked(port: UInt16, attemptsLeft: Int, generation gen: Int) {
@@ -71,6 +128,7 @@ final class AgentEventServer: @unchecked Sendable {
                 guard self.generation == gen, self.listener === listener else { return }
                 switch state {
                 case .ready:
+                    self.port = port
                     self.onState(.running(port: port))
                 case .failed(let error):
                     listener.cancel()
@@ -98,12 +156,18 @@ final class AgentEventServer: @unchecked Sendable {
         connection.stateUpdateHandler = { [weak self] state in
             switch state {
             case .failed, .cancelled:
-                self?.queue.async { self?.connections[id] = nil }
+                self?.queue.async {
+                    self?.connections[id] = nil
+                    if self?.sseClients.removeValue(forKey: id) != nil { self?.updateKeepAlive() }
+                }
             default: break
             }
         }
         connection.start(queue: queue)
-        queue.asyncAfter(deadline: .now() + Self.connectionTimeout) { connection.cancel() }
+        // SSE'ye çevrilen bağlantı zaman aşımından muaftır.
+        queue.asyncAfter(deadline: .now() + Self.connectionTimeout) { [weak self] in
+            if self?.sseClients[id] == nil { connection.cancel() }
+        }
         receive(on: connection, buffer: Data())
     }
 
@@ -112,6 +176,10 @@ final class AgentEventServer: @unchecked Sendable {
             guard let self else { return }
             var buffer = buffer
             if let data { buffer.append(data) }
+            if self.web != nil, AgentWebRouter.isWebRequest(buffer) {
+                self.receiveWeb(on: connection, buffer: buffer, closed: error != nil || isComplete)
+                return
+            }
             let outcome = AgentHTTPParser.parse(buffer, token: self.token)
             switch outcome {
             case .needMore:
@@ -122,6 +190,40 @@ final class AgentEventServer: @unchecked Sendable {
             case .reject:
                 self.reply(outcome, on: connection)
             }
+        }
+    }
+
+    private func receiveWeb(on connection: NWConnection, buffer: Data, closed: Bool) {
+        guard let web else { return }
+        switch AgentWebRouter.parse(buffer) {
+        case .needMore:
+            if closed { connection.cancel() } else { receive(on: connection, buffer: buffer) }
+        case .reject(let status):
+            let response = AgentWebRouter.Response(status: status, contentType: "text/plain; charset=utf-8",
+                                                   body: Data("\(status) \(AgentWebRouter.reason(status))\n".utf8))
+            connection.send(content: response.serialized(), completion: .contentProcessed { _ in connection.cancel() })
+        case .request(let request):
+            let context = web.context(token: token, port: port, sseClients: sseClients.count)
+            switch AgentWebRouter.route(request, context: context) {
+            case .response(let response):
+                connection.send(content: response.serialized(), completion: .contentProcessed { _ in connection.cancel() })
+            case .stream:
+                startStream(connection, snapshot: context.stateJSON)
+            }
+        }
+    }
+
+    private func startStream(_ connection: NWConnection, snapshot: Data) {
+        sseClients[ObjectIdentifier(connection)] = connection
+        updateKeepAlive()
+        send(AgentWebRouter.sseOpening(snapshot), on: connection)
+        drain(connection)
+    }
+
+    /// İstemci kapanışını fark etmek için okur (gelen baytlar yok sayılır).
+    private func drain(_ connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1024) { [weak self] _, _, isComplete, error in
+            if error != nil || isComplete { connection.cancel() } else { self?.drain(connection) }
         }
     }
 

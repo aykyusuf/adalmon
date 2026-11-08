@@ -53,6 +53,8 @@ final class Preferences {
     var agentsInMenuBar: Bool { didSet { d.set(agentsInMenuBar, forKey: "agentsInMenuBar") } }
     /// Ajan balonlarında hedefi de göster (dosya adı / komut adı; içerik ve argüman asla). Varsayılan kapalı.
     var agentsShowTargets: Bool { didSet { d.set(agentsShowTargets, forKey: "agentsShowTargets") } }
+    /// Tarayıcıda canlı ofis (aynı yerel dinleyicide GET yolları). Varsayılan kapalı; kapalıyken GET'ler 404.
+    var agentsWebEnabled: Bool { didSet { d.set(agentsWebEnabled, forKey: "agentsWebEnabled") } }
     /// Dinleyicinin kalıcı rastgele portu; 0 = henüz seçilmedi.
     var agentsPort: Int { didSet { d.set(agentsPort, forKey: "agentsPort") } }
 
@@ -100,6 +102,7 @@ final class Preferences {
         agentsEnabled = d.bool(forKey: "agentsEnabled")
         agentsInMenuBar = d.bool(forKey: "agentsInMenuBar")
         agentsShowTargets = d.bool(forKey: "agentsShowTargets")
+        agentsWebEnabled = d.bool(forKey: "agentsWebEnabled")
         agentsPort = d.integer(forKey: "agentsPort")
         menuBar = MenuBarConfigStore(defaults: d)
         panel = PanelConfigStore(defaults: d)

@@ -25,14 +25,26 @@ final class AgentService {
     @ObservationIgnored private var installer: AgentPluginInstaller
     @ObservationIgnored private var server: AgentEventServer?
     @ObservationIgnored private var token = ""
+    /// Tarayıcı görünümü: dinleyici iş parçacığı ile ana aktör arasındaki köprü ve durum → JSON üreticisi (özellik açılınca kurulur).
+    @ObservationIgnored private let web = AgentWebStore()
+    @ObservationIgnored private var webBuilder: AgentWebSnapshotBuilder?
 
     init(prefs: Preferences, installer: AgentPluginInstaller = AgentPluginInstaller()) {
         self.prefs = prefs
         self.installer = installer
+        monitor.onStateChange = { [weak self] _ in self?.publishWeb() }
     }
 
     var isEnabled: Bool { prefs.agentsEnabled }
     var port: UInt16? { if case .running(let port) = listener { port } else { nil } }
+    var isWebEnabled: Bool { prefs.agentsWebEnabled }
+    /// Tarayıcıda açılacak adres (token'lı; gizli tutulmalı). Dinleyici çalışmıyorsa ya da görünüm kapalıysa nil.
+    var webURL: URL? {
+        guard prefs.agentsWebEnabled, let port, !token.isEmpty else { return nil }
+        return URL(string: "http://127.0.0.1:\(port)/?t=\(token)")
+    }
+    /// Token'sız adres (ekranda gösterim için).
+    var webDisplayAddress: String? { port.map { "http://127.0.0.1:\($0)/" } }
 
     /// Uygulama açılışında ve anahtar değişince: dinleyiciyi tercihe göre kur ya da kapat.
     func apply() {
@@ -51,6 +63,35 @@ final class AgentService {
         if !on { monitor.clearTargets() }
     }
 
+    func setWebEnabled(_ enabled: Bool) {
+        prefs.agentsWebEnabled = enabled
+        web.setEnabled(enabled && server != nil)
+        if enabled {
+            prepareWeb()
+        } else {
+            server?.closeStreams()
+        }
+    }
+
+    /// Düzeni (tek seferlik dosya okuma) ve planlayıcıyı kurar, ilk anlık görüntüyü yayar.
+    private func prepareWeb() {
+        guard prefs.agentsWebEnabled, server != nil else { return }
+        if webBuilder == nil {
+            guard let root = web.officeRoot, let built = OfficeWebLayout.build(officeRoot: root) else { return }
+            web.setLayout(built.json)
+            webBuilder = AgentWebSnapshotBuilder(seats: built.seats)
+        }
+        publishWeb()
+    }
+
+    /// Yalnızca durum değişince (monitor.onStateChange) çalışır; özellik kapalıyken hiçbir şey üretmez.
+    private func publishWeb() {
+        guard prefs.agentsWebEnabled, server != nil, let webBuilder else { return }
+        let data = webBuilder.snapshot(sessions: monitor.state.orderedSessions)
+        web.setState(data)
+        server?.broadcast(data)
+    }
+
     private func startListening() {
         guard server == nil else { return }
         token = installer.generator.readConfig()?.token ?? AgentPluginGenerator.makeToken()
@@ -59,6 +100,7 @@ final class AgentService {
         let prefs = prefs
         let server = AgentEventServer(
             token: token,
+            web: web,
             onEvent: { event in
                 Task { @MainActor in
                     // Savunma: hedef anahtarı kapalıysa (eski/elle değiştirilmiş betik gönderse bile) hedef atılır.
@@ -71,9 +113,12 @@ final class AgentService {
         self.server = server
         let saved = prefs.agentsPort
         server.start(preferredPort: UInt16(exactly: saved).flatMap { AgentEventServer.portRange.contains($0) ? $0 : nil })
+        web.setEnabled(prefs.agentsWebEnabled)
+        prepareWeb()
     }
 
     private func stopListening() {
+        web.setEnabled(false)
         server?.stop()
         server = nil
         listener = .off

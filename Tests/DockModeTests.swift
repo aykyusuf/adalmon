@@ -73,6 +73,17 @@ final class DockModeTests: XCTestCase {
         XCTAssertEqual(pageKeys[5].representedObject as? String, MainSection.processes.id)
         XCTAssertEqual(pageKeys[6].representedObject as? String, MainSection.battery.id)
 
+        // Pencere: ayrı Ajan ofisi penceresi ⌥⌘9 (Görünüm'deki ⌘9 ile çakışmaz).
+        let windowMenu = try XCTUnwrap(menu.items.first { $0.title == "Pencere" }?.submenu)
+        let office = try XCTUnwrap(windowMenu.items.first { $0.action == #selector(AppDelegate.showOfficeWindow(_:)) })
+        XCTAssertEqual(office.title, "Ajan ofisi penceresi")
+        XCTAssertEqual(office.keyEquivalent, "9")
+        XCTAssertEqual(office.keyEquivalentModifierMask, [.command, .option])
+        XCTAssertTrue(office.target === delegate)
+        let allShortcuts = menu.items.compactMap(\.submenu).flatMap(\.items).filter { !$0.keyEquivalent.isEmpty }
+            .map { "\($0.keyEquivalentModifierMask.rawValue)-\($0.keyEquivalent)" }
+        XCTAssertEqual(allShortcuts.count, Set(allShortcuts).count, "kısayollar çakışıyor: \(allShortcuts)")
+
         // Düzen: standart düzenleme kısayolları.
         let edit = try XCTUnwrap(menu.items.first { $0.title == "Düzen" }?.submenu)
         let keys = Dictionary(uniqueKeysWithValues: edit.items.filter { !$0.keyEquivalent.isEmpty && $0.keyEquivalentModifierMask == .command }

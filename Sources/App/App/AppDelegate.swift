@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: PanelController?
     private var settings: SettingsWindowController?
     private var mainWindow: MainWindowController?
+    private var officeWindow: OfficeWindowController?
     private var dockMode: DockModeController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -16,7 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let router = SettingsRouter(isDockModeOn: { prefs.showInDock })
         let settings = SettingsWindowController(model: model, router: router)
         let mainWindow = MainWindowController(model: model, router: router)
-        router.attach(showMainWindow: { mainWindow.show() }, showSettingsWindow: { settings.show() })
+        let officeWindow = OfficeWindowController(model: model)
+        router.attach(showMainWindow: { mainWindow.show() }, showSettingsWindow: { settings.show() },
+                      showOfficeWindow: { officeWindow.show() })
         let panel = PanelController(
             model: model,
             openApp: { prefs.showInDock ? mainWindow.show() : router.open() },
@@ -51,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.router = router
         self.settings = settings
         self.mainWindow = mainWindow
+        self.officeWindow = officeWindow
         self.panel = panel
         self.dockMode = dockMode
         AdalmonIntentHub.backend = LiveIntentBackend(model: model, openRoute: { router.open(route: $0) })
@@ -83,4 +87,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openSettings(_ sender: Any?) { router?.open() }
     @objc func showMainWindow(_ sender: Any?) { mainWindow?.show() }
+    @objc func showOfficeWindow(_ sender: Any?) { officeWindow?.show() }
 }

@@ -25,17 +25,23 @@ final class SettingsRouter {
     @ObservationIgnored private let isDockModeOn: @MainActor () -> Bool
     @ObservationIgnored private var showMainWindow: @MainActor () -> Void = {}
     @ObservationIgnored private var showSettingsWindow: @MainActor () -> Void = {}
+    @ObservationIgnored private var showOfficeWindow: @MainActor () -> Void = {}
 
     init(isDockModeOn: @escaping @MainActor () -> Bool) {
         self.isDockModeOn = isDockModeOn
     }
 
     /// Pencere denetleyicileri oluşturulduktan sonra bağlanır (denetleyiciler yönlendiriciyi, yönlendirici onları kullanır).
-    func attach(showMainWindow: @escaping @MainActor () -> Void, showSettingsWindow: @escaping @MainActor () -> Void) {
+    func attach(showMainWindow: @escaping @MainActor () -> Void, showSettingsWindow: @escaping @MainActor () -> Void,
+                showOfficeWindow: @escaping @MainActor () -> Void = {}) {
         self.showMainWindow = showMainWindow
         self.showSettingsWindow = showSettingsWindow
+        self.showOfficeWindow = showOfficeWindow
         MainWindowCommands.shared.router = self // menü kısayolları (⌘1…⌘5) bu yönlendiriciyi kullanır
     }
+
+    /// Ayrı "Ajan ofisi" penceresini açar (zaten açıksa öne getirir). Dock modundan bağımsızdır.
+    func openOfficeWindow() { showOfficeWindow() }
 
     /// Ayarları açar. `section` verilmezse son kullanılan bölüm (varsayılan: Genel) gösterilir.
     func open(_ section: SettingsSection? = nil) {

@@ -24,6 +24,9 @@ targets:
       # Ajan ofisi piksel-art görselleri: klasör olarak kopyalanır (manifest.json adları çakışmasın)
       - path: Resources/Office
         type: folder
+      # Tarayıcı ofisi (index.html, app.js, style.css): klasör olarak kopyalanır; yalnızca dinleyici üzerinden, token'lı sunulur
+      - path: Resources/Web
+        type: folder
     info:
       path: Sources/App/Info.plist
       properties:

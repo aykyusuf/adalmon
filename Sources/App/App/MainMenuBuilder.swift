@@ -86,6 +86,8 @@ enum MainMenuBuilder {
     private static func windowMenu(target: AppDelegate) -> NSMenu {
         let menu = NSMenu(title: "Pencere")
         menu.addItem(item("Ana pencere", #selector(AppDelegate.showMainWindow(_:)), "0", target: target))
+        menu.addItem(item("Ajan ofisi penceresi", #selector(AppDelegate.showOfficeWindow(_:)), "9",
+                          modifiers: [.command, .option], target: target))
         menu.addItem(.separator())
         menu.addItem(item("Küçült", #selector(NSWindow.performMiniaturize(_:)), "m"))
         menu.addItem(item("Yakınlaştır", #selector(NSWindow.performZoom(_:))))

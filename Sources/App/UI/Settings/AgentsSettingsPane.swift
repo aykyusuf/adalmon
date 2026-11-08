@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Ayarlar › Claude ajanları: özelliği aç, plugin'i kur/kaldır, durum satırları, gizlilik notu.
@@ -23,6 +24,32 @@ struct AgentsSettingsPane: View {
                 Toggle("Ofis balonlarında hedefi de göster (dosya adı / komut adı)", isOn: Binding(get: { prefs.agentsShowTargets }, set: { agents.setShowTargets($0) }))
                     .disabled(!prefs.agentsEnabled)
                 Text("Kapalıyken balonlar yalnızca araç türünü söyler (\"Dosya düzenliyor\"). Açıkken \"main.swift düzenliyor\" gibi yalnızca dosya adı ya da komutun ilk kelimesi gösterilir.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Tarayıcı görünümü") {
+                Toggle("Tarayıcı görünümünü etkinleştir", isOn: Binding(get: { prefs.agentsWebEnabled }, set: { agents.setWebEnabled($0) }))
+                    .disabled(!prefs.agentsEnabled)
+                Text("Ofisi bu Mac'teki tarayıcıda canlı izlersiniz (piksel-art sahne). Sayfa yalnızca 127.0.0.1 üzerinden, token ile açılır; kapalıyken bu adresler 404 verir. Sayfa kapalıyken uygulama tarafında hiçbir iş yapılmaz.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if prefs.agentsWebEnabled, let address = agents.webDisplayAddress {
+                    LabeledContent("Adres") {
+                        Text("\(address)?t=••••••••").font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button("Tarayıcıda aç") {
+                            if let url = agents.webURL { NSWorkspace.shared.open(url) }
+                        }
+                        Button("Kopyala") {
+                            if let url = agents.webURL {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                            }
+                        }
+                    }
+                    .disabled(agents.webURL == nil)
+                }
+                Text("Yalnızca bu Mac'ten erişilir (ağdaki diğer cihazlar bağlanamaz). Adres bir token içerir: gizli tutun, başkalarıyla paylaşmayın.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
