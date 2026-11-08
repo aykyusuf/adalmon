@@ -25,6 +25,15 @@ struct OfficePixels {
         if !ok { return nil }
     }
 
+    func flippedHorizontally() -> OfficePixels {
+        var out = OfficePixels(width: width, height: height)
+        for y in 0..<height { for x in 0..<width {
+            let si = (y * width + x) * 4, di = (y * width + (width - 1 - x)) * 4
+            for k in 0..<4 { out.data[di + k] = data[si + k] }
+        } }
+        return out
+    }
+
     func cgImage() -> CGImage? {
         var copy = data
         return copy.withUnsafeMutableBytes { raw -> CGImage? in
@@ -103,17 +112,39 @@ enum OfficePixelArt {
     }()
 }
 
-/// Uygulama paketinden yüklenen ofis varlıkları: düzen, mobilya kataloğu, ızgara, noktalar, dokular. Uzun ömürlü
+/// Bir oda kademesinin (küçük/orta/büyük) sabit verisi: şablon düzeni, ızgara, noktalar ve TEK pişirilmiş arka plan dokusu
+/// (zemin + duvar + duvar süsleri + arkası yürünemeyen/alçak mobilya). Aynı kademedeki tüm odalar aynı dokuyu paylaşır.
+@MainActor
+final class OfficeRoomKit {
+    let tier: OfficeRoomTier
+    let layout: OfficeLayout
+    let grid: OfficeGrid
+    let spots: OfficeSpots
+    let bounds: (minCol: Int, minRow: Int, maxCol: Int, maxRow: Int)
+    let background: SKTexture
+    /// Önceden pişirilmeyen (karakterlerle öne-arkaya sıralanan ya da animasyonlu) mobilya: masa, PC, bitki, sandalye.
+    let dynamicFurniture: [(index: Int, placement: OfficeFurniturePlacement, asset: OfficeAsset)]
+
+    init(tier: OfficeRoomTier, layout: OfficeLayout, grid: OfficeGrid, spots: OfficeSpots,
+         bounds: (minCol: Int, minRow: Int, maxCol: Int, maxRow: Int), background: SKTexture,
+         dynamicFurniture: [(index: Int, placement: OfficeFurniturePlacement, asset: OfficeAsset)]) {
+        self.tier = tier; self.layout = layout; self.grid = grid; self.spots = spots
+        self.bounds = bounds; self.background = background; self.dynamicFurniture = dynamicFurniture
+    }
+
+    var worldWidth: Int { (bounds.maxCol - bounds.minCol + 1) * 16 }
+    var worldHeight: Int { (bounds.maxRow - bounds.minRow + 1) * 16 }
+}
+
+/// Uygulama paketinden yüklenen ofis varlıkları: düzen, mobilya kataloğu, oda kademeleri, dokular. Uzun ömürlü
 /// (sayfa değişince yeniden okunmaz). Dokular `.nearest`.
 @MainActor
 final class OfficeAssets {
     let root: URL
+    /// default-layout-1.json (tek büyük ofis): oda şablonlarının zemin/duvar renk ayarının kaynağı.
     let layout: OfficeLayout
     let catalog: [String: OfficeAsset]
-    let grid: OfficeGrid
-    let spots: OfficeSpots
-    let bounds: (minCol: Int, minRow: Int, maxCol: Int, maxRow: Int)
-    private(set) var background: SKTexture
+    let kits: [OfficeRoomTier: OfficeRoomKit]
     private var furnitureTextures: [String: SKTexture] = [:]
     private var characterTextures: [Int: [SKTexture]] = [:]
 
@@ -136,17 +167,26 @@ final class OfficeAssets {
         guard let data = try? Data(contentsOf: root.appending(path: "default-layout-1.json")),
               let layout = try? OfficeLayout.parse(data) else { return nil }
         let catalog = OfficeCatalog.load(furnitureDirectory: root.appending(path: "furniture"))
-        let grid = OfficeGrid(layout: layout, assets: catalog)
-        guard let spots = OfficeSpots.derive(layout: layout, assets: catalog, grid: grid) else { return nil }
-        self.root = root; self.layout = layout; self.catalog = catalog; self.grid = grid; self.spots = spots
-        self.bounds = layout.visibleBounds
-        self.background = SKTexture()
-        guard let bg = Self.bakeBackground(root: root, layout: layout, bounds: bounds) else { return nil }
-        background = Self.nearest(SKTexture(cgImage: bg))
+        // Renkler tek ofisin zemin (1,11) ve duvar (3,10) karolarından.
+        let floorColor = layout.color(1, 11), wallColor = layout.color(3, 10)
+        var kits: [OfficeRoomTier: OfficeRoomKit] = [:]
+        for tier in OfficeRoomTier.allCases {
+            let l = OfficeRoomTemplates.layout(tier, floor: floorColor, wall: wallColor)
+            let grid = OfficeGrid(layout: l, assets: catalog)
+            guard let spots = OfficeSpots.derive(layout: l, assets: catalog, grid: grid) else { return nil }
+            let bounds = l.visibleBounds
+            guard let bg = Self.bakeBackground(root: root, layout: l, catalog: catalog, bounds: bounds) else { return nil }
+            var dynamic: [(index: Int, placement: OfficeFurniturePlacement, asset: OfficeAsset)] = []
+            for (i, f) in l.furniture.enumerated() {
+                if let a = catalog[f.assetID], !Self.isBaked(a) { dynamic.append((i, f, a)) }
+            }
+            kits[tier] = OfficeRoomKit(tier: tier, layout: l, grid: grid, spots: spots, bounds: bounds,
+                                       background: Self.nearest(SKTexture(cgImage: bg)), dynamicFurniture: dynamic)
+        }
+        self.root = root; self.layout = layout; self.catalog = catalog; self.kits = kits
     }
 
-    var worldWidth: Int { (bounds.maxCol - bounds.minCol + 1) * 16 }
-    var worldHeight: Int { (bounds.maxRow - bounds.minRow + 1) * 16 }
+    func kit(_ tier: OfficeRoomTier) -> OfficeRoomKit { kits[tier]! }
 
     static func nearest(_ t: SKTexture) -> SKTexture { t.filteringMode = .nearest; return t }
 
@@ -155,10 +195,15 @@ final class OfficeAssets {
         return CGImageSourceCreateImageAtIndex(src, 0, nil)
     }
 
-    // MARK: Zemin + duvar
+    // MARK: Zemin + duvar + sabit mobilya
 
-    /// Tüm zemin ve duvar karolarını tek bir görüntüye pişirir (renklendirilmiş): sahnede tek sprite.
-    private static func bakeBackground(root: URL, layout: OfficeLayout, bounds b: (minCol: Int, minRow: Int, maxCol: Int, maxRow: Int)) -> CGImage? {
+    /// Duvara asılı olanlar ve arka satırı olmayan (`backgroundTiles == 0`) mobilya karakterlerin hep arkasında kalır
+    /// (üstlerinde yürünebilir karo yok): arka plana pişirilir, sahnede düğüm olmaz.
+    static func isBaked(_ a: OfficeAsset) -> Bool { a.onWall || a.backgroundTiles == 0 }
+
+    /// Tüm zemin ve duvar karolarını (renklendirilmiş) ve pişirilebilir mobilyayı tek bir görüntüye birleştirir.
+    private static func bakeBackground(root: URL, layout: OfficeLayout, catalog: [String: OfficeAsset],
+                                       bounds b: (minCol: Int, minRow: Int, maxCol: Int, maxRow: Int)) -> CGImage? {
         var canvas = OfficePixels(width: (b.maxCol - b.minCol + 1) * 16, height: (b.maxRow - b.minRow + 1) * 16)
         var floors: [Int: OfficePixels] = [:]
         let wall = load(root.appending(path: "walls/wall_0.png")).flatMap(OfficePixels.init(cgImage:))
@@ -176,6 +221,19 @@ final class OfficeAssets {
                 canvas.composite(wall, sx: (mask % 4) * 16, sy: (mask / 4) * 32, w: 16, h: 32, dx: dx, dy: dy - 16, color: layout.color(c, r))
             }
         } }
+        // Mobilya: duvardakiler önce, sonra ayak izi alt kenarına göre arkadan öne; yüzeydekiler (kahve) sahibinin üstüne.
+        let baked = layout.furniture.compactMap { f -> (OfficeFurniturePlacement, OfficeAsset)? in
+            guard let a = catalog[f.assetID], isBaked(a) else { return nil }
+            return (f, a)
+        }.sorted {
+            func z(_ x: (OfficeFurniturePlacement, OfficeAsset)) -> Int { (x.1.onWall ? -1000 : 0) + (x.0.row + x.1.footprintH) * 16 + (x.1.onSurface ? 1 : 0) }
+            return z($0) < z($1)
+        }
+        for (f, a) in baked {
+            guard let img = load(root.appending(path: "furniture/\(a.file)")), var px = OfficePixels(cgImage: img) else { continue }
+            if f.mirrored { px = px.flippedHorizontally() }
+            canvas.composite(px, sx: 0, sy: 0, w: px.width, h: px.height, dx: (f.col - b.minCol) * 16, dy: (f.row - b.minRow) * 16, color: nil)
+        }
         return canvas.cgImage()
     }
 

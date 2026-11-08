@@ -8,6 +8,9 @@ struct AgentOfficePage: View {
     /// Demo açıkken sahte oturumlar (paylaşılan `AgentMonitorModel`'e yazılmaz: menü çubuğu/panel sayıları etkilenmez).
     @State private var demoSessions: [AgentSession]?
     @State private var demoTask: Task<Void, Never>?
+    @State private var demoRunning = false
+    /// Odaklanılan oda (oturum kimliği); nil: hepsi görünür.
+    @State private var selectedRoom: String?
 
     var body: some View {
         let sessions = demoSessions ?? model.agents.monitor.state.orderedSessions
@@ -18,10 +21,14 @@ struct AgentOfficePage: View {
                         let working = sessions.reduce(0) { $0 + $1.workingCount }
                         Text("\(working) çalışan ajan · \(sessions.count) oturum").font(.callout).foregroundStyle(.secondary)
                     }
+                    if selectedRoom != nil {
+                        Button("Hepsini göster", systemImage: "rectangle.grid.2x2") { selectedRoom = nil }
+                            .help("Odadan çık, tüm odaları göster (Esc)")
+                    }
                     demoMenu
                 }
             }
-            OfficeSceneView(members: OfficeMember.members(from: sessions))
+            OfficeSceneView(members: OfficeMember.members(from: sessions), selectedRoom: $selectedRoom)
                 .clipShape(.rect(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.08)))
                 .frame(minHeight: 360)
@@ -34,8 +41,10 @@ struct AgentOfficePage: View {
 
     private var demoMenu: some View {
         Menu {
-            if demoTask == nil {
+            if !demoRunning {
                 Button("Demo'yu başlat", systemImage: "play.fill") { startDemo() }
+                Button("Kalabalık demo (10 oturum × 10 alt ajan)", systemImage: "person.3.fill") { showStatic(OfficeDemo.crowd()) }
+                Button("Tek oturum demo", systemImage: "person.fill") { showStatic(OfficeDemo.single()) }
             } else {
                 Button("Demo'yu durdur", systemImage: "stop.fill") { stopDemo() }
             }
@@ -65,8 +74,16 @@ struct AgentOfficePage: View {
         .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 10))
     }
 
+    /// Tek seferlik sahte oturum listesi (zaman çizelgesi yok: sahne durağan kalır).
+    private func showStatic(_ sessions: [AgentSession]) {
+        stopDemo()
+        demoRunning = true
+        demoSessions = sessions
+    }
+
     private func startDemo() {
         stopDemo()
+        demoRunning = true
         demoTask = Task {
             let steps = OfficeDemo.steps()
             demoSessions = steps[0]
@@ -83,6 +100,7 @@ struct AgentOfficePage: View {
     private func stopDemo() {
         demoTask?.cancel()
         demoTask = nil
+        demoRunning = false
         demoSessions = nil
     }
 }

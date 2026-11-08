@@ -21,6 +21,28 @@ final class OfficeHostView: SKView {
         onVisibilityChange?()
     }
 
+    // Fare: tıklama (oda seç), sürükleme ve tekerlek (kaydırma), Esc (seçimi kaldır). Olaylar doğrudan sahneye gider.
+    private var officeScene: OfficeScene? { scene as? OfficeScene }
+    override var acceptsFirstResponder: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        officeScene?.pointerDown(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseDragged(with event: NSEvent) { officeScene?.pointerDragged(to: convert(event.locationInWindow, from: nil)) }
+    override func mouseUp(with event: NSEvent) { officeScene?.pointerUp(at: convert(event.locationInWindow, from: nil)) }
+
+    override func scrollWheel(with event: NSEvent) {
+        // Fare tekerleği (kesikli) satır birimindedir: piksele çevir.
+        let k: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+        officeScene?.scroll(deltaX: event.scrollingDeltaX * k, deltaY: event.scrollingDeltaY * k)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53, let officeScene { officeScene.escape() } else { super.keyDown(with: event) }
+    }
+
     override func viewDidHide() { super.viewDidHide(); onVisibilityChange?() }
     override func viewDidUnhide() { super.viewDidUnhide(); onVisibilityChange?() }
 
@@ -35,6 +57,8 @@ final class OfficeHostView: SKView {
 /// SwiftUI köprüsü: üyeler değişince yalnızca sahneye uygulanır. Duraklatma kuralı: pencere görünür VE sahnede animasyon var.
 struct OfficeSceneView: NSViewRepresentable {
     let members: [OfficeMember]
+    /// Odaklanılan oda (tıklama/Esc sahneden, "Hepsini göster" sayfadan değiştirir).
+    @Binding var selectedRoom: String?
 
     @MainActor
     final class Coordinator {
@@ -43,6 +67,9 @@ struct OfficeSceneView: NSViewRepresentable {
         var wanderTimer: Timer?
         var pauseTask: Task<Void, Never>?
         weak var view: OfficeHostView?
+        var setSelection: (String?) -> Void = { _ in }
+        /// Sahne ile bağlama son eşitlenen odak (sahnenin eşzamansız bildirimi güncellemeyle yarışmasın).
+        var knownSelection: String?
 
         /// SKView'i ayarlar: 12 fps; sahne durağansa (ya da pencere görünmüyorsa) duraklatılır.
         func refreshRunState() {
@@ -89,6 +116,8 @@ struct OfficeSceneView: NSViewRepresentable {
             view?.isPaused = true
             view?.presentScene(nil)
             scene?.onAnimationStateChange = nil
+            scene?.onActivity = nil
+            scene?.onSelectionChange = nil
             scene = nil
         }
     }
@@ -104,7 +133,11 @@ struct OfficeSceneView: NSViewRepresentable {
         guard let assets = OfficeAssets.shared else { return view }
         let scene = OfficeScene(assets: assets, size: view.bounds.size)
         let coordinator = context.coordinator
+        let selection = $selectedRoom
         scene.onAnimationStateChange = { [weak coordinator] _ in coordinator?.refreshRunState() }
+        scene.onActivity = { [weak coordinator] in coordinator?.refreshRunState() }
+        scene.onSelectionChange = { [weak coordinator] id in coordinator?.knownSelection = id; coordinator?.setSelection(id) }
+        coordinator.setSelection = { id in DispatchQueue.main.async { selection.wrappedValue = id } }
         coordinator.scene = scene
         view.onVisibilityChange = { [weak coordinator] in coordinator?.refreshRunState() }
         view.presentScene(scene)
@@ -116,7 +149,15 @@ struct OfficeSceneView: NSViewRepresentable {
 
     func updateNSView(_ view: OfficeHostView, context: Context) {
         let c = context.coordinator
-        guard let scene = c.scene, c.lastMembers != members else { return }
+        guard let scene = c.scene else { return }
+        let selection = $selectedRoom
+        c.setSelection = { id in DispatchQueue.main.async { selection.wrappedValue = id } }
+        if c.knownSelection != selectedRoom {
+            c.knownSelection = selectedRoom
+            scene.select(selectedRoom, animated: view.isReallyVisible)
+            c.refreshRunState()
+        }
+        guard c.lastMembers != members else { return }
         c.lastMembers = members
         scene.apply(members: members, animated: view.isReallyVisible)
         c.refreshRunState()

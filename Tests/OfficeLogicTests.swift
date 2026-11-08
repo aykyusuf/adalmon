@@ -334,20 +334,26 @@ final class OfficeLogicTests: XCTestCase {
         var changes: [Bool] = []
         scene.onAnimationStateChange = { changes.append($0) }
         XCTAssertFalse(scene.isAnimating, "ajan yokken animasyon yok")
-        XCTAssertEqual(scene.zoom, 3)
+        XCTAssertEqual(scene.roomCount, 1, "ajan yokken tek boş oda")
+        XCTAssertEqual(scene.room(OfficeRoomPlanner.emptyRoomID)?.tier, .medium)
+        let emptyZoom = OfficeCamera.fitZoom(view: CGSize(width: 1000, height: 640), content: scene.arrangement.contentSize)
+        XCTAssertEqual(scene.zoom, emptyZoom)
         scene.apply(members: [member("s1", status: .idle), member("s2", status: .done)], animated: false)
         XCTAssertEqual(scene.actorCount, 2)
+        XCTAssertEqual(scene.roomCount, 2, "oturum başına oda")
         XCTAssertFalse(scene.isAnimating, "hepsi boşta/bitti: durağan, ev sahibi duraklatabilir")
         scene.apply(members: [member("s1", status: .thinking), member("s2", status: .done)], animated: false)
         XCTAssertTrue(scene.isAnimating)
         scene.apply(members: [member("s1", status: .waitingPermission)], animated: false)
         XCTAssertEqual(scene.memberIDs, ["s1"], "kaybolan üye sahneden kalktı")
+        XCTAssertEqual(scene.roomCount, 1)
         XCTAssertTrue(scene.isAnimating, "izin balonu hareketli")
         scene.apply(members: [], animated: false)
         XCTAssertFalse(scene.isAnimating)
         XCTAssertEqual(changes, [true, false])
         scene.size = CGSize(width: 700, height: 460)
-        XCTAssertEqual(scene.zoom, 2)
+        XCTAssertEqual(scene.zoom, OfficeCamera.fitZoom(view: CGSize(width: 700, height: 460), content: scene.arrangement.contentSize),
+                       "yeniden boyutlandırmada uyum zoom'u yeniden hesaplanır")
     }
 
     func testAgentOfficeSectionWired() {

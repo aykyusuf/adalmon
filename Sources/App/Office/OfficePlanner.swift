@@ -238,6 +238,29 @@ enum OfficeDemo {
         return steps
     }
 
+    /// Kalabalık demo: 10 oturum × (1 ana + 10 alt ajan), model ve durum karışımı. En yeni üstte.
+    static func crowd(now: Date = .now) -> [AgentSession] {
+        let models = ["claude-opus-4-8", "claude-sonnet-5-5", "claude-haiku-4-5", "claude-fable-1"]
+        let statuses: [AgentStatus] = [.thinking, .tool("Edit"), .tool("Bash"), .waitingPermission, .idle, .tool("Read"), .idle, .thinking]
+        let names = ["adalmon", "api-sunucu", "web-site", "mobil-app", "veri-boru", "docs", "ml-egitim", "altyapi", "test-otomasyon", "tasarim-sistemi"]
+        let types = ["Explore", "Plan", "general-purpose", "code-reviewer", "Bash", "test-runner", "researcher", "refactor", "docs-writer", "linter"]
+        return (0..<10).map { i in
+            let subs = (0..<10).map { j in
+                AgentSubagent(agentID: "c\(i)-\(j)", agentType: types[(i + j) % types.count], model: models[(i * 3 + j) % models.count], status: statuses[(i + j * 3) % statuses.count])
+            }
+            return AgentSession(id: "crowd\(i)", project: names[i], model: models[i % models.count], status: statuses[i % statuses.count],
+                                startedAt: now.addingTimeInterval(-Double((10 - i) * 60)), lastEventAt: now, subagents: subs)
+        }.reversed()
+    }
+
+    /// Tek oturum demo: bir ana oturum ve birkaç alt ajan.
+    static func single(now: Date = .now) -> [AgentSession] {
+        [AgentSession(id: "single", project: "adalmon", model: "claude-opus-4-8", status: .tool("Edit"), startedAt: now.addingTimeInterval(-300), lastEventAt: now,
+                      subagents: [AgentSubagent(agentID: "s1", agentType: "Explore", model: "claude-haiku-4-5", status: .tool("Grep")),
+                                  AgentSubagent(agentID: "s2", agentType: "general-purpose", model: "claude-sonnet-5-5", status: .thinking),
+                                  AgentSubagent(agentID: "s3", agentType: "Plan", model: "claude-opus-4-8", status: .waitingPermission)])]
+    }
+
     /// Bir adım için tek anlık "ortalama sahne": önizleme testi ve statik demo.
     static var showcase: [AgentSession] { steps()[4] }
 }
