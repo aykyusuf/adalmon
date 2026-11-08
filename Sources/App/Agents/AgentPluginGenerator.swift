@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// `~/Library/Application Support/Adalmon/ClaudePlugin/` altında yerel marketplace + plugin üretir.
@@ -8,7 +9,14 @@ struct AgentPluginGenerator: Sendable {
     static let marketplaceName = "adalmon-local"
     static let pluginName = "adalmon-agents"
     static let pluginID = "adalmon-agents@adalmon-local"
-    static let version = "1.0.0"
+    /// Betikler her değiştiğinde artırılır: Claude plugin'i kendi önbelleğine kopyalar ve yalnızca `version` değişince yeniler.
+    /// `AgentPluginTests.testScriptDigestPinsVersion` betik özetini bu sürüme kilitler (sürümsüz betik değişikliği testi kırar).
+    static let version = "1.2.0"
+    /// Her iki betiğin birleşik SHA-256 özeti (ilk 16 hex); yalnızca sürüm kilidi testi içindir.
+    static var scriptsDigest: String {
+        let data = Data((AgentPluginScripts.python + "\n--\n" + AgentPluginScripts.shell).utf8)
+        return SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
     static let hookEvents = AgentEvent.Name.allCases.map(\.rawValue)
 
     var root: URL

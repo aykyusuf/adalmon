@@ -6,8 +6,8 @@ final class MainWindowPagesTests: XCTestCase {
     // MARK: Bölümler
 
     func testSectionOrderAndShortcuts() {
-        XCTAssertEqual(MainSection.pages, [.overview, .network, .history, .mobile, .rules, .processes, .battery, .wallpaper])
-        XCTAssertEqual(MainSection.pages.compactMap(\.shortcutKey), ["1", "2", "3", "4", "5", "6", "7", "8"])
+        XCTAssertEqual(MainSection.pages, [.overview, .network, .history, .mobile, .rules, .processes, .battery, .wallpaper, .agentOffice])
+        XCTAssertEqual(MainSection.pages.compactMap(\.shortcutKey), ["1", "2", "3", "4", "5", "6", "7", "8", "9"])
         XCTAssertNil(MainSection.settings(.general).shortcutKey)
     }
 

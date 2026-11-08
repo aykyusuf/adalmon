@@ -103,6 +103,10 @@ struct AgentPluginInstaller: Sendable {
         ["claude plugin marketplace add \"\(generator.root.path)\"", "claude plugin install \(AgentPluginGenerator.pluginID)"]
     }
 
+    var manualUpdateCommands: [String] {
+        ["claude plugin marketplace update \(AgentPluginGenerator.marketplaceName)", "claude plugin update \(AgentPluginGenerator.pluginID)"]
+    }
+
     var manualUninstallCommands: [String] {
         ["claude plugin uninstall \(AgentPluginGenerator.pluginID)", "claude plugin marketplace remove \(AgentPluginGenerator.marketplaceName)"]
     }
@@ -120,6 +124,20 @@ struct AgentPluginInstaller: Sendable {
         if install.status == -2 { throw InstallError.timedOut(step: "Plugin kurulumu") }
         guard install.succeeded else {
             throw InstallError.commandFailed(step: "Plugin kurulumu", output: add.succeeded ? install.output : add.output + "\n" + install.output)
+        }
+    }
+
+    /// Güncel betikleri yazar, marketplace kataloğunu tazeler ve kurulu plugin'i günceller (kaldırıp yeniden kurmaz;
+    /// `claude plugin update`: yeni sürüm önbelleğe alınır, açık oturumlar yeniden başlayınca uygular).
+    func update(port: UInt16, token: String) async throws {
+        do { try generator.write(port: port, token: token) } catch { throw InstallError.writeFailed(error.localizedDescription) }
+        guard let cli = cliPath() else { throw InstallError.cliNotFound }
+        let market = await runner.run(cli, ["plugin", "marketplace", "update", AgentPluginGenerator.marketplaceName], timeout: Self.commandTimeout)
+        if market.status == -2 { throw InstallError.timedOut(step: "Marketplace güncelleme") }
+        let update = await runner.run(cli, ["plugin", "update", AgentPluginGenerator.pluginID], timeout: Self.commandTimeout)
+        if update.status == -2 { throw InstallError.timedOut(step: "Plugin güncelleme") }
+        guard update.succeeded else {
+            throw InstallError.commandFailed(step: "Plugin güncelleme", output: market.succeeded ? update.output : market.output + "\n" + update.output)
         }
     }
 
@@ -143,6 +161,21 @@ struct AgentPluginInstaller: Sendable {
         let result = await runner.run(cli, ["plugin", "list"], timeout: Self.listTimeout)
         guard result.succeeded else { return .unknown }
         return Self.isInstalled(listOutput: result.output) ? .installed : .notInstalled
+    }
+
+    /// Kurulu plugin'in sürümü (`claude plugin list --json`); kurulu değilse ya da okunamazsa nil.
+    func installedVersion() async -> String? {
+        guard let cli = cliPath() else { return nil }
+        let result = await runner.run(cli, ["plugin", "list", "--json"], timeout: Self.listTimeout)
+        guard result.succeeded else { return nil }
+        return Self.installedVersion(listJSON: result.output)
+    }
+
+    static func installedVersion(listJSON: String) -> String? {
+        guard let start = listJSON.firstIndex(of: "["), let end = listJSON.lastIndex(of: "]"), start < end,
+              let items = try? JSONSerialization.jsonObject(with: Data(listJSON[start...end].utf8)) as? [[String: Any]]
+        else { return nil }
+        return items.first { $0["id"] as? String == AgentPluginGenerator.pluginID }?["version"] as? String
     }
 
     static func isInstalled(listOutput: String) -> Bool { listOutput.contains(AgentPluginGenerator.pluginID) }

@@ -6,10 +6,10 @@ final class AgentStateTests: XCTestCase {
 
     private func ev(_ name: AgentEvent.Name, session: String = "s1", at: TimeInterval = 0, agentID: String? = nil, agentType: String? = nil,
                     tool: String? = nil, model: String? = nil, notification: String? = nil, to: String? = nil,
-                    resolvedModel: String? = nil, resolvedAgent: String? = nil) -> (AgentEvent, Date) {
+                    resolvedModel: String? = nil, resolvedAgent: String? = nil, title: String? = nil, pid: Int32? = nil) -> (AgentEvent, Date) {
         (AgentEvent(event: name.rawValue, sessionID: session, agentID: agentID, agentType: agentType, toolName: tool, model: model,
                     toModel: to, notificationType: notification, project: "Adalmon", resolvedModel: resolvedModel,
-                    resolvedAgentID: resolvedAgent), t0.addingTimeInterval(at))
+                    resolvedAgentID: resolvedAgent, sessionTitle: title, pid: pid), t0.addingTimeInterval(at))
     }
 
     private func run(_ events: [(AgentEvent, Date)]) -> AgentState {
@@ -37,6 +37,40 @@ final class AgentStateTests: XCTestCase {
         XCTAssertEqual(step(ev(.preToolUse, at: 13, tool: "Bash")), .ended, "kapanan oturum geç gelen olayla canlanmaz")
         XCTAssertEqual(state.sessions["s1"]?.project, "Adalmon")
         XCTAssertEqual(state.sessions["s1"]?.badge, .opus)
+    }
+
+    func testSessionTitleUpdatesDisplayName() {
+        var state = AgentState()
+        state.apply(ev(.sessionStart).0, now: t0)
+        XCTAssertNil(state.sessions["s1"]?.title)
+        XCTAssertEqual(state.sessions["s1"]?.displayName, "Adalmon", "başlık yoksa proje adı")
+        XCTAssertNil(state.sessions["s1"]?.secondaryName)
+
+        state.apply(ev(.userPromptSubmit, at: 1, title: "Ajan paneli").0, now: t0.addingTimeInterval(1))
+        XCTAssertEqual(state.sessions["s1"]?.displayName, "Ajan paneli")
+        XCTAssertEqual(state.sessions["s1"]?.secondaryName, "Adalmon")
+
+        state.apply(ev(.preToolUse, at: 2, tool: "Bash").0, now: t0.addingTimeInterval(2))
+        XCTAssertEqual(state.sessions["s1"]?.displayName, "Ajan paneli", "başlıksız olay mevcut adı korur")
+        state.apply(ev(.userPromptSubmit, at: 3, title: "   ").0, now: t0.addingTimeInterval(3))
+        XCTAssertEqual(state.sessions["s1"]?.displayName, "Ajan paneli", "boş başlık mevcut adı silmez")
+        state.apply(ev(.userPromptSubmit, at: 4, title: "Yeni ad").0, now: t0.addingTimeInterval(4))
+        XCTAssertEqual(state.sessions["s1"]?.displayName, "Yeni ad", "/rename sonrası ad güncellenir")
+
+        // Oturum ortasında açılan Adalmon: ilk olaydaki başlık oturumu oluştururken uygulanır.
+        state.apply(ev(.notification, session: "s2", title: "Ortadan").0, now: t0)
+        XCTAssertEqual(state.sessions["s2"]?.displayName, "Ortadan")
+    }
+
+    func testEventSanitizesTitleAndIgnoresContentKeys() throws {
+        let long = String(repeating: "ş", count: 500)
+        let body = #"{"event":"SessionStart","session_id":"s","session_title":"a\u0001b\nc  d","prompt":"SECRET"}"#
+        let event = try XCTUnwrap(AgentEvent(json: Data(body.utf8)))
+        XCTAssertEqual(event.sessionTitle, "a b c d")
+        XCTAssertEqual(AgentEvent(event: "Stop", sessionID: "s", sessionTitle: long).sessionTitle?.count, AgentEvent.maxValueLength)
+        XCTAssertNil(AgentEvent(event: "Stop", sessionID: "s", sessionTitle: " \n ").sessionTitle)
+        XCTAssertTrue(AgentEvent.allowedKeys.contains("session_title"))
+        XCTAssertFalse(AgentEvent.allowedKeys.contains("prompt"))
     }
 
     func testSubagentMatchingByAgentID() {
@@ -118,14 +152,168 @@ final class AgentStateTests: XCTestCase {
     }
 
     func testStalePruneAndEndedLinger() {
-        var state = run([ev(.sessionStart, session: "a"), ev(.sessionStart, session: "b", at: 100), ev(.sessionEnd, session: "b", at: 110)])
+        // "a" çalışıyor (30 dk), "b" kapandı (60 sn).
+        var state = run([ev(.sessionStart, session: "a"), ev(.userPromptSubmit, session: "a", at: 1),
+                         ev(.sessionStart, session: "b", at: 100), ev(.sessionEnd, session: "b", at: 110)])
         XCTAssertEqual(state.nextPruneDate(), t0.addingTimeInterval(110 + AgentState.endedLinger))
         XCTAssertTrue(state.prune(now: t0.addingTimeInterval(120)).isEmpty)
         XCTAssertEqual(state.prune(now: t0.addingTimeInterval(171)), ["b"], "kapanan oturum 60 sn sonra düşer")
-        XCTAssertTrue(state.prune(now: t0.addingTimeInterval(AgentState.staleAfter - 1)).isEmpty)
-        XCTAssertEqual(state.prune(now: t0.addingTimeInterval(AgentState.staleAfter)), ["a"], "30 dk olaysız oturum bayat sayılıp düşer")
+        XCTAssertTrue(state.prune(now: t0.addingTimeInterval(1 + AgentState.staleAfter - 1)).isEmpty)
+        XCTAssertEqual(state.prune(now: t0.addingTimeInterval(1 + AgentState.staleAfter)), ["a"], "30 dk olaysız çalışan oturum düşer")
         XCTAssertTrue(state.isEmpty)
         XCTAssertNil(state.nextPruneDate())
+    }
+
+    func testRestingSessionsWithoutPIDGoStaleAfterTenMinutes() {
+        var state = run([ev(.sessionStart, session: "idle"), ev(.sessionStart, session: "done"), ev(.stop, session: "done", at: 1),
+                         ev(.sessionStart, session: "wait"), ev(.permissionRequest, session: "wait", at: 1),
+                         ev(.sessionStart, session: "tool"), ev(.preToolUse, session: "tool", at: 1, tool: "Bash")])
+        XCTAssertEqual(state.nextPruneDate(), t0.addingTimeInterval(AgentState.restingStaleAfter))
+        XCTAssertTrue(state.prune(now: t0.addingTimeInterval(AgentState.restingStaleAfter - 1)).isEmpty)
+        XCTAssertEqual(Set(state.prune(now: t0.addingTimeInterval(AgentState.restingStaleAfter + 1))), ["idle", "done"],
+                       "bitti/boşta 10 dk; izin bekleyen ve çalışan 30 dk")
+        XCTAssertEqual(Set(state.prune(now: t0.addingTimeInterval(AgentState.staleAfter + 1))), ["wait", "tool"])
+    }
+
+    func testSessionWithKnownPIDNeverGoesStale() {
+        var state = run([ev(.sessionStart, pid: 4242), ev(.stop, at: 1, pid: 4242)])
+        XCTAssertEqual(state.sessions["s1"]?.pid, 4242)
+        XCTAssertTrue(state.prune(now: t0.addingTimeInterval(24 * 3600)).isEmpty, "pid'li canlı oturum olaysız da düşmez")
+        XCTAssertNil(state.nextPruneDate(), "zamanlayıcı gerekmez; canlılık yoklaması kapatır")
+        state.apply(ev(.sessionEnd, at: 5, pid: 4242).0, now: t0.addingTimeInterval(5))
+        XCTAssertEqual(state.prune(now: t0.addingTimeInterval(66)), ["s1"], "SessionEnd yine 60 sn sonra düşürür")
+    }
+
+    // MARK: pid ve süreç canlılığı
+
+    func testPIDFieldIsRecordedAndLastKnownKept() {
+        var state = run([ev(.sessionStart), ev(.userPromptSubmit, at: 1, pid: 111)])
+        XCTAssertEqual(state.sessions["s1"]?.pid, 111, "SessionStart pid'siz (eski betik/ara kabuk), sonraki olay verir")
+        state.apply(ev(.preToolUse, at: 2, tool: "Bash").0, now: t0.addingTimeInterval(2))
+        XCTAssertEqual(state.sessions["s1"]?.pid, 111, "pid'siz olay son bilineni silmez")
+        let probe = FakeProcessTable()
+        probe.set(111, .alive(startedAt: t0))
+        state.applyLiveness(using: probe, now: t0.addingTimeInterval(2))
+        XCTAssertEqual(state.sessions["s1"]?.pidStartedAt, t0)
+        state.apply(ev(.preToolUse, at: 3, tool: "Bash", pid: 111).0, now: t0.addingTimeInterval(3))
+        XCTAssertEqual(state.sessions["s1"]?.pidStartedAt, t0, "aynı pid kaydedilen başlangıcı sıfırlamaz")
+        state.apply(ev(.preToolUse, at: 4, tool: "Bash", pid: 222).0, now: t0.addingTimeInterval(4))
+        XCTAssertEqual(state.sessions["s1"]?.pid, 222)
+        XCTAssertNil(state.sessions["s1"]?.pidStartedAt, "pid değişince başlangıç yeniden kaydedilir")
+        XCTAssertEqual(run([ev(.preToolUse, session: "mid", tool: "Bash", pid: 9)]).sessions["mid"]?.pid, 9, "oturum ortasında açılan oturum da pid alır")
+    }
+
+    func testEventPIDParsingIsStrict() throws {
+        func pid(_ raw: String) throws -> Int32? {
+            try XCTUnwrap(AgentEvent(json: Data(#"{"event":"Stop","session_id":"s","pid":\#(raw)}"#.utf8))).pid
+        }
+        XCTAssertEqual(try pid("12345"), 12345)
+        for bad in ["\"12345\"", "1", "0", "-7", "12.5", "true", "99999999999", "null", "[1]"] { XCTAssertNil(try pid(bad), bad) }
+        XCTAssertNil(AgentEvent(event: "Stop", sessionID: "s", pid: 1).pid)
+        XCTAssertEqual(AgentEvent(event: "Stop", sessionID: "s", pid: 2).pid, 2)
+    }
+
+    func testDeadProcessClosesSessionAndSubagents() {
+        let probe = FakeProcessTable()
+        var state = run([ev(.sessionStart, pid: 100), ev(.userPromptSubmit, at: 1, pid: 100),
+                         ev(.subagentStart, at: 2, agentID: "a1", agentType: "Explore"), ev(.sessionStart, session: "other", pid: 200)])
+        probe.set(100, .alive(startedAt: t0.addingTimeInterval(-50)))
+        probe.set(200, .alive(startedAt: t0.addingTimeInterval(-50)))
+        XCTAssertTrue(state.applyLiveness(using: probe, now: t0.addingTimeInterval(10)).isEmpty)
+        XCTAssertEqual(state.sessions["s1"]?.status, .thinking)
+        probe.set(100, .dead)
+        let t = t0.addingTimeInterval(20)
+        XCTAssertEqual(state.applyLiveness(using: probe, now: t), ["s1"])
+        XCTAssertEqual(state.sessions["s1"]?.status, .ended)
+        XCTAssertEqual(state.sessions["s1"]?.subagents.map(\.status), [.ended])
+        XCTAssertEqual(state.sessions["other"]?.status, .idle, "diğer oturum etkilenmez")
+        XCTAssertEqual(state.workingAgentCount, 0)
+        XCTAssertEqual(state.nextPruneDate(), t.addingTimeInterval(AgentState.exitedLinger), "ölü süreç: 10 sn sonra düşer (olaydan bağımsız)")
+        XCTAssertTrue(state.prune(now: t.addingTimeInterval(9)).isEmpty)
+        XCTAssertEqual(state.prune(now: t.addingTimeInterval(10)), ["s1"])
+        XCTAssertTrue(state.applyLiveness(using: probe, now: t).isEmpty, "kapalı oturum bir daha yoklanmaz")
+    }
+
+    func testEPERMCountsAsAliveAndUnknownStartDoesNotClose() {
+        // Gerçek yoklama EPERM'i `.alive(startedAt: nil)` olarak bildirir; başlangıç zamanı bilinmese de oturum kapanmaz.
+        let probe = FakeProcessTable()
+        probe.set(100, .alive(startedAt: nil))
+        var state = run([ev(.sessionStart, pid: 100)])
+        for i in 1...3 { XCTAssertTrue(state.applyLiveness(using: probe, now: t0.addingTimeInterval(Double(i) * 5)).isEmpty) }
+        XCTAssertEqual(state.sessions["s1"]?.status, .idle)
+        XCTAssertNil(state.sessions["s1"]?.pidStartedAt)
+    }
+
+    func testPIDReuseClosesSession() {
+        let probe = FakeProcessTable()
+        var state = run([ev(.sessionStart, pid: 100)])
+        probe.set(100, .alive(startedAt: t0.addingTimeInterval(-300)))
+        XCTAssertTrue(state.applyLiveness(using: probe, now: t0.addingTimeInterval(5)).isEmpty)
+        XCTAssertEqual(state.sessions["s1"]?.pidStartedAt, t0.addingTimeInterval(-300), "ilk görüşte başlangıç kaydedilir")
+        probe.set(100, .alive(startedAt: t0.addingTimeInterval(40))) // aynı pid, başka süreç
+        XCTAssertEqual(state.applyLiveness(using: probe, now: t0.addingTimeInterval(50)), ["s1"])
+        XCTAssertEqual(state.sessions["s1"]?.status, .ended)
+    }
+
+    func testPIDReuseBeforeFirstProbeIsCaughtByEventTime() {
+        // Süreç, oturumun son olayından sonra doğduysa kaydedilmiş başlangıç olmasa da başka süreçtir.
+        let probe = FakeProcessTable()
+        var state = run([ev(.sessionStart, pid: 100), ev(.userPromptSubmit, at: 10, pid: 100)])
+        probe.set(100, .alive(startedAt: t0.addingTimeInterval(10 + AgentState.pidReuseSlack + 1)))
+        XCTAssertEqual(state.applyLiveness(using: probe, now: t0.addingTimeInterval(30)), ["s1"])
+        // Olaydan önce doğan süreç meşrudur.
+        var ok = run([ev(.sessionStart, pid: 100)])
+        probe.set(100, .alive(startedAt: t0.addingTimeInterval(-1)))
+        XCTAssertTrue(ok.applyLiveness(using: probe, now: t0.addingTimeInterval(30)).isEmpty)
+    }
+
+    func testSessionsWithoutPIDKeepLegacyBehaviorAndAreNeverProbed() {
+        let probe = FakeProcessTable()
+        var state = run([ev(.sessionStart), ev(.userPromptSubmit, at: 1)])
+        XCTAssertTrue(state.livenessTargets.isEmpty)
+        XCTAssertTrue(state.applyLiveness(using: probe, now: t0.addingTimeInterval(5)).isEmpty)
+        XCTAssertEqual(probe.callCount, 0)
+        XCTAssertEqual(state.prune(now: t0.addingTimeInterval(1 + AgentState.staleAfter)), ["s1"], "eski 30 dk bayatlama sürer")
+    }
+
+    func testSystemProbeSeesLiveAndDeadProcesses() throws {
+        let probe = SystemProcessProbe()
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard case .alive(let started) = probe.probe(pid: me) else { return XCTFail("kendi süreç yaşıyor olmalı") }
+        let startedAt = try XCTUnwrap(started, "sysctl ile başlangıç zamanı okunmalı")
+        XCTAssertLessThan(startedAt, Date.now)
+        XCTAssertGreaterThan(startedAt, Date.now.addingTimeInterval(-30 * 24 * 3600))
+        XCTAssertEqual(probe.probe(pid: 1), .dead, "pid <= 1 geçersiz")
+        // Bitmiş ve toplanmış bir alt sürecin pid'i ölü görünmeli.
+        let child = Process()
+        child.executableURL = URL(filePath: "/usr/bin/true")
+        try child.run()
+        child.waitUntilExit()
+        XCTAssertEqual(probe.probe(pid: child.processIdentifier), .dead)
+        // Başka kullanıcıya (root) ait süreç: kill EPERM verir ama yoklama yaşıyor demelidir.
+        if let rootPID = Self.rootOwnedPID() {
+            XCTAssertEqual(kill(rootPID, 0), -1)
+            XCTAssertEqual(errno, EPERM)
+            XCTAssertNotEqual(probe.probe(pid: rootPID), .dead, "EPERM = yaşıyor")
+        }
+    }
+
+    /// Root'a ait, pid > 1 bir süreç (EPERM yolu için); bulunamazsa nil.
+    private static func rootOwnedPID() -> Int32? {
+        let ps = Process()
+        ps.executableURL = URL(filePath: "/bin/ps")
+        ps.arguments = ["-axo", "pid=,user="]
+        let out = Pipe()
+        ps.standardOutput = out
+        ps.standardError = FileHandle.nullDevice
+        guard (try? ps.run()) != nil else { return nil }
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        ps.waitUntilExit()
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: " ")
+            if parts.count == 2, parts[1] == "root", let pid = Int32(parts[0]), pid > 1 { return pid }
+        }
+        return nil
     }
 
     func testWorkingCountIgnoresIdleDoneEnded() {
@@ -173,5 +361,60 @@ final class AgentStateTests: XCTestCase {
         monitor.reset()
         XCTAssertEqual(monitor.summary, AgentSummary())
         XCTAssertNil(monitor.lastEventAt)
+    }
+
+    @MainActor
+    func testLivenessPollingStartsOnlyWithActivePIDSessionsAndStops() {
+        let probe = FakeProcessTable()
+        let monitor = AgentMonitorModel(probe: probe, livenessInterval: 3600)
+        XCTAssertFalse(monitor.isPollingLiveness, "oturum yokken zamanlayıcı yok")
+        monitor.ingest(ev(.sessionStart).0, now: t0)
+        XCTAssertFalse(monitor.isPollingLiveness, "pid'siz oturum için yoklama yok")
+        monitor.ingest(ev(.userPromptSubmit, session: "p", at: 1, pid: 100).0, now: t0)
+        XCTAssertTrue(monitor.isPollingLiveness)
+        probe.set(100, .alive(startedAt: t0.addingTimeInterval(-10)))
+        monitor.pollLiveness(now: t0.addingTimeInterval(5))
+        XCTAssertTrue(monitor.isPollingLiveness, "canlı: yoklama sürer")
+        XCTAssertEqual(monitor.summary, AgentSummary(working: 1, sessions: 2))
+        probe.set(100, .dead)
+        monitor.pollLiveness(now: t0.addingTimeInterval(10))
+        XCTAssertEqual(monitor.state.sessions["p"]?.status, .ended)
+        XCTAssertEqual(monitor.summary, AgentSummary(working: 0, sessions: 2))
+        XCTAssertFalse(monitor.isPollingLiveness, "kapanmamış pid'li oturum kalmadı: zamanlayıcı durur")
+        monitor.prune(now: t0.addingTimeInterval(21))
+        XCTAssertNil(monitor.state.sessions["p"], "10 sn sonra düşer")
+        monitor.ingest(ev(.stop, session: "q", pid: 300).0, now: t0.addingTimeInterval(30))
+        XCTAssertTrue(monitor.isPollingLiveness)
+        monitor.reset()
+        XCTAssertFalse(monitor.isPollingLiveness, "özellik kapanınca (reset) zamanlayıcı yok")
+    }
+
+    @MainActor
+    func testLivenessTimerFiresAndClosesDeadSession() async throws {
+        let probe = FakeProcessTable()
+        probe.set(100, .dead)
+        let monitor = AgentMonitorModel(probe: probe, livenessInterval: 0.05)
+        monitor.ingest(ev(.userPromptSubmit, pid: 100).0, now: .now)
+        XCTAssertTrue(monitor.isPollingLiveness)
+        for _ in 0..<60 where monitor.state.sessions["s1"]?.status != .ended { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(monitor.state.sessions["s1"]?.status, .ended)
+        XCTAssertFalse(monitor.isPollingLiveness)
+        monitor.reset()
+    }
+}
+
+/// Sahte süreç tablosu: kayıtsız pid = ölü.
+private final class FakeProcessTable: ProcessLivenessProbing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var table: [Int32: ProcessProbeResult] = [:]
+    private var calls = 0
+
+    func set(_ pid: Int32, _ result: ProcessProbeResult) { lock.lock(); table[pid] = result; lock.unlock() }
+    var callCount: Int { lock.lock(); defer { lock.unlock() }; return calls }
+
+    func probe(pid: Int32) -> ProcessProbeResult {
+        lock.lock(); defer { lock.unlock() }
+        calls += 1
+        return table[pid] ?? .dead
     }
 }

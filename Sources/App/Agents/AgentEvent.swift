@@ -13,7 +13,7 @@ struct AgentEvent: Equatable, Sendable {
     /// Betiğin ilettiği tüm anahtarlar; başka anahtar asla okunmaz.
     static let allowedKeys: Set<String> = [
         "event", "session_id", "agent_id", "agent_type", "tool_name", "source", "model", "from_model", "to_model",
-        "notification_type", "reason", "project", "permission_mode", "ts", "resolved_model", "resolved_agent_id",
+        "notification_type", "reason", "project", "permission_mode", "ts", "resolved_model", "resolved_agent_id", "session_title", "pid",
     ]
     static let maxValueLength = 200
 
@@ -35,13 +35,18 @@ struct AgentEvent: Equatable, Sendable {
     /// Agent/Task aracının PostToolUse yanıtından yalnızca `resolvedModel` ve `agentId`.
     var resolvedModel: String?
     var resolvedAgentID: String?
+    /// Oturum adı (`/rename` ya da otomatik başlık); kontrol karakterleri temizlenmiş, en çok `maxValueLength` karakter.
+    var sessionTitle: String?
+    /// Hook komutunun üst süreci (Claude Code); canlılık yoklaması içindir. Yalnızca doğrulanmış tamsayı (>1), yoksa nil.
+    var pid: Int32?
 
     var name: Name? { Name(rawValue: event) }
 
     init(event: String, sessionID: String, agentID: String? = nil, agentType: String? = nil, toolName: String? = nil,
          source: String? = nil, model: String? = nil, fromModel: String? = nil, toModel: String? = nil,
          notificationType: String? = nil, reason: String? = nil, project: String? = nil, permissionMode: String? = nil,
-         timestamp: Date? = nil, resolvedModel: String? = nil, resolvedAgentID: String? = nil) {
+         timestamp: Date? = nil, resolvedModel: String? = nil, resolvedAgentID: String? = nil, sessionTitle: String? = nil,
+         pid: Int32? = nil) {
         self.event = event
         self.sessionID = sessionID
         self.agentID = agentID
@@ -58,6 +63,22 @@ struct AgentEvent: Equatable, Sendable {
         self.timestamp = timestamp
         self.resolvedModel = resolvedModel
         self.resolvedAgentID = resolvedAgentID
+        self.sessionTitle = sessionTitle.flatMap(Self.cleanTitle)
+        self.pid = pid.flatMap { $0 > 1 ? $0 : nil }
+    }
+
+    /// JSON'dan süreç kimliği: yalnızca tamsayı sayı (dize/ondalık/bool değil), Int32 aralığında ve >1.
+    static func parsePID(_ value: Any?) -> Int32? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              !CFNumberIsFloatType(number), let pid = Int32(exactly: number.int64Value), pid > 1 else { return nil }
+        return pid
+    }
+
+    /// Kontrol karakterlerini boşluğa çevirir, boşlukları sadeleştirir ve kısaltır; boş kalırsa nil.
+    static func cleanTitle(_ value: String) -> String? {
+        let mapped = String(String.UnicodeScalarView(value.unicodeScalars.map { $0.properties.generalCategory == .control ? " " : $0 }))
+        let collapsed = mapped.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        return collapsed.isEmpty ? nil : String(collapsed.prefix(maxValueLength))
     }
 
     /// Güvenilmeyen JSON gövdesinden olay. `nil` = geçersiz (nesne değil, olay adı ya da oturum kimliği yok).
@@ -68,12 +89,14 @@ struct AgentEvent: Equatable, Sendable {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : String(trimmed.prefix(Self.maxValueLength))
         }
+        func allowed(_ key: String) -> Any? { Self.allowedKeys.contains(key) ? object[key] : nil }
         guard let event = string("event"), let session = string("session_id") else { return nil }
         self.init(event: event, sessionID: session, agentID: string("agent_id"), agentType: string("agent_type"),
                   toolName: string("tool_name"), source: string("source"), model: string("model"),
                   fromModel: string("from_model"), toModel: string("to_model"), notificationType: string("notification_type"),
                   reason: string("reason"), project: string("project"), permissionMode: string("permission_mode"),
                   timestamp: (object["ts"] as? Double).map { Date(timeIntervalSince1970: $0) },
-                  resolvedModel: string("resolved_model"), resolvedAgentID: string("resolved_agent_id"))
+                  resolvedModel: string("resolved_model"), resolvedAgentID: string("resolved_agent_id"),
+                  sessionTitle: object["session_title"] as? String, pid: allowed("pid").flatMap(Self.parsePID))
     }
 }

@@ -12,6 +12,8 @@ final class AgentService {
     let monitor = AgentMonitorModel()
     private(set) var listener: ListenerState = .off
     private(set) var pluginStatus: AgentPluginInstaller.PluginStatus = .unknown
+    /// Kurulu plugin'in sürümü (`claude plugin list --json`); bilinmiyorsa nil.
+    private(set) var installedVersion: String?
     private(set) var isBusy = false
     private(set) var errorMessage: String?
     /// CLI bulunamadığında gösterilecek elle komutlar.
@@ -80,6 +82,13 @@ final class AgentService {
 
     func refreshPluginStatus() async {
         pluginStatus = await installer.status()
+        installedVersion = pluginStatus == .installed ? await installer.installedVersion() : nil
+    }
+
+    /// Kurulu plugin'in betikleri Adalmon'un üretecinden eskiyse (ör. `session_title` eklenmeden önce kurulmuş).
+    var scriptsOutdated: Bool {
+        guard pluginStatus == .installed, let installedVersion else { return false }
+        return installedVersion != AgentPluginGenerator.version
     }
 
     func installPlugin() async {
@@ -97,6 +106,27 @@ final class AgentService {
         } catch let error as AgentPluginInstaller.InstallError {
             errorMessage = error.errorDescription
             if error == .cliNotFound { manualCommands = installer.manualInstallCommands }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        await refreshPluginStatus()
+    }
+
+    func updatePlugin() async {
+        guard let port, !isBusy else {
+            if !isBusy { errorMessage = "Önce \"Özelliği aç\" anahtarını açın; dinleyici çalışmıyor." }
+            return
+        }
+        isBusy = true
+        errorMessage = nil
+        manualCommands = []
+        defer { isBusy = false }
+        do {
+            try await installer.update(port: port, token: token)
+            needsNewSession = true
+        } catch let error as AgentPluginInstaller.InstallError {
+            errorMessage = error.errorDescription
+            if error == .cliNotFound { manualCommands = installer.manualUpdateCommands }
         } catch {
             errorMessage = error.localizedDescription
         }

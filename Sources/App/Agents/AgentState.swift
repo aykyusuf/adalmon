@@ -65,6 +65,19 @@ struct AgentSession: Equatable, Identifiable, Sendable {
     var startedAt: Date
     var lastEventAt: Date
     var subagents: [AgentSubagent] = []
+    /// Oturum adı (`session_title`); yoksa nil.
+    var title: String?
+    /// Claude Code sürecinin son bilinen kimliği (hook üst süreci); eski betikle kurulmuş oturumlarda nil.
+    var pid: Int32?
+    /// `pid` sürecinin ilk görüldüğündeki başlangıç zamanı; sonradan değişirse pid başka bir sürece geçmiştir.
+    var pidStartedAt: Date?
+    /// Süreç ölü bulunup kapatıldıysa o an (olay gelmeden kapandığı için `lastEventAt` yerine bu bekleme için kullanılır).
+    var exitedAt: Date?
+
+    /// Panelde ana başlık: oturum adı, yoksa proje klasörü adı.
+    var displayName: String { title ?? project }
+    /// Ana başlık oturum adıyken ikincil satırda gösterilen proje adı.
+    var secondaryName: String? { title == nil || project == "?" ? nil : project }
 
     var badge: AgentModelBadge { AgentModelBadge(modelID: model) }
 
@@ -76,10 +89,16 @@ struct AgentSession: Equatable, Identifiable, Sendable {
 /// Varsayım (DOĞRULANMADI, testle belgelendi): alt ajan olaylarındaki `session_id` üst oturumunkiyle aynıdır.
 /// Alt ajan içinden gelen araç olayları `agent_id` ile alt ajana, yoksa oturuma yazılır.
 struct AgentState: Equatable, Sendable {
-    /// Olay gelmeyen oturum bu süre sonra bayat sayılıp listeden düşer.
+    /// Pid'i bilinmeyen, çalışıyor/izin bekliyor durumundaki oturum olay gelmezse bu süre sonra bayat sayılıp düşer.
     static let staleAfter: TimeInterval = 30 * 60
+    /// Pid'i bilinmeyen, `bitti`/`boşta` durumundaki oturum için daha kısa bayatlama (SessionEnd gelmemiş olabilir).
+    static let restingStaleAfter: TimeInterval = 10 * 60
     /// Kapanan oturum listede bu kadar kalır.
     static let endedLinger: TimeInterval = 60
+    /// Süreç ölüdür diye kapatılan oturum listede bu kadar kalır.
+    static let exitedLinger: TimeInterval = 10
+    /// Süreç başlangıcı, o sürecin olayından bu kadar sonra çıkarsa pid yeniden kullanılmıştır (saat/ölçüm payı).
+    static let pidReuseSlack: TimeInterval = 2
 
     private(set) var sessions: [String: AgentSession] = [:]
     /// Agent aracının sonucu, `SubagentStart` gelmeden önce geldiyse model burada bekler.
@@ -93,25 +112,32 @@ struct AgentState: Equatable, Sendable {
 
     var isEmpty: Bool { sessions.isEmpty }
 
+    /// Canlılığı yoklanacak oturumlar: kapanmamış ve pid'i bilinen.
+    var livenessTargets: [(sessionID: String, pid: Int32)] {
+        sessions.values.compactMap { s in s.status != .ended ? s.pid.map { (s.id, $0) } : nil }
+    }
+
     @discardableResult
     mutating func apply(_ e: AgentEvent, now: Date) -> Bool {
         guard let name = e.name else { return false }
         let hadSession = sessions[e.sessionID] != nil
         if name == .sessionStart {
             sessions[e.sessionID] = AgentSession(id: e.sessionID, project: e.project ?? "?", model: e.model, status: .idle,
-                                                  startedAt: now, lastEventAt: now)
+                                                  startedAt: now, lastEventAt: now, title: e.sessionTitle, pid: e.pid)
             return true
         }
         // Adalmon oturum ortasında açıldıysa oturum ilk olayda oluşturulur.
         if !hadSession {
             if name == .sessionEnd { return false }
             sessions[e.sessionID] = AgentSession(id: e.sessionID, project: e.project ?? "?", model: e.model, status: .idle,
-                                                  startedAt: now, lastEventAt: now)
+                                                  startedAt: now, lastEventAt: now, title: e.sessionTitle, pid: e.pid)
         }
         guard var s = sessions[e.sessionID] else { return false }
         s.lastEventAt = now
         if let project = e.project, s.project == "?" { s.project = project }
         if s.model == nil, let model = e.model { s.model = model }
+        if let title = e.sessionTitle { s.title = title } // boş/yok gelirse mevcut ad kalır
+        if let pid = e.pid, pid != s.pid { s.pid = pid; s.pidStartedAt = nil } // pid yoksa son bilinen kalır
 
         switch name {
         case .sessionStart: break
@@ -166,13 +192,24 @@ struct AgentState: Equatable, Sendable {
         }
     }
 
+    /// Oturumun listeden düşeceği an; düşmeyecekse nil. Kapalı oturum: kısa bekleme. Pid'i bilinen canlı oturum bayatlamaz
+    /// (uzun düşünme/bekleme olabilir; ölürse canlılık yoklaması kapatır). Pid'siz: bitti/boşta 10 dk, çalışan 30 dk.
+    private static func dueDate(_ s: AgentSession) -> Date? {
+        if s.status == .ended {
+            return s.exitedAt.map { $0.addingTimeInterval(exitedLinger) } ?? s.lastEventAt.addingTimeInterval(endedLinger)
+        }
+        if s.pid != nil { return nil }
+        switch s.status {
+        case .idle, .done: return s.lastEventAt.addingTimeInterval(restingStaleAfter)
+        case .thinking, .tool, .waitingPermission: return s.lastEventAt.addingTimeInterval(staleAfter)
+        case .ended: return nil
+        }
+    }
+
     /// Bayat ve süresi dolan kapalı oturumları listeden düşürür; düşen kimlikleri döndürür.
     @discardableResult
     mutating func prune(now: Date) -> [String] {
-        let dropped = sessions.values.filter { s in
-            let age = now.timeIntervalSince(s.lastEventAt)
-            return s.status == .ended ? age >= Self.endedLinger : age >= Self.staleAfter
-        }.map(\.id)
+        let dropped = sessions.values.filter { s in Self.dueDate(s).map { now >= $0 } ?? false }.map(\.id)
         for id in dropped { sessions[id] = nil }
         if sessions.isEmpty { pendingSubagentModels = [:] }
         return dropped
@@ -180,6 +217,52 @@ struct AgentState: Equatable, Sendable {
 
     /// Bir sonraki budama anı (olay yoksa hiçbir zamanlayıcı kurulmaz).
     func nextPruneDate() -> Date? {
-        sessions.values.map { $0.lastEventAt.addingTimeInterval($0.status == .ended ? Self.endedLinger : Self.staleAfter) }.min()
+        sessions.values.compactMap(Self.dueDate).min()
     }
+
+    /// Pid'li oturumların süreçlerini yoklar; ölü ya da başka sürece geçmiş pid'in oturumunu (ve alt ajanlarını) kapatır.
+    /// Süreç başlangıcı ilk görüldüğünde kaydedilir; sonradan değişirse (ya da süreç, olaylarından sonra başlamışsa) pid yeniden
+    /// kullanılmıştır. Kapatılan oturum kimliklerini döndürür.
+    @discardableResult
+    mutating func applyLiveness(using probe: ProcessLivenessProbing, now: Date) -> [String] {
+        var closed: [String] = []
+        for target in livenessTargets {
+            guard var s = sessions[target.sessionID] else { continue }
+            var dead = false
+            switch probe.probe(pid: target.pid) {
+            case .dead:
+                dead = true
+            case .alive(let startedAt):
+                if let startedAt {
+                    if let known = s.pidStartedAt {
+                        dead = abs(startedAt.timeIntervalSince(known)) > 1
+                    } else if startedAt > s.lastEventAt.addingTimeInterval(Self.pidReuseSlack) {
+                        dead = true // süreç, bu pid'li son olaydan sonra doğmuş: pid yeniden kullanılmış
+                    } else {
+                        s.pidStartedAt = startedAt
+                    }
+                }
+            }
+            if dead {
+                s.status = .ended
+                for i in s.subagents.indices { s.subagents[i].status = .ended }
+                s.exitedAt = now
+                closed.append(s.id)
+            }
+            sessions[s.id] = s
+        }
+        return closed
+    }
+}
+
+/// Bir sürecin yoklama sonucu.
+enum ProcessProbeResult: Equatable, Sendable {
+    case dead
+    /// Yaşıyor; başlangıç zamanı okunabildiyse (pid yeniden kullanımını yakalamak için) verilir.
+    case alive(startedAt: Date?)
+}
+
+/// Süreç canlılığı; testlerde sahte süreç tablosu enjekte edilir.
+protocol ProcessLivenessProbing: Sendable {
+    func probe(pid: Int32) -> ProcessProbeResult
 }

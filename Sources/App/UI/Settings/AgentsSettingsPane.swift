@@ -25,11 +25,24 @@ struct AgentsSettingsPane: View {
             Section("Plugin") {
                 LabeledContent("Dinleyici", value: listenerText)
                 LabeledContent("Plugin", value: pluginText)
+                if agents.pluginStatus == .installed, let version = agents.installedVersion {
+                    LabeledContent("Betik") {
+                        if agents.scriptsOutdated {
+                            Text("Betik güncellendi: eklentiyi yeniden kur (\(version) → \(AgentPluginGenerator.version))").foregroundStyle(.orange)
+                        } else {
+                            Text("güncel (\(version))").foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 LabeledContent("Son olay") {
                     if let last = agents.monitor.lastEventAt { Text(last, style: .relative) } else { Text("henüz yok").foregroundStyle(.secondary) }
                 }
                 HStack {
                     if agents.pluginStatus == .installed {
+                        if agents.scriptsOutdated {
+                            Button("Güncelle") { Task { await agents.updatePlugin() } }
+                                .disabled(!prefs.agentsEnabled || agents.port == nil)
+                        }
                         Button("Kaldır", role: .destructive) { Task { await agents.uninstallPlugin() } }
                     } else {
                         Button("Plugin'i kur") { Task { await agents.installPlugin() } }
@@ -49,9 +62,9 @@ struct AgentsSettingsPane: View {
             }
 
             Section("Gizlilik") {
-                Text("İletilir: olay adı, oturum ve ajan kimliği, ajan türü, araç adı, model adı, bildirim türü, proje klasörünün adı (yolun son parçası), izin modu ve zaman.")
+                Text("İletilir: olay adı, oturum ve ajan kimliği, ajan türü, araç adı, model adı, bildirim türü, proje klasörünün adı (yolun son parçası), oturum adı (session_title; /rename ile verdiğiniz ya da otomatik başlık), izin modu ve zaman.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("İletilmez: istemleriniz, araç girdi ve çıktıları, Claude'un yanıtları, dosya içerikleri, transkript. Dinleyici yalnızca bu Mac'ten, rastgele bir token ile erişilebilir; özellik kapalıyken hiç çalışmaz.")
+                Text("İletilmez: istem/komut/dosya içeriği (istemleriniz, araç girdi ve çıktıları, Claude'un yanıtları, dosya içerikleri), transkript. Dinleyici yalnızca bu Mac'ten, rastgele bir token ile erişilebilir; özellik kapalıyken hiç çalışmaz.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

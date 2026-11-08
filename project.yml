@@ -21,6 +21,9 @@ targets:
       - Sources/Shared
       - Sources/WidgetShared
       - Sources/SaverShared
+      # Ajan ofisi piksel-art görselleri: klasör olarak kopyalanır (manifest.json adları çakışmasın)
+      - path: Resources/Office
+        type: folder
     info:
       path: Sources/App/Info.plist
       properties:

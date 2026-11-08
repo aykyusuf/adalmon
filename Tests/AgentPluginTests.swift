@@ -76,13 +76,21 @@ final class AgentPluginTests: XCTestCase {
      "cwd":"/Users/x/projects/MyApp/","permission_mode":"default","tool_name":"Agent","agent_id":"a1","agent_type":"Explore",
      "prompt":"SECRET-PROMPT","tool_input":{"prompt":"SECRET-INPUT","command":"SECRET-CMD"},
      "tool_response":{"agentId":"a1","resolvedModel":"claude-haiku-4-5","content":"SECRET-OUTPUT"},
-     "last_assistant_message":"SECRET-ASSISTANT","compact_summary":"SECRET-SUMMARY","model":"claude-opus-4-8"}
+     "last_assistant_message":"SECRET-ASSISTANT","compact_summary":"SECRET-SUMMARY","model":"claude-opus-4-8",
+     "session_title":"Düzelt: giriş ekranı"}
     """
 
-    private func runScript(_ interpreter: String, _ script: URL, stdin: String) throws -> [String: Any] {
+    /// `viaShell`: betik `sh -c '...; exit 0'` ara kabuğu (fork'lanan) altında çalışır; Claude'un hook'u kabukla çalıştırmasını taklit eder.
+    private func runScript(_ interpreter: String, _ script: URL, stdin: String, viaShell: Bool = false) throws -> [String: Any] {
         let process = Process()
-        process.executableURL = URL(filePath: interpreter)
-        process.arguments = (interpreter.hasSuffix("python3") ? ["-I"] : []) + [script.path, "--dry-run"]
+        let arguments = (interpreter.hasSuffix("python3") ? ["-I"] : []) + [script.path, "--dry-run"]
+        if viaShell {
+            process.executableURL = URL(filePath: "/bin/sh")
+            process.arguments = ["-c", "\"$0\" \"$@\"; exit 0", interpreter] + arguments
+        } else {
+            process.executableURL = URL(filePath: interpreter)
+            process.arguments = arguments
+        }
         let input = Pipe(), output = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -107,6 +115,7 @@ final class AgentPluginTests: XCTestCase {
         XCTAssertEqual(payload["resolved_model"] as? String, "claude-haiku-4-5", file: file, line: line)
         XCTAssertEqual(payload["resolved_agent_id"] as? String, "a1", file: file, line: line)
         XCTAssertEqual(payload["model"] as? String, "claude-opus-4-8", file: file, line: line)
+        XCTAssertEqual(payload["session_title"] as? String, "Düzelt: giriş ekranı", "oturum adı geçer (prompt geçmez)", file: file, line: line)
         XCTAssertNotNil(payload["ts"], file: file, line: line)
     }
 
@@ -122,6 +131,53 @@ final class AgentPluginTests: XCTestCase {
         let other = try runScript("/usr/bin/python3", g.pythonScriptURL, stdin: sample.replacingOccurrences(of: "\"tool_name\":\"Agent\"", with: "\"tool_name\":\"Bash\""))
         XCTAssertNil(other["resolved_model"])
         XCTAssertTrue(try runScript("/usr/bin/python3", g.pythonScriptURL, stdin: "garbage SECRET").isEmpty)
+    }
+
+    func testPythonSessionTitleSanitizing() throws {
+        guard AgentPluginGenerator.pythonAvailable() else { throw XCTSkip("/usr/bin/python3 yok") }
+        let g = generator()
+        try g.write(port: 1, token: "x")
+        func title(_ raw: String) throws -> String? {
+            let json = #"{"hook_event_name":"SessionStart","session_id":"s","session_title":"\#(raw)","prompt":"SECRET"}"#
+            return try runScript("/usr/bin/python3", g.pythonScriptURL, stdin: json)["session_title"] as? String
+        }
+        XCTAssertEqual(try title(#"a\u0001b\nc\t\u007fd"#), "a b c d", "kontrol karakterleri temizlenir")
+        XCTAssertEqual(try title(String(repeating: "x", count: 300))?.count, 200)
+        XCTAssertNil(try title(#"  \n "#), "boş ad iletilmez")
+    }
+
+    func testShellSessionTitleSanitizing() throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/plutil") else { throw XCTSkip("plutil yok") }
+        let g = generator(python: false)
+        try g.write(port: 1, token: "x")
+        func title(_ raw: String) throws -> String? {
+            let json = #"{"hook_event_name":"SessionStart","session_id":"s","session_title":"\#(raw)","prompt":"SECRET"}"#
+            return try runScript("/bin/sh", g.shellScriptURL, stdin: json)["session_title"] as? String
+        }
+        XCTAssertEqual(try title(#"a\u0001b\"q\\r"#), "abqr", "kontrol, tırnak ve ters eğik çizgi atılır")
+        XCTAssertEqual(try title(String(repeating: "ş", count: 300))?.count, 200)
+        XCTAssertNil(try title(#"\n"#))
+    }
+
+    /// Hook komutunun üst süreci (burada test süreci) `pid` olarak geçer; ara kabuk (sh -c) atlanır; prompt yine geçmez.
+    func testPythonForwardsParentPIDSkippingShells() throws {
+        guard AgentPluginGenerator.pythonAvailable() else { throw XCTSkip("/usr/bin/python3 yok") }
+        let g = generator()
+        try g.write(port: 1, token: "x")
+        let me = Int(ProcessInfo.processInfo.processIdentifier)
+        XCTAssertEqual(try runScript("/usr/bin/python3", g.pythonScriptURL, stdin: sample)["pid"] as? Int, me)
+        XCTAssertEqual(try runScript("/usr/bin/python3", g.pythonScriptURL, stdin: sample, viaShell: true)["pid"] as? Int, me,
+                       "ara kabuk atlanıp Claude (burada test) süreci seçilir")
+        XCTAssertTrue(AgentEvent.allowedKeys.contains("pid"))
+    }
+
+    func testShellForwardsParentPIDSkippingShells() throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/plutil") else { throw XCTSkip("plutil yok") }
+        let g = generator(python: false)
+        try g.write(port: 1, token: "x")
+        let me = Int(ProcessInfo.processInfo.processIdentifier)
+        XCTAssertEqual(try runScript("/bin/sh", g.shellScriptURL, stdin: sample)["pid"] as? Int, me)
+        XCTAssertEqual(try runScript("/bin/sh", g.shellScriptURL, stdin: sample, viaShell: true)["pid"] as? Int, me)
     }
 
     func testPythonScriptExitsZeroWhenNoListener() throws {
@@ -149,6 +205,68 @@ final class AgentPluginTests: XCTestCase {
         try g.write(port: 1, token: "x")
         let payload = try runScript("/bin/sh", g.shellScriptURL, stdin: sample)
         assertFiltered(payload)
+    }
+
+    // MARK: Sürüm kilidi
+
+    /// Betikler değişince özet değişir ve bu test kırılır: `AgentPluginGenerator.version` artırılıp buradaki eşleme güncellenmeli
+    /// (aksi halde kullanıcıdaki Claude önbelleği eski betiği çalıştırmaya devam eder).
+    func testScriptDigestPinsVersion() {
+        let pinned = ["1.2.0": "33a9c8e5fec09ed7"]
+        XCTAssertEqual(pinned[AgentPluginGenerator.version], AgentPluginGenerator.scriptsDigest,
+                       "betik değişti: version'ı artır ve özeti güncelle (\(AgentPluginGenerator.scriptsDigest))")
+        let g = generator()
+        XCTAssertEqual(g.manifestJSON["version"] as? String, AgentPluginGenerator.version)
+        XCTAssertEqual((g.marketplaceJSON["plugins"] as? [[String: Any]])?.first?["version"] as? String, AgentPluginGenerator.version)
+    }
+
+    func testInstalledVersionParsingFromListJSON() {
+        let list = """
+        [{"id":"other@x","version":"9.9.9"},{"id":"adalmon-agents@adalmon-local","version":"1.0.0","enabled":true}]
+        """
+        XCTAssertEqual(AgentPluginInstaller.installedVersion(listJSON: list), "1.0.0")
+        XCTAssertNil(AgentPluginInstaller.installedVersion(listJSON: #"[{"id":"other@x","version":"1"}]"#))
+        XCTAssertNil(AgentPluginInstaller.installedVersion(listJSON: "not json"))
+        XCTAssertNil(AgentPluginInstaller.installedVersion(listJSON: ""))
+    }
+
+    func testUpdateCommandSequenceWritesFilesFirst() async throws {
+        let runner = FakeRunner()
+        let sut = installer(runner: runner)
+        try await sut.update(port: 50124, token: "tok")
+        XCTAssertEqual(runner.calls, [
+            ["/fake/claude", "plugin", "marketplace", "update", "adalmon-local"],
+            ["/fake/claude", "plugin", "update", "adalmon-agents@adalmon-local"],
+        ])
+        XCTAssertEqual(sut.generator.readConfig()?.port, 50124)
+        let script = try String(contentsOf: sut.generator.pythonScriptURL, encoding: .utf8)
+        XCTAssertTrue(script.contains("session_title"), "güncel betik komutlardan önce diske yazılır")
+        XCTAssertEqual(sut.manualUpdateCommands.count, 2)
+    }
+
+    func testUpdateFailureAndMissingCLI() async throws {
+        let failing = installer(runner: FakeRunner(results: ["update": CommandResult(status: 1, output: "nope")]))
+        do {
+            try await failing.update(port: 1, token: "t")
+            XCTFail("hata beklenirdi")
+        } catch let error as AgentPluginInstaller.InstallError {
+            XCTAssertEqual(error, .commandFailed(step: "Plugin güncelleme", output: "nope\nnope"))
+        }
+        let runner = FakeRunner()
+        do {
+            try await installer(runner: runner, cli: nil).update(port: 1, token: "t")
+            XCTFail("hata beklenirdi")
+        } catch let error as AgentPluginInstaller.InstallError {
+            XCTAssertEqual(error, .cliNotFound)
+        }
+        XCTAssertTrue(runner.calls.isEmpty)
+    }
+
+    func testInstalledVersionUsesListJSON() async {
+        let runner = FakeRunner(results: ["list": CommandResult(status: 0, output: #"[{"id":"adalmon-agents@adalmon-local","version":"1.0.0"}]"#)])
+        let version = await installer(runner: runner).installedVersion()
+        XCTAssertEqual(version, "1.0.0")
+        XCTAssertEqual(runner.calls, [["/fake/claude", "plugin", "list", "--json"]])
     }
 
     // MARK: Kurulum (sahte çalıştırıcı)

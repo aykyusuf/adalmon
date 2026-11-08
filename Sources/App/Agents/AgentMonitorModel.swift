@@ -9,6 +9,8 @@ struct AgentSummary: Equatable, Sendable {
 
 /// Canlı Claude oturum ağacı. Olay gelince saf `AgentState` güncellenir; zamanlayıcı yalnızca oturum varken, bir sonraki
 /// bayatlama anına kurulan tek seferlik bir uykudur (boşta sıfır CPU). Panel görünmüyorken hiçbir görünüm bunu okumaz.
+/// Canlılık: yalnızca kapanmamış, pid'i bilinen oturum varken tek bir tolerance'lı döngü (5 sn) süreçleri yoklar; hedef kalmayınca
+/// (ya da `reset`) durur.
 @MainActor @Observable
 final class AgentMonitorModel {
     private(set) var state = AgentState()
@@ -17,6 +19,17 @@ final class AgentMonitorModel {
     private(set) var summary = AgentSummary()
 
     @ObservationIgnored private var pruneTask: Task<Void, Never>?
+    @ObservationIgnored private var livenessTask: Task<Void, Never>?
+    @ObservationIgnored private let probe: ProcessLivenessProbing
+    @ObservationIgnored private let livenessInterval: TimeInterval
+
+    init(probe: ProcessLivenessProbing = SystemProcessProbe(), livenessInterval: TimeInterval = 5) {
+        self.probe = probe
+        self.livenessInterval = livenessInterval
+    }
+
+    /// Canlılık döngüsü çalışıyor mu (testler yaşam döngüsünü buradan doğrular).
+    var isPollingLiveness: Bool { livenessTask != nil }
 
     func ingest(_ event: AgentEvent, now: Date = .now) {
         lastEventAt = now
@@ -25,6 +38,7 @@ final class AgentMonitorModel {
         state = next
         refreshSummary()
         schedulePrune()
+        updateLivenessPolling()
     }
 
     func prune(now: Date = .now) {
@@ -32,12 +46,24 @@ final class AgentMonitorModel {
         guard !next.prune(now: now).isEmpty else { return }
         state = next
         refreshSummary()
+        updateLivenessPolling()
+    }
+
+    /// Pid'li oturumların süreçlerini bir kez yoklar; ölü bulunanlar kapanır (kısa süre sonra düşer). Zamanlayıcı bunu çağırır.
+    func pollLiveness(now: Date = .now) {
+        var next = state
+        if !next.applyLiveness(using: probe, now: now).isEmpty { state = next; refreshSummary() }
+        else if next != state { state = next } // yalnızca süreç başlangıcı kaydedildi
+        schedulePrune()
+        updateLivenessPolling()
     }
 
     /// Dinleyici kapanınca listeyi boşalt.
     func reset() {
         pruneTask?.cancel()
         pruneTask = nil
+        livenessTask?.cancel()
+        livenessTask = nil
         state = AgentState()
         lastEventAt = nil
         refreshSummary()
@@ -57,6 +83,24 @@ final class AgentMonitorModel {
             guard !Task.isCancelled, let self else { return }
             self.prune()
             self.schedulePrune()
+        }
+    }
+
+    private func updateLivenessPolling() {
+        let hasTargets = !state.livenessTargets.isEmpty
+        if !hasTargets {
+            livenessTask?.cancel()
+            livenessTask = nil
+            return
+        }
+        guard livenessTask == nil else { return }
+        let interval = livenessInterval
+        livenessTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(interval), tolerance: .seconds(interval * 0.4))
+                guard !Task.isCancelled, let self else { return }
+                self.pollLiveness()
+            }
         }
     }
 }

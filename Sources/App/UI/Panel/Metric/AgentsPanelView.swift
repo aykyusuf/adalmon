@@ -80,7 +80,7 @@ struct AgentSessionRow: View, Equatable {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Circle().fill(session.status.tint).frame(width: 8, height: 8).accessibilityHidden(true)
-                Text(session.project).font(.callout.weight(.semibold)).lineLimit(1)
+                Text(session.displayName).font(.callout.weight(.semibold)).lineLimit(1).truncationMode(.tail)
                 AgentModelBadgeView(badge: session.badge)
                 Spacer(minLength: 4)
                 Text(session.status.label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -88,6 +88,11 @@ struct AgentSessionRow: View, Equatable {
                 Text(session.startedAt, style: .timer).font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
             }
             .accessibilityElement(children: .combine)
+            // Oturum adı varsa proje klasörü ikincil satırda (küçük, soluk); yoksa proje adı zaten ana başlık.
+            if let project = session.secondaryName {
+                Text(project).font(.caption2).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+                    .padding(.leading, 14)
+            }
             ForEach(session.subagents) { sub in
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.turn.down.right").font(.caption2).foregroundStyle(.tertiary).accessibilityHidden(true)
