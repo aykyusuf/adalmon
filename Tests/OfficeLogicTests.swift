@@ -210,19 +210,6 @@ final class OfficeLogicTests: XCTestCase {
         XCTAssertEqual(q.placements["s1#b"], .seat(3), "seat 0'a en yakın boş: sütun 3 (1 ve 2 dolu)")
     }
 
-    func testOverflowGoesToLoungeThenOverflows() {
-        var a = OfficeAssigner(seats: seats(desk: 1, lounge: 1))
-        let p = a.update(members: [member("s1"), member("s2"), member("s3")])
-        XCTAssertEqual(p.placements["s1"], .seat(0))
-        XCTAssertEqual(p.placements["s2"], .seat(1), "masa dolunca salon")
-        XCTAssertEqual(p.placements["s3"], .overflow)
-        XCTAssertEqual(p.overflowCount, 1)
-        // Taşan üye sonradan boş koltuğa kavuşur.
-        let q = a.update(members: [member("s2"), member("s3")])
-        XCTAssertEqual(q.placements["s3"], .seat(0))
-        XCTAssertEqual(q.overflowCount, 0)
-    }
-
     func testMembersFromSessions() {
         let now = Date()
         let sub = AgentSubagent(agentID: "a1", agentType: "Explore", model: "claude-haiku-4-5", status: .tool("Grep"))

@@ -26,6 +26,30 @@ final class AgentWebSnapshotBuilder {
         }
     }
 
+    static func roleJSON(_ m: OfficeMember) -> [String: Any] {
+        if m.kind == .session {
+            let a = OfficeAppearance.appearance(for: m.badge)
+            return ["key": "lead", "name": "ana ajan", "tint": OfficeRoles.hex(a.tint), "accessory": OfficeWebLayout.accessoryName(a.accessory)]
+        }
+        let r = OfficeRoles.style(forAgentType: m.label)
+        return ["key": r.key, "name": r.name, "tint": r.tintHex, "accessory": r.accessory.rawValue, "small": r.small, "hoodie": r.hoodie, "known": r.known,
+                "labelColor": OfficeRoles.hex(r.labelColor)]
+    }
+
+    static func appearanceJSON(_ m: OfficeMember) -> [String: Any] {
+        let a = OfficeAppearance.appearance(for: m)
+        var out: [String: Any] = ["character": a.characterIndex, "tint": OfficeRoles.hex(a.tint), "tintBlend": a.tintBlend, "small": a.small,
+                                  "accessory": OfficeWebLayout.accessoryName(a.accessory)]
+        if let dot = a.modelDot { out["modelDot"] = OfficeRoles.hex(dot) }
+        return out
+    }
+
+    static func lightingJSON(now: Date, mode: OfficeLightingMode = OfficeLighting.storedMode(), timeZone: TimeZone = .current) -> [String: Any] {
+        ["mode": mode.rawValue, "nightStartHour": OfficeLighting.nightStartMinutes / 60, "nightStartMinute": OfficeLighting.nightStartMinutes % 60,
+         "nightEndHour": OfficeLighting.nightEndMinutes / 60, "nightEndMinute": OfficeLighting.nightEndMinutes % 60,
+         "resolvedNight": OfficeLighting.isNight(mode: mode, date: now, timeZone: timeZone), "timeZone": timeZone.identifier]
+    }
+
     /// Sıkıştırılmış tek satır JSON (SSE `data:` satırı olarak güvenli).
     func snapshot(sessions: [AgentSession], now: Date = .now) -> Data {
         let members = OfficeMember.members(from: sessions)
@@ -36,7 +60,8 @@ final class AgentWebSnapshotBuilder {
         for room in plan.rooms where !room.isPlaceholder {
             let roomMembers = members.filter { ($0.parentID ?? $0.id) == room.id }
             var seatKinds: [Int: OfficeSeat.Kind] = [:]
-            for s in seats[room.tier] ?? [] { seatKinds[s.id] = s.kind }
+            var seatByID: [Int: OfficeSeat] = [:]
+            for s in seats[room.tier] ?? [] { seatKinds[s.id] = s.kind; seatByID[s.id] = s }
             var list: [[String: Any]] = []
             for m in roomMembers {
                 var item: [String: Any] = [
@@ -44,6 +69,7 @@ final class AgentWebSnapshotBuilder {
                     "badge": m.badge.rawValue, "status": Self.statusKey(m.status), "statusLabel": m.status.label,
                     "working": m.status.isWorking,
                 ]
+                item["role"] = Self.roleJSON(m)
                 if let a = m.activity { item["activity"] = a }
                 if let t = m.target { item["target"] = t }
                 if let at = m.activityAt { item["activityAt"] = Self.ms(at) }
@@ -57,8 +83,21 @@ final class AgentWebSnapshotBuilder {
                     item["alert"] = b.bubble == .alert
                     item["pcOn"] = b.pcOn
                     item["standing"] = b.standing
+                    if let s = seatByID[id] {
+                        item["seatInfo"] = ["id": s.id, "col": s.tile.col, "row": s.tile.row, "kind": OfficeWebLayout.seatKindName(s.kind),
+                                            "facing": OfficeWebLayout.directionName(s.facing), "key": OfficeRoomNode.seatKey(s)] as [String: Any]
+                        let pc = s.kind == .executive ? OfficeComputer.executive : OfficeComputer.pick(roomID: room.id, seatID: OfficeRoomNode.seatKey(s))
+                        var look = Self.appearanceJSON(m)
+                        look["computer"] = ["kind": pc.kind.rawValue, "color": pc.color.rawValue, "name": pc.artName]
+                        item["appearance"] = look
+                    }
+                    let idleSeed = "\(room.id)|\(m.id)"
+                    item["idleVariant"] = ["seed": idleSeed, "sequence": (0..<8).map { n in
+                        ["variant": OfficeIdle.variant(seed: idleSeed, n: n).rawValue, "seconds": OfficeIdle.length(seed: idleSeed, n: n)] as [String: Any]
+                    }] as [String: Any]
                 } else {
                     item["overflow"] = true
+                    item["appearance"] = Self.appearanceJSON(m)
                 }
                 if m.kind == .session, let s = byID[m.id] {
                     item["startedAt"] = Self.ms(s.startedAt)
@@ -70,13 +109,15 @@ final class AgentWebSnapshotBuilder {
                 list.append(item)
             }
             rooms.append([
-                "id": room.id, "tier": OfficeWebLayout.tierKeys[room.tier] ?? "small", "title": room.title ?? "", "badge": room.badge?.rawValue ?? "unknown",
+                "id": room.id, "tier": OfficeWebLayout.tierKeys[room.tier] ?? room.tier.key, "stations": room.tier.stations, "capacity": room.tier.capacity,
+                "cleaner": ["intervalMin": OfficeCleaner.interval.lowerBound, "intervalMax": OfficeCleaner.interval.upperBound, "route": "S",
+                            "laneRows": OfficeRoomTemplates.laneRows(stations: room.tier.stations), "seed": room.id] as [String: Any], "title": room.title ?? "", "badge": room.badge?.rawValue ?? "unknown",
                 "badgeLabel": room.badge?.label ?? "", "group": room.groupIndex, "reseated": room.reseated, "memberCount": room.memberCount,
                 "overflow": room.overflowCount, "members": list,
             ])
         }
         let root: [String: Any] = [
-            "v": 1, "now": Self.ms(now), "sessions": rooms.count, "agents": agentCount, "rooms": rooms,
+            "v": 3, "now": Self.ms(now), "lighting": Self.lightingJSON(now: now), "sessions": rooms.count, "agents": agentCount, "rooms": rooms,
             "working": sessions.reduce(0) { $0 + $1.workingCount },
         ]
         return (try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? Data(#"{"v":1,"rooms":[]}"#.utf8)

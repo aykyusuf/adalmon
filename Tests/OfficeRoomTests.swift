@@ -27,7 +27,7 @@ final class OfficeRoomTests: XCTestCase {
     func testTierTemplatesHaveExpectedSeats() throws {
         let a = try assets()
         // Koltuk sayısı yönetici dahil: küçük 1+2+1 = 4, orta 1+6+1 = 8, büyük 1+10+1 = 12.
-        let expected: [(OfficeRoomTier, Int, Int, Bool)] = [(.small, 2, 1, false), (.medium, 6, 1, false), (.large, 10, 1, true)]
+        let expected: [(OfficeRoomTier, Int, Int, Bool)] = [(.s2, 2, 0, true), (.s6, 6, 0, true), (.s16, 16, 0, true)]
         for (tier, desks, lounges, coffee) in expected {
             let kit = a.kit(tier)
             XCTAssertEqual(kit.spots.seats.filter { $0.kind == .executive }.count, 1, "\(tier): tek yönetici koltuğu")
@@ -55,20 +55,13 @@ final class OfficeRoomTests: XCTestCase {
             XCTAssertLessThanOrEqual(abs((boardF.col * 2 + 2) - (zone.minCol + zone.maxCol + 1)), 1, "\(tier): tahta odanın ortasında")
             XCTAssertTrue(kit.spots.seats.filter { $0.kind != .executive }.allSatisfy { !zone.contains($0.tile) }, "\(tier): yalnızca yönetici koltuğu bölgede")
             XCTAssertTrue(kit.spots.zoneTiles.allSatisfy { kit.grid.isWalkable($0) })
-            XCTAssertEqual(kit.spots.coffee != nil, coffee, "kahve makinesi yalnızca büyükte")
+            XCTAssertEqual(kit.spots.coffee != nil, coffee, "her odada kahve makinesi")
             XCTAssertEqual(tier.hasCoffee, coffee)
             for seat in kit.spots.seats { XCTAssertNotNil(kit.grid.path(from: kit.spots.entrance, to: seat.tile), "\(tier) koltuğa yol yok: \(seat)") }
             for s in kit.spots.deskSeats { XCTAssertNotNil(s.pcIndex, "\(tier) masa koltuğunda PC yok") }
             if let c = kit.spots.coffee { XCTAssertNotNil(kit.grid.path(from: kit.spots.entrance, to: c)) }
         }
         XCTAssertLessThan(a.kit(.small).worldWidth, a.kit(.large).worldWidth)
-    }
-
-    func testTierForCount() {
-        XCTAssertEqual((0...4).map(OfficeRoomTier.tier(forCount:)), [OfficeRoomTier](repeating: .small, count: 5))
-        XCTAssertEqual((5...8).map(OfficeRoomTier.tier(forCount:)), [OfficeRoomTier](repeating: .medium, count: 4))
-        XCTAssertEqual([9, 12, 13, 110].map(OfficeRoomTier.tier(forCount:)), [OfficeRoomTier](repeating: .large, count: 4))
-        XCTAssertEqual(OfficeRoomTier.large.capacity, OfficeRoomTier.maxCharacters)
     }
 
     // MARK: Oturum → oda, koltuk, taşma
@@ -97,51 +90,20 @@ final class OfficeRoomTests: XCTestCase {
         XCTAssertTrue(plan.removed.isEmpty)
     }
 
-    func testExecutiveSeatGoesToSessionAndSubagentsFillDesksThenLounge() throws {
-        var p = try planner()
-        let seats = try assets().kit(.small).spots.seats
-        // Önce alt ajanlar sıralanmış olsa bile ana ajan yönetici koltuğunu alır.
-        let plan = p.update(members: [sub("a0", of: "s"), sub("a1", of: "s"), session("s"), sub("a2", of: "s")]).rooms[0]
-        XCTAssertEqual(plan.placements["s"], .seat(0))
-        func kind(_ id: String) -> OfficeSeat.Kind? { if case .seat(let n)? = plan.placements[id] { seats[n].kind } else { nil } }
-        XCTAssertEqual(kind("s"), .executive)
-        XCTAssertEqual(Set([kind("s#a0"), kind("s#a1"), kind("s#a2")]), [.desk, .lounge], "önce masalar, sonra salon")
-        XCTAssertEqual([kind("s#a0"), kind("s#a1"), kind("s#a2")].filter { $0 == .desk }.count, 2)
-        XCTAssertEqual(plan.overflowCount, 0)
-        // Dördüncü alt ajan taşar: koltuk sayısı yönetici dahil 4.
-        let full = p.update(members: room("s", subs: 4)).rooms[0]
-        XCTAssertEqual(full.tier, .medium, "5 üye orta oda")
-        XCTAssertEqual(full.overflowCount, 0)
-    }
-
     func testOverflowShowsPlusNAfterTwelve() throws {
         var p = try planner()
-        let plan = p.update(members: room("big", subs: 14))   // 15 üye
+        let plan = p.update(members: room("big", subs: 19))   // 20 üye
         let r = plan.rooms[0]
-        XCTAssertEqual(r.tier, .large)
-        XCTAssertEqual(r.overflowCount, 3, "12 gösterilir, kalan 3 \"+3\"")
-        XCTAssertEqual(r.placements.values.filter { if case .seat = $0 { true } else { false } }.count, 12)
+        XCTAssertEqual(r.tier, .s16)
+        XCTAssertEqual(r.overflowCount, 3, "17 gösterilir, kalan 3 \"+3\"")
+        XCTAssertEqual(r.placements.values.filter { if case .seat = $0 { true } else { false } }.count, 17)
         var q = try planner()
-        let exactly12 = q.update(members: room("e", subs: 11)).rooms[0]
+        let exactly12 = q.update(members: room("e", subs: 16)).rooms[0]
         XCTAssertEqual(exactly12.overflowCount, 0)
-        XCTAssertEqual(exactly12.tier, .large)
+        XCTAssertEqual(exactly12.tier, .s16)
         // Taşan alt ajan sonra boş koltuğa kavuşur; sayaç azalır.
-        let fewer = p.update(members: room("big", subs: 12))
+        let fewer = p.update(members: room("big", subs: 17))
         XCTAssertEqual(fewer.rooms[0].overflowCount, 1)
-    }
-
-    func testTierGrowsImmediatelyAndShrinksWithHysteresis() throws {
-        var p = try planner()
-        XCTAssertEqual(p.update(members: room("s", subs: 3)).rooms[0].tier, .small)         // 4
-        let grown = p.update(members: room("s", subs: 4)).rooms[0]                           // 5
-        XCTAssertEqual(grown.tier, .medium)
-        XCTAssertTrue(grown.reseated, "kademe değişince oda yeniden kurulur")
-        let still = p.update(members: room("s", subs: 3)).rooms[0]                           // 4: titreme yok
-        XCTAssertEqual(still.tier, .medium)
-        XCTAssertFalse(still.reseated)
-        let shrunk = p.update(members: room("s", subs: 2)).rooms[0]                          // 3
-        XCTAssertEqual(shrunk.tier, .small)
-        XCTAssertTrue(shrunk.reseated)
     }
 
     func testRoomRemovedWhenSessionEndsAndEmptyRoomReturns() throws {
@@ -386,30 +348,6 @@ final class OfficeRoomTests: XCTestCase {
         let single = OfficeMember.members(from: OfficeDemo.single())
         XCTAssertEqual(single.filter { $0.kind == .session }.count, 1)
         XCTAssertGreaterThanOrEqual(single.count, 3)
-    }
-
-    func testRestSpotIsCoffeeOnlyInLargeRoomsAndSofaElsewhere() throws {
-        let now = Date()
-        let s = try scene()
-        var members = OfficeMember.members(from: [AgentSession(id: "small", project: "k", model: "claude-opus-4-8", status: .idle, startedAt: now, lastEventAt: now)])
-        s.apply(members: members, animated: false, now: now.addingTimeInterval(-100))
-        let small = try XCTUnwrap(s.room("small"))
-        XCTAssertEqual(small.wanderCandidates().count, 0, "yönetici boştayken masasında kalır, dolaşmaz")
-        s.apply(members: OfficeMember.members(from: [AgentSession(id: "small", project: "k", model: "claude-opus-4-8", status: .thinking, startedAt: now, lastEventAt: now,
-                                                                   subagents: [AgentSubagent(agentID: "q", agentType: "x", model: nil, status: .idle)])]),
-                animated: false, now: now.addingTimeInterval(-100))
-        XCTAssertEqual(try XCTUnwrap(s.room("small")).wanderCandidates().count, 1, "küçük odada boşta kalan alt ajan koltuğa gider")
-        XCTAssertNil(small.kit.spots.coffee)
-        members = OfficeMember.members(from: [AgentSession(id: "L", project: "k", model: "claude-opus-4-8", status: .thinking, startedAt: now, lastEventAt: now,
-                                                            subagents: (0..<9).map { AgentSubagent(agentID: "q\($0)", agentType: "x", model: nil, status: $0 == 0 ? .idle : .thinking) })])
-        let l = try scene()
-        l.apply(members: members, animated: false, now: now.addingTimeInterval(-100))
-        let large = try XCTUnwrap(l.room("L"))
-        XCTAssertEqual(large.tier, .large)
-        XCTAssertNotNil(large.kit.spots.coffee)
-        XCTAssertEqual(large.wanderCandidates().count, 1, "yalnızca boştaki alt ajan (yönetici dolaşmaz)")
-        XCTAssertTrue(l.wanderTick(now: now, roll: 0))
-        XCTAssertTrue(large.isWalking)
     }
 
     // MARK: Yönetici köşesi (sahne)

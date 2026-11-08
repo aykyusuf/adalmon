@@ -20,6 +20,8 @@ struct OfficeMember: Equatable, Identifiable, Sendable {
     var activity: String? = nil
     var target: String? = nil
     var activityAt: Date? = nil
+    /// Oturumun başlangıç zamanı (alt ajanlarda nil: ofis ilk gördüğü anı kullanır).
+    var startedAt: Date? = nil
 
     static let groupPaletteSize = 6
 
@@ -30,7 +32,7 @@ struct OfficeMember: Equatable, Identifiable, Sendable {
         for (i, s) in sessions.enumerated().reversed() where s.status != .ended {  // eskiden yeniye: önce gelen önce masa seçer
             let group = Self.stableGroup(for: s.id, fallback: i)
             out.append(OfficeMember(id: s.id, parentID: nil, kind: .session, label: s.displayName, badge: s.badge, status: s.status, groupIndex: group,
-                                 activity: s.activity, target: s.target, activityAt: s.activityAt))
+                                 activity: s.activity, target: s.target, activityAt: s.activityAt, startedAt: s.startedAt))
             for sub in s.subagents where sub.status != .done && sub.status != .ended {
                 out.append(OfficeMember(id: "\(s.id)#\(sub.agentID)", parentID: s.id, kind: .subagent, label: sub.agentType,
                                         badge: sub.model.map { AgentModelBadge(modelID: $0) } ?? s.badge, status: sub.status, groupIndex: group,
@@ -65,13 +67,21 @@ struct OfficePlan: Equatable, Sendable {
 }
 
 /// Kararlı masa atayıcı: bir üye var olduğu sürece koltuğunu korur. Oturum (ana ajan) odanın yönetici koltuğuna, alt ajan üst
-/// oturumuna (yönetici koltuğuna) en yakın boş masaya oturur; masa kalmazsa salon koltuklarına, o da dolarsa taşar. Yönetici
+/// oturumuna (yönetici koltuğuna) en yakın boş masaya oturur; masa kalmazsa taşar (salon koltukları ajan koltuğu değildir). Yönetici
 /// koltuğu olmayan düzenlerde (eski/sentetik) oturum ilk masaya oturur.
 struct OfficeAssigner: Sendable {
     let seats: [OfficeSeat]
     private(set) var seatOf: [String: Int] = [:]
 
     init(seats: [OfficeSeat]) { self.seats = seats }
+
+    /// Kademe değişiminde: önceki koltukları karo + tür olarak yeni koltuklara taşır (oturanlar yerinde kalır).
+    init(seats: [OfficeSeat], carrying old: [String: OfficeSeat]) {
+        self.seats = seats
+        for (id, o) in old.sorted(by: { $0.key < $1.key }) {
+            if let s = seats.first(where: { $0.tile == o.tile && $0.kind == o.kind }) { seatOf[id] = s.id }
+        }
+    }
 
     mutating func update(members: [OfficeMember]) -> OfficePlan {
         let ids = Set(members.map(\.id))
@@ -97,7 +107,8 @@ struct OfficeAssigner: Sendable {
     }
 
     private func pick(for m: OfficeMember, anchor: OfficeTile?, taken: Set<Int>) -> OfficeSeat? {
-        let kinds: [OfficeSeat.Kind] = m.kind == .session ? [.executive, .desk, .lounge] : [.desk, .lounge]
+        // Salon koltukları ajan koltuğu değildir (yalnızca dekor); oturum yönetici koltuğu yoksa ilk masaya oturur.
+        let kinds: [OfficeSeat.Kind] = m.kind == .session ? [.executive, .desk] : [.desk]
         for kind in kinds {
             let free = seats.filter { $0.kind == kind && !taken.contains($0.id) }
             if free.isEmpty { continue }
@@ -263,6 +274,23 @@ struct OfficeAppearance: Equatable, Sendable {
     /// true: karakter bir tam piksel küçük çizilir (`spriteScale`).
     var small: Bool
     var badgeText: String
+    /// Alt ajan rolü (ofis v3): ton/aksesuar/boy buradan gelir; `modelDot` model rengini etikette minik nokta olarak taşır.
+    var role: OfficeRoleStyle? = nil
+    var modelDot: OfficeRGB? = nil
+
+    /// Üye görünümü: ana ajan model aksesuarını korur; alt ajanlarda ROL stili baskındır, model rengi nokta olarak kalır.
+    static func appearance(for member: OfficeMember) -> OfficeAppearance {
+        var look = appearance(for: member.badge)
+        guard member.kind == .subagent else { return look }
+        let role = OfficeRoles.style(forAgentType: member.label)
+        look.modelDot = look.tint
+        look.tint = role.tint
+        look.tintBlend = role.tintBlend
+        look.accessory = .none
+        look.small = role.small
+        look.role = role
+        return look
+    }
 
     static func appearance(for badge: AgentModelBadge) -> OfficeAppearance {
         switch badge {

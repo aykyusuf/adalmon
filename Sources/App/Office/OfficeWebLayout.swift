@@ -11,7 +11,7 @@ enum OfficeWebLayout {
         var seats: [OfficeRoomTier: [OfficeSeat]]
     }
 
-    static let tierKeys: [OfficeRoomTier: String] = [.small: "small", .medium: "medium", .large: "large"]
+    static let tierKeys: [OfficeRoomTier: String] = Dictionary(uniqueKeysWithValues: OfficeRoomTier.allCases.map { ($0, $0.key) })
 
     static func build(officeRoot root: URL) -> Built? {
         guard let data = try? Data(contentsOf: root.appending(path: "default-layout-1.json")),
@@ -48,13 +48,15 @@ enum OfficeWebLayout {
         for badge in AgentModelBadge.allCases {
             let a = OfficeAppearance.appearance(for: badge)
             appearance[badge.rawValue] = [
+                "tintHex": OfficeRoles.hex(a.tint),
                 "label": badge.label, "character": a.characterIndex, "tint": [a.tint.r, a.tint.g, a.tint.b], "tintBlend": a.tintBlend,
                 "accessory": accessoryName(a.accessory), "small": a.small, "badgeText": a.badgeText,
             ] as [String: Any]
         }
 
         let root: [String: Any] = [
-            "v": 1, "tileSize": 16,
+            "v": 3, "tileSize": 16,
+            "v3": v3JSON(),
             "characters": [
                 "file": "characters/char_%d.png", "sheetWidth": OfficeCharacterSheet.sheetWidth, "sheetHeight": OfficeCharacterSheet.sheetHeight,
                 "frameWidth": OfficeCharacterSheet.frameWidth, "frameHeight": OfficeCharacterSheet.frameHeight,
@@ -74,6 +76,43 @@ enum OfficeWebLayout {
         ]
         guard let json = try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys]) else { return nil }
         return Built(json: json, seats: seatsByTier)
+    }
+
+    /// Ofis v3 sözleşmesi: roller, bilgisayarlar, ışık, boşta/temizlikçi/taşıyıcı sabitleri ve Swift'te üretilen dokular (data URI).
+    /// Tarayıcı bunları yeniden çizmek zorunda değildir (tek doğruluk kaynağı Swift).
+    static func v3JSON() -> [String: Any] {
+        let roles: [[String: Any]] = OfficeRoles.knownKeys.map { key in
+            let r = OfficeRoles.style(forAgentType: key)
+            return ["key": r.key, "tint": r.tintHex, "accessory": r.accessory.rawValue, "place": r.accessory.place.rawValue, "small": r.small, "hoodie": r.hoodie, "labelColor": OfficeRoles.hex(r.labelColor)]
+        }
+        var generated: [String: String] = [:]
+        for name in OfficeArt.defs.keys.sorted() { if let u = OfficeArt.dataURI(name) { generated[name] = u } }
+        for g in OfficeArt.glows { if let u = OfficeArt.dataURI(g.name) { generated[g.name] = u } }
+        let computers: [[String: Any]] = OfficeArt.allComputers.map { c in
+            ["kind": c.kind.rawValue, "color": c.color.rawValue, "name": c.artName,
+             "off": OfficeArt.computerName(c, frame: nil), "on": (0..<3).map { OfficeArt.computerName(c, frame: $0) }]
+        }
+        return [
+            "roles": roles,
+            "roleFallback": ["accessory": "tag", "hsl": ["s": 0.55, "l": 0.55], "hash": "fnv1a64(key) % 360 (OfficeStroll.seed)"],
+            "computers": computers,
+            "computerPick": ["seed": "fnv1a64(roomID + \"|pc|\" + seatKey)", "imacShare": 0.55, "imacColors": OfficeComputer.imacColors.map(\.rawValue),
+                             "macbookColors": OfficeComputer.macbookColors.map(\.rawValue), "executive": "imac_silver", "seatKey": "row*100+col", "rollFn": "splitmix64"],
+            "lighting": [
+                "modes": OfficeLightingMode.allCases.map(\.rawValue), "nightStartHour": OfficeLighting.nightStartMinutes / 60, "nightStartMinute": OfficeLighting.nightStartMinutes % 60,
+                "nightEndHour": OfficeLighting.nightEndMinutes / 60, "nightEndMinute": OfficeLighting.nightEndMinutes % 60,
+                "overlayColor": [0.14, 0.18, 0.40], "overlayAlpha": OfficeLighting.nightOverlayAlpha, "overlayBlend": "multiply", "crossfade": OfficeLighting.crossfade,
+                "glows": OfficeArt.glows.map { ["name": $0.name, "w": $0.width, "h": $0.height, "rgb": [$0.r, $0.g, $0.b], "alpha": $0.alpha] as [String: Any] },
+            ] as [String: Any],
+            "idle": ["variants": OfficeIdleVariant.allCases.map(\.rawValue), "durationMin": OfficeIdle.duration.lowerBound, "durationMax": OfficeIdle.duration.upperBound,
+                     "wanderChance": OfficeIdle.wanderChance, "wanderGapMin": OfficeIdle.wanderGap.lowerBound, "wanderGapMax": OfficeIdle.wanderGap.upperBound,
+                     "wanderStayMin": OfficeIdle.wanderStay.lowerBound, "wanderStayMax": OfficeIdle.wanderStay.upperBound],
+            "cleaner": ["intervalMin": OfficeCleaner.interval.lowerBound, "intervalMax": OfficeCleaner.interval.upperBound, "route": "S", "character": 1,
+                        "tint": [0.15, 0.45, 0.98], "tintBlend": 0.6, "prop": "mop", "trailArt": "glow_trail", "trailFade": 3.2, "stepSeconds": OfficeRoomNode.stepDuration],
+            "carrier": ["steps": OfficeCarrier.sequence(withCarrier: true).map(\.rawValue), "dropSeconds": OfficeCarrier.dropDuration, "growFade": OfficeCarrier.growFade,
+                        "character": 1, "tint": [0.9, 0.55, 0.15], "tintBlend": 0.5, "prop": "box"],
+            "generated": generated,
+        ]
     }
 
     static func accessoryName(_ a: OfficeAccessory) -> String {
@@ -143,11 +182,24 @@ enum OfficeWebLayout {
                 "enter": (grid.path(from: spots.entrance, to: s.tile) ?? []).map(tile),
             ]
             if let pc = s.pcIndex { item["pc"] = pc }
+            item["computerKey"] = OfficeRoomNode.seatKey(s)
             if s.kind == .executive, let board = spots.board, let path = zoneGrid?.path(from: s.tile, to: board) { item["toBoard"] = path.map(tile) }
             seats.append(item)
         }
 
+        let n = tier.stations
+        let blocks: [[String: Int]] = (0..<OfficeRoomTemplates.blocks(stations: n)).map {
+            let o = OfficeRoomTemplates.blockOrigin($0)
+            return ["i": $0, "col": o.col, "row": o.row]
+        }
+        // Masa lambaları: her masa bloğunun ortasında (karo koordinatı + masa üstü piksel sapması) ve yönetici masasında.
+        var lamps: [[String: Any]] = blocks.map { ["col": ($0["col"] ?? 0) + 1, "row": $0["row"] ?? 0, "dx": 8, "dy": 14] }
+        if let ex = layout.furniture.first(where: { $0.assetID == "SMALL_TABLE_FRONT" }) { lamps.append(["col": ex.col + 1, "row": ex.row, "dx": 8, "dy": 14]) }
+        let ct = OfficeRoomTemplates.coffeeTable(stations: n)
         var out: [String: Any] = [
+            "key": tier.key, "stations": n, "blocks": blocks, "laneRows": OfficeRoomTemplates.laneRows(stations: n),
+            "lamps": lamps, "coffeeTable": ["col": ct.col, "row": ct.row], "floorWidth": OfficeRoomTemplates.floorWidth(stations: n),
+            "floorHeight": OfficeRoomTemplates.floorHeight(stations: n),
             "capacity": tier.capacity, "cols": layout.cols, "rows": layout.rows,
             "bounds": ["minCol": b.minCol, "minRow": b.minRow, "maxCol": b.maxCol, "maxRow": b.maxRow],
             "tiles": tiles, "colors": palette, "furniture": placements, "seats": seats,

@@ -1,14 +1,13 @@
 import Foundation
 
-/// Oda şablonları: default-layout-1.json'daki ofisin masa/PC/bank/kanepe/masa-sandalye kalıplarından türetilmiş küçük odalar.
+/// Oda şablonları: default-layout-1.json'daki ofisin masa/PC/bank kalıplarından türetilmiş PARAMETRİK odalar (ofis v3).
 /// Her oda: üstte duvar (2 karo yüksekliğinde, üst satır boşluk), solda ve sağda duvar sütunu, altı açık (kesit görünüm),
 /// sağ duvarın en alt satırında kapı. Üst ortada ana ajanın YÖNETİCİ ALANI: duvarda ortada beyaz tahta, önünde boş bir halı şeridi
-/// (yönetici bölgesi: satır 2-4, ayakta yazma ve volta için), şeridin sağ ucunda küçük yönetici masası + yastıklı sandalye
-/// (yönetici koltuğu, id 0). Alt ajan masaları (satır 6'dan) bölgeden ayrıdır; yönetici bölgeden çıkmaz. Koltuk sayısı yönetici
-/// dahil: küçük 4, orta 8, büyük 12 (bkz. `OfficeRoomTier.capacity`):
-///   küçük  = 1 yönetici + 2 masa (1 masa)               + 1 salon  (yastıklı koltuk)      zemin 8 × 8
-///   orta   = 1 yönetici + 6 masa (3 masa)               + 1 salon                           zemin 11 × 8
-///   büyük  = 1 yönetici + 10 masa (3 masa + ortak masa) + 1 salon  (+ kahve makinesi)       zemin 13 × 13
+/// (yönetici bölgesi: satır 2-4), şeridin sağ ucunda küçük yönetici masası + yastıklı sandalye (yönetici koltuğu, id 0).
+/// Alt ajan istasyonları 2'li masa blokları (3 geniş masa, iki uçta bilgisayar, önünde iki bank) olarak satır başına 3 blok dizilir
+/// (blok i: sütun 1 + 4·(i mod 3), satır 6 + 4·(i div 3)); bu yüzden bir üst kademe her zaman alt kademenin üst kümesidir
+/// (oturanlar yerinde kalır, büyüme yalnızca istasyon ekler). Her odada alt koridorda kahve makinesi vardır. Salon koltuğu yoktur.
+///   istasyon: 2, 4, 6, 8, 12, 16  →  zemin genişliği 8 (≤4 istasyon) ya da 11; yüksekliği 4·satır+6 (satır = ⌈blok/3⌉).
 enum OfficeRoomTemplates {
     /// Yönetici şeridinin satırları (duvarın hemen altından): 2 tahta önü, 3 volta, 4 yönetici sandalyesi.
     static let zoneRows = 2...4
@@ -16,6 +15,21 @@ enum OfficeRoomTemplates {
     static let deskRow = 6
     /// Yönetici halısı: zemin renginden ayrı, mavimsi.
     static let carpet = OfficeTileColor(h: 214, s: 34, b: -30, c: -80)
+    static let blocksPerRow = 3
+
+    static func blocks(stations: Int) -> Int { (stations + 1) / 2 }
+    static func blockRows(stations: Int) -> Int { max(1, (blocks(stations: stations) + blocksPerRow - 1) / blocksPerRow) }
+    static func floorWidth(stations: Int) -> Int { stations <= 4 ? 8 : 11 }
+    static func floorHeight(stations: Int) -> Int { 4 * blockRows(stations: stations) + 6 }
+    /// Blok i'nin masa sol-üst karosu.
+    static func blockOrigin(_ i: Int) -> (col: Int, row: Int) { (1 + 4 * (i % blocksPerRow), deskRow + 4 * (i / blocksPerRow)) }
+    /// Kahve masasının sol-üst karosu (alt koridor: sütun 3-4; bank arası cepler ve en alt koridor satırı açık kalır; makineye soldan yaklaşılır).
+    static func coffeeTable(stations: Int) -> (col: Int, row: Int) { (3, 4 * blockRows(stations: stations) + 5) }
+    /// Temizlikçi rotasının koridor satırları (koltuk sıraları arası + alt koridor).
+    static func laneRows(stations: Int) -> [Int] {
+        let r = blockRows(stations: stations)
+        return [5] + (0..<(r - 1)).map { 4 * $0 + 9 } + [4 * r + 7]
+    }
 
     private struct Builder {
         let floorW: Int
@@ -31,15 +45,6 @@ enum OfficeRoomTemplates {
             add("CUSHIONED_BENCH", col, row + 2); add("CUSHIONED_BENCH", col + 2, row + 2)
         }
 
-        /// 4 koltuklu ortak masa: iki yanda ikişer sandalye ve yan PC. (col, row) masanın sol-üstü; sandalyeler col-1 ve col+3.
-        mutating func table(_ col: Int, _ row: Int) {
-            add("TABLE_FRONT", col, row)
-            add("WOODEN_CHAIR_SIDE", col - 1, row); add("WOODEN_CHAIR_SIDE", col - 1, row + 2)
-            add("WOODEN_CHAIR_SIDE:left", col + 3, row); add("WOODEN_CHAIR_SIDE:left", col + 3, row + 2)
-            add("PC_SIDE", col, row); add("PC_SIDE", col, row + 2)
-            add("PC_SIDE:left", col + 2, row); add("PC_SIDE:left", col + 2, row + 2)
-        }
-
         /// Yönetici alanı: duvarda ortada beyaz tahta (`boardCol`, 2 karo), sağ uçta (`deskCol`, 2 karo) küçük yönetici masası ve
         /// PC'si; masanın önünde (deskCol, 4) yastıklı sandalye (yönetici koltuğu). Tahta önü ve volta şeridi masanın solundadır.
         mutating func executive(deskCol: Int, boardCol: Int) {
@@ -47,13 +52,6 @@ enum OfficeRoomTemplates {
             add("SMALL_TABLE_FRONT", deskCol, OfficeRoomTemplates.zoneRows.lowerBound)
             add("PC_FRONT_OFF", deskCol, OfficeRoomTemplates.zoneRows.lowerBound)
             add("CUSHIONED_CHAIR_BACK", deskCol, OfficeRoomTemplates.zoneRows.upperBound)
-        }
-
-        /// Üst kanepe, ortada sehpa, alt kanepe → 4 salon koltuğu. (col, row) üst kanepenin sol-üstü.
-        mutating func loungeStack(_ col: Int, _ row: Int) {
-            add("SOFA_FRONT", col, row)
-            add("COFFEE_TABLE", col, row + 1)
-            add("SOFA_BACK", col, row + 3)
         }
 
         func layout(floor: OfficeTileColor?, wall: OfficeTileColor?) -> OfficeLayout {
@@ -72,36 +70,21 @@ enum OfficeRoomTemplates {
     }
 
     static func layout(_ tier: OfficeRoomTier, floor: OfficeTileColor?, wall: OfficeTileColor?) -> OfficeLayout {
-        let d = deskRow
-        switch tier {
-        case .small:
-            // 4 koltuk: yönetici + 1 masa (2) + yastıklı koltuk (1).
-            var b = Builder(floorW: 8, floorH: 8)
-            b.executive(deskCol: 7, boardCol: 4)
-            b.desk(3, d)
-            b.add("CUSHIONED_CHAIR_SIDE:left", 8, d + 1)
-            b.add("PLANT", 1, d); b.add("PLANT_2", 8, 4)
+        let n = tier.stations
+        let w = floorWidth(stations: n), h = floorHeight(stations: n)
+        var b = Builder(floorW: w, floorH: h)
+        b.executive(deskCol: w - 1, boardCol: w / 2)
+        for i in 0..<blocks(stations: n) { let o = blockOrigin(i); b.desk(o.col, o.row) }
+        let ct = coffeeTable(stations: n)
+        b.add("COFFEE_TABLE", ct.col, ct.row); b.add("COFFEE", ct.col, ct.row)
+        b.add("PLANT", 1, 4 * blockRows(stations: n) + 5)
+        if w == 8 {
+            b.add("PLANT_2", 8, 4)
             b.add("DOUBLE_BOOKSHELF", 1, 0); b.add("CLOCK", 7, 0); b.add("SMALL_PAINTING", 8, 0)
-            return b.layout(floor: floor, wall: wall)
-        case .medium:
-            // 8 koltuk: yönetici + 3 masa (6) + yastıklı koltuk (1).
-            var b = Builder(floorW: 11, floorH: 8)
-            b.executive(deskCol: 10, boardCol: 5)
-            b.desk(1, d); b.desk(5, d); b.desk(9, d)
-            b.add("CUSHIONED_CHAIR_SIDE", 1, d - 1)
+        } else {
             b.add("PLANT_2", 11, 4)
             b.add("DOUBLE_BOOKSHELF", 2, 0); b.add("CLOCK", 8, 0); b.add("LARGE_PAINTING", 9, 0); b.add("SMALL_PAINTING", 11, 0)
-            return b.layout(floor: floor, wall: wall)
-        case .large:
-            // 12 koltuk: yönetici + 3 masa (6) + ortak masa (4) + yastıklı koltuk (1); sehpada kahve makinesi.
-            var b = Builder(floorW: 13, floorH: 13)
-            b.executive(deskCol: 12, boardCol: 6)
-            b.desk(1, d); b.desk(5, d); b.desk(9, d)
-            b.table(4, 10)
-            b.add("CUSHIONED_CHAIR_FRONT", 10, 10); b.add("COFFEE_TABLE", 10, 11); b.add("COFFEE", 10, 11)
-            b.add("PLANT", 1, 10); b.add("PLANT_2", 13, 4)
-            b.add("DOUBLE_BOOKSHELF", 1, 0); b.add("CLOCK", 4, 0); b.add("LARGE_PAINTING", 9, 0); b.add("SMALL_PAINTING_2", 12, 0)
-            return b.layout(floor: floor, wall: wall)
         }
+        return b.layout(floor: floor, wall: wall)
     }
 }

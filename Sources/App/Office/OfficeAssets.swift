@@ -346,6 +346,25 @@ final class OfficeAssets {
     /// Beyaz tahta "yazıyor" kareleri.
     private(set) lazy var boardWriteTextures: [SKTexture] = OfficePixelArt.boardWriteFrames.map { Self.nearest(SKTexture(cgImage: $0)) }
 
+    private var artTextures: [String: SKTexture] = [:]
+
+    /// `OfficeArt` dokusu (önbellekli; ışık sprite'ları yumuşak, piksel-art `.nearest`).
+    func artTexture(_ name: String) -> SKTexture? {
+        if let t = artTextures[name] { return t }
+        guard let img = OfficeArt.image(name) else { return nil }
+        let t = SKTexture(cgImage: img)
+        t.filteringMode = name.hasPrefix("glow") ? .linear : .nearest
+        artTextures[name] = t
+        return t
+    }
+
+    /// Bilgisayar dokuları: kapalı + 3 ekran karesi.
+    func computerFrames(_ c: OfficeComputer) -> (off: SKTexture, on: [SKTexture])? {
+        guard let off = artTexture(OfficeArt.computerName(c, frame: nil)) else { return nil }
+        let on = (0..<3).compactMap { artTexture(OfficeArt.computerName(c, frame: $0)) }
+        return (off, on)
+    }
+
     func doorTexture() -> SKTexture? { OfficePixelArt.door.map { Self.nearest(SKTexture(cgImage: $0)) } }
 }
 

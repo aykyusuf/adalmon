@@ -28,7 +28,26 @@ final class OfficeScene: SKScene {
     private var pending: [String: Int] = [:]
     private var generation = 0
     private var lastAnimating = false
-    private var lastWander: Date?
+    private var nextWander: [String: Date] = [:]
+    private var lastWander: [String: Date] = [:]
+    /// Ofis v3: ışık modu (varsayılan gündüz; ev sahibi kayıtlı modu verir), gece mi, tek saat-sınırı zamanlayıcısı.
+    private(set) var lightingMode = OfficeLightingMode.day
+    private(set) var isNight = false
+    var timeZone = TimeZone.current
+    private var boundaryTimer: Timer?
+    /// Büyüyen odanın eski düğümü kararırken ve yeni oda belirirken.
+    private var grown: Set<String> = []
+    /// Detay kartı: seçili üye, son üye listesi, ilk görülme anları, son yayılan kart.
+    private(set) var selectedMemberID: String?
+    private var lastMembers: [OfficeMember] = []
+    private var firstSeen: [String: Date] = [:]
+    private var lastCard: OfficeDetailCard?
+    private var tooltipNode: SKNode?
+    private var tooltipLabel: SKLabelNode?
+    private var tooltipBG: SKSpriteNode?
+    private var hoverID: String?
+    private var downCount = 1
+    var onCardChange: ((OfficeDetailCard?) -> Void)?
     private var dragStart: CGPoint?
     private var dragLast: CGPoint?
     private var dragging = false
@@ -38,6 +57,8 @@ final class OfficeScene: SKScene {
     /// Kullanıcı kaydırdı: ev sahibi görünümü kısa süre canlandırıp yeniden duraklatır.
     var onActivity: (() -> Void)?
     var onSelectionChange: ((String?) -> Void)?
+    /// Fare bir karakterin/tahtanın üstünde mi (imleç el işareti).
+    var onHoverChange: ((Bool) -> Void)?
 
     // MARK: Ölçüm / test erişimi
 
@@ -78,7 +99,12 @@ final class OfficeScene: SKScene {
 
     /// Üyeleri sahneye uygular. `animated == false`: herkes doğrudan son konumunda belirir (önizleme, ilk statik kare).
     func apply(members: [OfficeMember], animated: Bool, now: Date = .now) {
+        lastMembers = members
+        for m in members where firstSeen[m.id] == nil { firstSeen[m.id] = now }
+        let liveIDs = Set(members.map(\.id))
+        firstSeen = firstSeen.filter { liveIDs.contains($0.key) }
         let plan = planner.update(members: members)
+        var known: [String: Set<String>] = [:]
         var byRoom: [String: [OfficeMember]] = [:]
         for m in members { byRoom[m.parentID ?? m.id, default: []].append(m) }
 
@@ -88,13 +114,23 @@ final class OfficeScene: SKScene {
         for rp in plan.rooms {
             if let old = rooms[rp.id], old.tier == rp.tier { continue }
             let replaced = rooms[rp.id] != nil
-            if let old = rooms[rp.id] { destroy(old) }
+            if let old = rooms[rp.id] {
+                known[rp.id] = Set(old.actors.keys)
+                if animated && old.isVisible {
+                    // Büyüme/küçülme: eski zemin/duvar dokusu yumuşakça kararır, yenisi belirir (crossfade).
+                    rooms[rp.id] = nil
+                    track(old.root, key: "grow.\(old.id)", .fadeOut(withDuration: OfficeCarrier.growFade)) { [weak old] in old?.root.removeFromParent() }
+                } else {
+                    destroy(old)
+                }
+            }
             let node = OfficeRoomNode(id: rp.id, tier: rp.tier, assets: assets)
+            node.setNight(isNight, animated: false)
             node.onAnimationChange = { [weak self] in self?.notifyAnimationState() }
             node.setZoom(zoom)
             world.addChild(node.root)
             rooms[rp.id] = node
-            if animated && !replaced { fade.insert(rp.id); node.root.alpha = 0 }
+            if animated && (!replaced || known[rp.id] != nil) { fade.insert(rp.id); node.root.alpha = 0; if replaced { grown.insert(rp.id) } }
             changed = true
         }
         let newOrder = plan.rooms.map(\.id)
@@ -105,8 +141,11 @@ final class OfficeScene: SKScene {
 
         for rp in plan.rooms {
             guard let room = rooms[rp.id] else { continue }
-            room.apply(plan: rp, members: byRoom[rp.id] ?? [], animated: animated && room.isVisible && !rp.reseated, now: now)
+            let ms = byRoom[rp.id] ?? []
+            let newcomers: Set<String> = rp.reseated && animated && room.isVisible ? Set(ms.map(\.id)).subtracting(known[rp.id] ?? []) : []
+            room.apply(plan: rp, members: ms, animated: animated && room.isVisible && !rp.reseated, now: now, newcomers: newcomers)
         }
+        if let id = selectedMemberID { if liveIDs.contains(id) { emitCard() } else { setSelectedMember(nil) } }
         refreshLabels()
         notifyAnimationState()
     }
@@ -155,7 +194,7 @@ final class OfficeScene: SKScene {
             }
             if !room.placed {
                 room.placed = true
-                if fadeIn.contains(room.id) { track(room.root, key: "\(room.id).fade", .fadeIn(withDuration: Self.transitionDuration)) } else { room.root.alpha = 1 }
+                if fadeIn.contains(room.id) { track(room.root, key: "\(room.id).fade", .fadeIn(withDuration: grown.remove(room.id) != nil ? OfficeCarrier.growFade : Self.transitionDuration)) } else { room.root.alpha = 1 }
             }
         }
         updateCamera(animated: animated)
@@ -260,7 +299,7 @@ final class OfficeScene: SKScene {
 
     // MARK: Girdi (görünüm koordinatı: sol-alt başlangıçlı, y yukarı)
 
-    func pointerDown(at p: CGPoint) { dragStart = p; dragLast = p; dragging = false }
+    func pointerDown(at p: CGPoint, clickCount: Int = 1) { dragStart = p; dragLast = p; dragging = false; downCount = clickCount }
 
     func pointerDragged(to p: CGPoint) {
         guard let start = dragStart, let last = dragLast else { return }
@@ -272,14 +311,14 @@ final class OfficeScene: SKScene {
     func pointerUp(at p: CGPoint) {
         defer { dragStart = nil; dragLast = nil; dragging = false }
         guard dragStart != nil, !dragging else { return }
-        click(at: p)
+        click(at: p, count: downCount)
     }
 
     /// Fare tekerleği/iki parmak kaydırma: içerik parmakla birlikte hareket eder.
     func scroll(deltaX: CGFloat, deltaY: CGFloat) { pan(dx: -deltaX, dy: -deltaY) }
 
     /// Esc: seçimi kaldırır.
-    func escape() { select(nil) }
+    func escape() { if selectedMemberID != nil { setSelectedMember(nil) } else { select(nil) } }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { escape() } else { super.keyDown(with: event) }
@@ -300,7 +339,13 @@ final class OfficeScene: SKScene {
         onActivity?()
     }
 
-    private func click(at p: CGPoint) {
+    private func click(at p: CGPoint, count: Int) {
+        if let h = hit(atView: p) {
+            // Çift tık: odaya yakınlaş (kart açık kalır). Tek tık: karakter/tahta → detay kartı.
+            if count >= 2 { select(h.room.id) } else { setSelectedMember(h.memberID) }
+            return
+        }
+        if selectedMemberID != nil { setSelectedMember(nil); return }   // boşluğa tıklama kartı kapatır
         let pt = OfficeCamera.contentPoint(fromView: p, view: size, center: cameraCenter, zoom: zoom)
         if let cell = arrangement.cell(at: pt), rooms[cell.id]?.isPlaceholder == false {
             select(cell.id == selectedRoomID ? nil : cell.id)
@@ -311,19 +356,123 @@ final class OfficeScene: SKScene {
 
     // MARK: Kahve / dinlenme
 
-    /// Boşta oturan bir karakteri (görünür odalardan) odasının dinlenme yerine yollar. Zamanlayıcı ev sahibindedir.
+    /// Düşük frekanslı tek zamanlayıcı (ev sahibi): görünür odalarda kahve yürüyüşü (oda başına 1-2 kişi), masada boşta varyantları ve
+    /// temizlikçi. Yalnızca görünür odalar; hepsi sonlu SKAction. Bir şey başladıysa true.
     @discardableResult
     func wanderTick(now: Date = .now, roll: Double = .random(in: 0..<1)) -> Bool {
-        let visible = order.compactMap { rooms[$0] }.filter(\.isVisible)
-        var owner: [String: OfficeRoomNode] = [:]
-        var candidates: [OfficeWander.Candidate] = []
-        for r in visible { for c in r.wanderCandidates() { owner[c.id] = r; candidates.append(c) } }
-        let walking = visible.contains { $0.isWalking }
-        guard let id = OfficeWander.pick(candidates, now: now, lastWander: lastWander, someoneWalking: walking, roll: roll),
-              let room = owner[id], room.wander(id: id) else { return false }
-        lastWander = now
-        notifyAnimationState()
-        return true
+        var started = false
+        for r in order.compactMap({ rooms[$0] }) where r.isVisible && !r.isPlaceholder {
+            let limit = OfficeIdle.maxWanderers(memberCount: r.memberCount)
+            if nextWander[r.id].map({ now >= $0 }) ?? true,
+               let id = OfficeWander.pick(r.wanderCandidates(), now: now, lastWander: lastWander[r.id], someoneWalking: r.walkerCount >= limit, roll: roll, chance: OfficeIdle.wanderChance),
+               r.wander(id: id) {
+                lastWander[r.id] = now
+                nextWander[r.id] = now.addingTimeInterval(OfficeIdle.gap(roll: .random(in: 0..<1)))
+                started = true
+            }
+            if r.variantCount < 2, Double.random(in: 0..<1) < 0.6, let c = r.idleCandidates().randomElement(), r.startIdleVariant(id: c.member.id) != nil { started = true }
+            if r.cleanerTick(now: now) { started = true }
+        }
+        if started { notifyAnimationState() }
+        return started
+    }
+
+    // MARK: Işık (gün / gece)
+
+    /// Mod değişince (menü) ya da ev sahibi ilk kurulumda çağırır. Otomatikte bir sonraki saat sınırı için TEK Timer kurulur.
+    func setLightingMode(_ mode: OfficeLightingMode, now: Date = .now, animated: Bool = true) {
+        lightingMode = mode
+        refreshLighting(now: now, animated: animated)
+    }
+
+    private func refreshLighting(now: Date, animated: Bool) {
+        boundaryTimer?.invalidate()
+        boundaryTimer = nil
+        if lightingMode == .auto, let next = OfficeLighting.nextBoundary(after: now, timeZone: timeZone) {
+            let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshLighting(now: .now, animated: true) }
+            }
+            timer.tolerance = 30
+            RunLoop.main.add(timer, forMode: .common)
+            boundaryTimer = timer
+        }
+        let night = OfficeLighting.isNight(mode: lightingMode, date: now, timeZone: timeZone)
+        guard night != isNight else { return }
+        isNight = night
+        for r in rooms.values { r.setNight(night, animated: animated) }
+        if animated { track(world, key: "lighting", .wait(forDuration: OfficeLighting.crossfade + 0.1)) }
+    }
+
+    /// Ev sahibi kapanırken zamanlayıcıyı bırakır.
+    func shutdown() { boundaryTimer?.invalidate(); boundaryTimer = nil }
+
+    // MARK: Üzerine gelme + detay kartı
+
+    /// Görünüm noktasındaki karakter (ya da tahta → yönetici) ve odası.
+    func hit(atView p: CGPoint) -> (room: OfficeRoomNode, memberID: String)? {
+        let pt = OfficeCamera.contentPoint(fromView: p, view: size, center: cameraCenter, zoom: zoom)
+        guard let cell = arrangement.cell(at: pt), let room = rooms[cell.id], !room.isPlaceholder, room.isVisible else { return nil }
+        let local = CGPoint(x: pt.x - cell.x, y: cell.y + cell.height - pt.y)
+        if let a = room.actor(atLocal: local) { return (room, a.member.id) }
+        if room.boardContains(local), let id = room.executiveMemberID { return (room, id) }
+        return nil
+    }
+
+    func card(for id: String) -> OfficeDetailCard? {
+        guard let m = lastMembers.first(where: { $0.id == id }) else { return nil }
+        return OfficeDetailCard.make(member: m, members: lastMembers, spawnedAt: firstSeen[id])
+    }
+
+    func setSelectedMember(_ id: String?) {
+        selectedMemberID = id
+        emitCard()
+    }
+
+    private func emitCard() {
+        let card = selectedMemberID.flatMap { card(for: $0) }
+        guard card != lastCard else { return }
+        lastCard = card
+        onCardChange?(card)
+    }
+
+    /// Fare hareketi (görünüm koordinatı). Karakterin üstünde ad · rol · model · durum satırı; imleç değişimi için `onHoverChange`.
+    func hover(at p: CGPoint?) {
+        guard dragStart == nil, let p, let h = hit(atView: p), let card = card(for: h.memberID), let top = h.room.actorTop(id: h.memberID) ?? h.room.actorTop(id: h.memberID) else {
+            hideTooltip()
+            return
+        }
+        if hoverID != h.memberID { hoverID = h.memberID; onHoverChange?(true) }
+        let node = tooltipNode ?? makeTooltip()
+        tooltipLabel?.text = card.tooltip
+        let w = (tooltipLabel?.frame.width ?? 40) + 10
+        tooltipBG?.size = CGSize(width: w, height: 14)
+        node.setScale(1 / CGFloat(zoom))
+        node.position = CGPoint(x: h.room.root.position.x + top.x, y: h.room.root.position.y + top.y + 10 / CGFloat(zoom))
+        node.isHidden = false
+        onActivity?()
+    }
+
+    private func hideTooltip() {
+        if tooltipNode?.isHidden == false { tooltipNode?.isHidden = true; onActivity?() }
+        if hoverID != nil { hoverID = nil; onHoverChange?(false) }
+    }
+
+    private func makeTooltip() -> SKNode {
+        let node = SKNode()
+        node.zPosition = 45_000
+        let bg = SKSpriteNode(color: SKColor(white: 0.04, alpha: 0.92), size: CGSize(width: 60, height: 14))
+        bg.anchorPoint = CGPoint(x: 0.5, y: 0)
+        let label = SKLabelNode(fontNamed: "HelveticaNeue-Bold")
+        label.fontSize = 9
+        label.fontColor = .white
+        label.verticalAlignmentMode = .center
+        label.horizontalAlignmentMode = .center
+        label.position = CGPoint(x: 0, y: 7)
+        label.zPosition = 1
+        node.addChild(bg); node.addChild(label)
+        world.addChild(node)
+        tooltipNode = node; tooltipLabel = label; tooltipBG = bg
+        return node
     }
 
     // MARK: Geçiş takibi

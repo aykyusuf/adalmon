@@ -3,30 +3,27 @@ import Foundation
 // Ajan ofisi (oturum başına oda): saf planlama mantığı (SpriteKit/SwiftUI yok). Oturum → oda, oda boyut kademesi, odadaki
 // koltuk ataması ve taşma sayacı burada; sahne yalnızca çıktıyı uygular.
 
-/// Oda boyut kademesi: küçük 4, orta 8, büyük 12 koltuk. Kahve makinesi yalnızca büyükte.
+/// Oda boyut kademesi (ofis v3): masa istasyonu sayısı 2, 4, 6, 8, 12, 16 (+ yönetici koltuğu). Her kademenin şablonu
+/// `OfficeRoomTemplates.layout` ile programla üretilir; üst kademe alt kademenin üst kümesidir (oturanlar yerinde kalır).
 enum OfficeRoomTier: Int, CaseIterable, Comparable, Sendable {
-    case small, medium, large
+    case s2, s4, s6, s8, s12, s16
 
-    /// Bir odada en çok gösterilen karakter; fazlası "+N" rozetidir.
-    static let maxCharacters = 12
+    /// Bir odada en çok gösterilen karakter (yönetici + 16 istasyon); fazlası "+N" rozetidir.
+    static let maxStations = 16
+    static let maxCharacters = maxStations + 1
 
     static func < (a: OfficeRoomTier, b: OfficeRoomTier) -> Bool { a.rawValue < b.rawValue }
 
-    var capacity: Int {
-        switch self {
-        case .small: 4
-        case .medium: 8
-        case .large: 12
-        }
-    }
+    var stations: Int { [2, 4, 6, 8, 12, 16][rawValue] }
+    /// Yönetici dahil koltuk sayısı.
+    var capacity: Int { stations + 1 }
+    /// Her odada kahve makinesi vardır.
+    var hasCoffee: Bool { true }
+    var key: String { "s\(stations)" }
 
-    var hasCoffee: Bool { self == .large }
-
-    /// Üye sayısını (oturum + alt ajanlar) karşılayan en küçük kademe; 12'den fazlası da büyükte kalır.
+    /// Üye sayısını (oturum + alt ajanlar) karşılayan en küçük kademe; 17'den fazlası da en büyükte kalır.
     static func tier(forCount n: Int) -> OfficeRoomTier {
-        if n <= OfficeRoomTier.small.capacity { return .small }
-        if n <= OfficeRoomTier.medium.capacity { return .medium }
-        return .large
+        allCases.first { n <= $0.capacity } ?? .s16
     }
 }
 
@@ -42,8 +39,10 @@ struct OfficeRoomPlan: Equatable, Identifiable, Sendable {
     var placements: [String: OfficePlacement]
     /// Önceki plandan düşen (çıkışa yürüyecek) üyeler.
     var departed: [String]
-    /// Kademe değişti: herkes yeni odada yeniden oturtuldu (sahne odayı baştan kurar, yürümeden yerleştirir).
+    /// Kademe değişti: sahne odayı yeni şablonla baştan kurar; oturanlar karo olarak aynı koltukta kalır (yürümeden yerleştirilir).
     var reseated: Bool
+    /// Kademe değiştiyse önceki kademe (büyüme animasyonu için).
+    var previousTier: OfficeRoomTier? = nil
     var memberCount: Int
 
     var overflowCount: Int { placements.values.filter { $0 == .overflow }.count }
@@ -62,7 +61,7 @@ struct OfficeRoomsPlan: Equatable, Sendable {
 /// `OfficeAssigner` ile yapılır: oturum ilk masaya, alt ajanlar ebeveyne en yakın boş masaya, sonra salon koltuklarına oturur.
 struct OfficeRoomPlanner: Sendable {
     static let emptyRoomID = "__empty__"
-    static let emptyTier = OfficeRoomTier.medium
+    static let emptyTier = OfficeRoomTier.s6
 
     private struct State: Sendable {
         var tier: OfficeRoomTier
@@ -103,13 +102,22 @@ struct OfficeRoomPlanner: Sendable {
                 tier = desired
             }
             let reseated = current != nil && tier != current
-            if current == nil || reseated { states[rid] = State(tier: tier, assigner: OfficeAssigner(seats: seats[tier] ?? [])) }
+            if current == nil {
+                states[rid] = State(tier: tier, assigner: OfficeAssigner(seats: seats[tier] ?? []))
+            } else if reseated, let old = states[rid], let current {
+                // Oturanlar karo olarak aynı koltukta kalır (kademeler iç içe); kalmayanlar yeniden seçilir.
+                var carry: [String: OfficeSeat] = [:]
+                let oldSeats = seats[current] ?? []
+                for (member, seatID) in old.assigner.seatOf { if let seat = oldSeats.first(where: { $0.id == seatID }) { carry[member] = seat } }
+                states[rid] = State(tier: tier, assigner: OfficeAssigner(seats: seats[tier] ?? [], carrying: carry))
+            }
             var state = states[rid]!
             let plan = state.assigner.update(members: ms)
             states[rid] = state
             let session = ms.first { $0.kind == .session }
             rooms.append(OfficeRoomPlan(id: rid, tier: tier, title: session?.label, badge: session?.badge, groupIndex: session?.groupIndex ?? 0,
-                                        placements: plan.placements, departed: plan.departed, reseated: reseated, memberCount: n))
+                                        placements: plan.placements, departed: plan.departed, reseated: reseated,
+                                        previousTier: reseated ? current : nil, memberCount: n))
         }
         return OfficeRoomsPlan(rooms: rooms, removed: removed)
     }

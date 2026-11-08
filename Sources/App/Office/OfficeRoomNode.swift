@@ -94,6 +94,11 @@ final class OfficeActor {
     var bubbleExpired = false
     var bubbleActivityAt: Date?
     var bubbleTimer = false
+    /// Rol aksesuarı (alt ajan), boşta varyantı (oturan döngü) ve varyant yan düğümü.
+    var roleAccessory: SKSpriteNode?
+    var idleVariant: OfficeIdleVariant?
+    var idleOverlay: SKNode?
+    var idleCount = 0
 
     var isExecutive: Bool { seat.kind == .executive }
     /// Ayakta (tahta önünde ya da voltada): oturma çökmesi yok.
@@ -111,7 +116,7 @@ final class OfficeActor {
     }
 
     var isAnimating: Bool {
-        moving || hopping || leaving || bubbleTimer || strolling || (!away && (behavior.pose == .typing || behavior.bubble == .alert || behavior.pcOn))
+        moving || hopping || leaving || bubbleTimer || strolling || idleVariant != nil || (!away && (behavior.pose == .typing || behavior.bubble == .alert || behavior.pcOn))
     }
 }
 
@@ -140,6 +145,18 @@ final class OfficeRoomNode {
     private var leavingActors: [OfficeActor] = []
     private var pcNodes: [Int: SKSpriteNode] = [:]
     private var pcOccupied: [Int: String] = [:]
+    private var pcComputer: [Int: OfficeComputer] = [:]
+    private var furnitureNodes: [Int: SKNode] = [:]
+    /// Gece ışığı katmanı (yalnızca gece + görünür odada kurulur) ve ekran parıltıları.
+    private(set) var nightWanted = false
+    private var nightRoot: SKNode?
+    private var screenGlows: [Int: SKSpriteNode] = [:]
+    /// Temizlikçi / taşıyıcı durumu (oda başına bir kerede bir).
+    private(set) var cleanerDueAt: Date?
+    private var cleaning = false
+    private var carrying = false
+    private var cleanerRuns = 0
+    private var pendingSpawns: [String: (member: OfficeMember, seat: OfficeSeat)] = [:]
     private var assignedSeats: Set<Int> = []
     private var awayLounge: Set<Int> = []
     /// Yönetici beyaz tahtasının üstündeki "yazıyor" katmanı (yalnızca yönetici yazarken kurulur/oynar).
@@ -171,6 +188,8 @@ final class OfficeRoomNode {
             guard isVisible != oldValue else { return }
             content.isPaused = !isVisible
             if isVisible && bubblesOn { for a in actors.values { renderBubble(a) } }
+            if isVisible && nightWanted && nightRoot == nil { setNight(true, animated: false) }
+            nightRoot?.isHidden = !(isVisible && nightWanted)
         }
     }
 
@@ -222,7 +241,8 @@ final class OfficeRoomNode {
             // Öne-arkaya sıralama: ayak izi alt kenarı; yüzeydekiler (PC) sahibinin biraz üstünde.
             node.zPosition = CGFloat((f.row + a.footprintH) * 16) + (a.onSurface ? 0.2 : 0) + (OfficeAssets.isFrontChair(a) ? 0.8 : 0)
             content.addChild(node)
-            if a.id.hasSuffix("_OFF") { pcNodes[i] = node }
+            furnitureNodes[i] = node
+            if a.id == "PC_FRONT_OFF" { configureComputer(node, pc: i) } else if a.id.hasSuffix("_OFF") { pcNodes[i] = node }
         }
 
         if let door = assets.doorTexture() {
@@ -382,12 +402,14 @@ final class OfficeRoomNode {
         let name = SKLabelNode(fontNamed: "HelveticaNeue-Bold")
         name.fontSize = 9
         // Yönetici (ana ajan) etiketi ayrı görünür: "★ ad".
-        name.text = a.isExecutive ? "★ " + Self.truncated(a.member.label, 9) : Self.truncated(a.member.label, 11)
-        let t = a.appearance.tint
-        name.fontColor = SKColor(red: min(1, t.r + 0.35), green: min(1, t.g + 0.35), blue: min(1, t.b + 0.35), alpha: 1)
+        // Alt ajan: rol adı kısaltmasız (en çok 22 karakter), rol renginde; model rengi solda minik nokta.
+        name.text = a.isExecutive ? "★ " + Self.truncated(a.member.label, 9) : (a.appearance.role.map { Self.truncated($0.name, 22) } ?? Self.truncated(a.member.label, 11))
+        let t = a.appearance.role?.labelColor ?? OfficeRGB(r: min(1, a.appearance.tint.r + 0.35), g: min(1, a.appearance.tint.g + 0.35), b: min(1, a.appearance.tint.b + 0.35))
+        name.fontColor = SKColor(red: t.r, green: t.g, blue: t.b, alpha: 1)
         name.verticalAlignmentMode = .center
         name.horizontalAlignmentMode = .center
-        let width = name.frame.width + 8
+        let dotSpace: CGFloat = a.appearance.modelDot == nil ? 0 : 7
+        let width = name.frame.width + 8 + dotSpace
         let pill = SKSpriteNode(color: SKColor(white: 0.04, alpha: 0.85), size: CGSize(width: width, height: 13))
         pill.anchorPoint = CGPoint(x: 0.5, y: 0)
         pill.position = CGPoint(x: 0, y: 2)
@@ -395,8 +417,14 @@ final class OfficeRoomNode {
         let stripe = SKSpriteNode(color: SKColor(red: g.r, green: g.g, blue: g.b, alpha: 1), size: CGSize(width: width, height: 2))
         stripe.anchorPoint = CGPoint(x: 0.5, y: 0)
         stripe.position = .zero
-        name.position = CGPoint(x: 0, y: 2 + 7)
+        name.position = CGPoint(x: dotSpace / 2, y: 2 + 7)
         for n in [pill, stripe, name] as [SKNode] { a.label.addChild(n) }
+        if let dot = a.appearance.modelDot {
+            let d = SKSpriteNode(color: SKColor(red: dot.r, green: dot.g, blue: dot.b, alpha: 1), size: CGSize(width: 4, height: 4))
+            d.position = CGPoint(x: -width / 2 + 5, y: 2 + 6.5)
+            d.zPosition = 1
+            a.label.addChild(d)
+        }
         a.label.setScale(1 / CGFloat(zoom))
         positionAccessoryAndBubble(a)
     }
@@ -406,21 +434,34 @@ final class OfficeRoomNode {
     // MARK: Uygulama
 
     /// Plan çıktısını odaya uygular. `animated == false`: herkes doğrudan son konumunda belirir.
-    func apply(plan: OfficeRoomPlan, members: [OfficeMember], animated: Bool, now: Date) {
+    func apply(plan: OfficeRoomPlan, members: [OfficeMember], animated: Bool, now: Date, newcomers: Set<String> = []) {
         memberCount = plan.memberCount
         setTitle(title: plan.title, badge: plan.badge, group: plan.groupIndex)
         for id in plan.departed { depart(id, animated: animated) }
         assignedSeats = Set(plan.placements.values.compactMap { if case .seat(let s) = $0 { s } else { nil } })
+        let live = Set(members.map(\.id))
+        pendingSpawns = pendingSpawns.filter { live.contains($0.key) }
+        // Büyümede yeni masaya oturacak yeni gelen varsa önce taşıyıcı masayı getirir; ajan sonra yürüyüp oturur.
+        var carrierBlock: (seat: OfficeSeat, ids: [String])?
+        if animated || !newcomers.isEmpty, isVisible, !carrying, let prev = plan.previousTier, !newcomers.isEmpty {
+            let fresh = OfficeCarrier.newDeskSeats(old: assets.kit(prev).spots.seats, new: kit.spots.seats)
+            for m in members where newcomers.contains(m.id) {
+                if case .seat(let sid)? = plan.placements[m.id], let seat = fresh.first(where: { $0.id == sid }) { carrierBlock = (seat, [m.id]); break }
+            }
+        }
         for m in members {
             guard case .seat(let seatID)? = plan.placements[m.id], let seat = kit.spots.seats.first(where: { $0.id == seatID }) else { continue }
-            if let actor = actors[m.id] { update(actor, member: m, now: now, animated: animated) } else { spawn(m, seat: seat, animated: animated, now: now) }
+            if let actor = actors[m.id] { update(actor, member: m, now: now, animated: animated) }
+            else if pendingSpawns[m.id] != nil || carrierBlock?.ids.contains(m.id) == true { pendingSpawns[m.id] = (m, seat) }
+            else { spawn(m, seat: seat, animated: animated || newcomers.contains(m.id), now: now) }
         }
+        if let block = carrierBlock { startCarrier(for: block.seat) }
         setOverflow(plan.overflowCount)
         notify()
     }
 
     private func spawn(_ m: OfficeMember, seat: OfficeSeat, animated: Bool, now: Date) {
-        let look = OfficeAppearance.appearance(for: m.badge)
+        let look = OfficeAppearance.appearance(for: m)
         let actor = OfficeActor(member: m, appearance: look, seat: seat,
                                 texture: assets.characterTexture(index: look.characterIndex, direction: seat.facing, frame: 1))
         actor.idleSince = now
@@ -736,6 +777,7 @@ final class OfficeRoomNode {
 
     /// Oturma/ayakta pozunu ve ek öğeleri (balon, PC ekranı) mevcut davranışa göre kurar.
     private func applyPose(_ a: OfficeActor) {
+        stopIdle(a)
         a.body.removeAction(forKey: "pose")
         let frames: [Int]
         switch a.behavior.pose {
@@ -779,13 +821,14 @@ final class OfficeRoomNode {
     private func setPC(_ a: OfficeActor) {
         guard let pc = a.seat.pcIndex, let node = pcNodes[pc], pcOccupied[pc] == a.member.id else { return }
         node.removeAction(forKey: "screen")
-        let off = kit.layout.furniture[pc].assetID
-        if a.behavior.pcOn, let on = OfficeBehavior.pcOnFrames(forOffAsset: off) {
-            let tex = on.compactMap { assets.furnitureTexture($0) }
-            if !tex.isEmpty { node.run(.repeatForever(.animate(with: tex, timePerFrame: 0.45, resize: false, restore: false)), withKey: "screen") }
-        } else {
-            node.texture = assets.furnitureTexture(off)
+        if let c = pcComputer[pc], let f = assets.computerFrames(c) {
+            if a.behavior.pcOn, !f.on.isEmpty {
+                node.run(.repeatForever(.animate(with: f.on, timePerFrame: 0.45, resize: false, restore: false)), withKey: "screen")
+            } else {
+                node.texture = f.off
+            }
         }
+        updateScreenGlow(pc, on: a.behavior.pcOn)
     }
 
     /// Aksesuar baş üstünde, balon sağ üstte; oturma pozunda baş birkaç piksel aşağıdadır (ayakta/yürürken değil).
@@ -797,6 +840,7 @@ final class OfficeRoomNode {
             acc.xScale = s; acc.yScale = s
         }
         a.bubble?.position = CGPoint(x: 7 * s, y: headTop - 8 * s)
+        placeRoleAccessory(a)
         a.label.position = CGPoint(x: 0, y: labelY(a))
         if let tb = a.textBubble, !tb.node.isHidden {
             tb.node.setScale(1 / CGFloat(zoom))
@@ -846,6 +890,14 @@ final class OfficeRoomNode {
     }
 
     private func buildAccessory(_ a: OfficeActor) {
+        if let role = a.appearance.role, a.roleAccessory == nil, let name = OfficeArt.roleAccessoryName(role.accessory), let tex = assets.artTexture(name) {
+            let n = SKSpriteNode(texture: tex)
+            n.size = tex.size()
+            n.zPosition = 11
+            a.root.addChild(n)
+            a.roleAccessory = n
+            placeRoleAccessory(a)
+        }
         guard a.accessory == nil, let tex = assets.accessoryTexture(a.appearance.accessory) else { return }
         let node = SKSpriteNode(texture: tex)
         node.anchorPoint = CGPoint(x: 0.5, y: 0)
@@ -864,7 +916,8 @@ final class OfficeRoomNode {
     }
 
     /// `route[0]` karakterin bulunduğu karo; sonrakiler adım adım. Her adım: yön/dokular, z, kayma.
-    private func run(route: [OfficeTile], for a: OfficeActor, completion: @escaping @MainActor () -> Void) {
+    private func run(route: [OfficeTile], for a: OfficeActor, onStep: (@MainActor (OfficeTile) -> Void)? = nil, completion: @escaping @MainActor () -> Void) {
+        stopIdle(a)
         a.root.removeAction(forKey: "move")
         a.body.removeAction(forKey: "pose")
         a.bubble?.removeFromParent(); a.bubble = nil
@@ -875,8 +928,10 @@ final class OfficeRoomNode {
             let dir = direction(from: from, to: to)
             let walk = (0..<4).map { assets.characterTexture(index: a.appearance.characterIndex, direction: dir, frame: OfficeCharacterSheet.frameIndex(.walk($0))) }
             let z = max(yDown(from), yDown(to)) + 0.5
-            actions.append(.run { [weak a] in
+            actions.append(.run { [weak a, weak self] in
                 guard let a else { return }
+                self?.placeRoleAccessory(a)
+                onStep?(from)
                 a.direction = dir
                 a.heading = to
                 a.body.xScale = (OfficeCharacterSheet.mirrorsHorizontally(dir) ? -1 : 1) * abs(a.body.xScale)
@@ -925,7 +980,8 @@ final class OfficeRoomNode {
         if let pc = a.seat.pcIndex, pcOccupied[pc] == id {
             pcOccupied[pc] = nil
             pcNodes[pc]?.removeAction(forKey: "screen")
-            pcNodes[pc]?.texture = assets.furnitureTexture(kit.layout.furniture[pc].assetID)
+            if let c = pcComputer[pc], let f = assets.computerFrames(c) { pcNodes[pc]?.texture = f.off }
+            updateScreenGlow(pc, on: false)
         }
         if let s = a.awaySeatID { awayLounge.remove(s); a.awaySeatID = nil }
         a.leaving = true
@@ -967,9 +1023,8 @@ final class OfficeRoomNode {
 
     /// Boştayken oda içinde gidilecek yer: büyük odada kahve makinesi, diğerlerinde boşta kalan bir salon koltuğu.
     private func restTarget() -> (tile: OfficeTile, facing: OfficeCharacterSheet.Direction, seatID: Int?)? {
+        // Her odada kahve makinesi var; salon koltukları ajan koltuğu/dinlenme yeri değildir (ofis v3).
         if let coffee = kit.spots.coffee { return (coffee, kit.spots.coffeeFacing, nil) }
-        let busy = assignedSeats.union(awayLounge)
-        if let s = kit.spots.loungeSeats.first(where: { !busy.contains($0.id) }) { return (s.tile, s.facing, s.id) }
         return nil
     }
 
@@ -993,7 +1048,8 @@ final class OfficeRoomNode {
             a.body.texture = self.assets.characterTexture(index: a.appearance.characterIndex, direction: a.direction, frame: 1)
             a.body.xScale = (OfficeCharacterSheet.mirrorsHorizontally(a.direction) ? -1 : 1) * abs(a.body.xScale)
             if target.seatID != nil { a.body.position.y = -Self.sitDrop }
-            a.root.run(.sequence([.wait(forDuration: target.seatID == nil ? 6 : 10), .run { [weak self, weak a] in
+            a.idleCount += 1
+            a.root.run(.sequence([.wait(forDuration: OfficeIdle.stay(seed: a.member.id, n: a.idleCount)), .run { [weak self, weak a] in
                 guard let self, let a, a.away else { return }
                 self.sendBack(a, animated: true)
             }]), withKey: "coffee")
@@ -1014,6 +1070,334 @@ final class OfficeRoomNode {
         place(a, at: from)
         run(route: [from] + route, for: a) { [weak self] in self?.arrive(a) }
     }
+
+    // MARK: Ofis v3 — bilgisayar + rol aksesuarı
+
+    private func configureComputer(_ node: SKSpriteNode, pc i: Int) {
+        let seat = kit.spots.seats.first { $0.pcIndex == i }
+        let c: OfficeComputer = seat.map { $0.kind == .executive ? OfficeComputer.executive : OfficeComputer.pick(roomID: id, seatID: Self.seatKey($0)) }
+            ?? OfficeComputer.pick(roomID: id, seatID: 10_000 + i)
+        pcComputer[i] = c
+        node.size = CGSize(width: 16, height: 32)
+        if let f = assets.computerFrames(c) { node.texture = f.off }
+        pcNodes[i] = node
+    }
+
+    /// Koltuğun kademeden bağımsız anahtarı (bilgisayar türü seçimi): satır * 100 + sütun.
+    static func seatKey(_ s: OfficeSeat) -> Int { s.tile.row * 100 + s.tile.col }
+
+    func computer(forPC i: Int) -> OfficeComputer? { pcComputer[i] }
+
+    /// Rol aksesuarı konumu: yüz/baş/gövde/el. Arkaya bakarken yüz ve gövde aksesuarları gizlenir.
+    private func placeRoleAccessory(_ a: OfficeActor) {
+        guard let node = a.roleAccessory, let role = a.appearance.role else { return }
+        let s = abs(a.body.yScale), by = a.body.position.y
+        let front = a.direction != .up
+        let handX: CGFloat = (a.direction == .left ? -7 : 7) * s
+        switch role.accessory {
+        case .glasses: node.isHidden = !front; node.position = CGPoint(x: 0, y: by + 23 * s)
+        case .headphones: node.isHidden = false; node.position = CGPoint(x: 0, y: by + 25 * s)
+        case .hood: node.isHidden = !front; node.position = CGPoint(x: 0, y: by + 17 * s)
+        case .vest: node.isHidden = !front; node.position = CGPoint(x: 0, y: by + 11 * s)
+        case .tie: node.isHidden = !front; node.position = CGPoint(x: 0, y: by + 11 * s)
+        case .tag: node.isHidden = !front; node.position = CGPoint(x: 4 * s, y: by + 9 * s)
+        case .none, .binoculars, .book, .magnifier, .compass, .clipboard, .ruler: node.isHidden = false; node.position = CGPoint(x: handX, y: by + 10 * s)
+        }
+        node.setScale(s)
+    }
+
+    // MARK: Ofis v3 — gece ışığı
+
+    func setNight(_ on: Bool, animated: Bool) {
+        nightWanted = on
+        if on { buildNightIfNeeded() }
+        guard let root = nightRoot else { return }
+        root.removeAction(forKey: "fade")
+        let target: CGFloat = on ? 1 : 0
+        if animated && isVisible {
+            root.isHidden = false
+            root.run(.sequence([.fadeAlpha(to: target, duration: OfficeLighting.crossfade), .run { [weak root] in root?.isHidden = target == 0 }]), withKey: "fade")
+        } else {
+            root.alpha = target
+            root.isHidden = target == 0 || !isVisible
+        }
+        for a in actors.values { if let pc = a.seat.pcIndex, pcOccupied[pc] == a.member.id { updateScreenGlow(pc, on: a.behavior.pcOn) } }
+    }
+
+    /// Gece katmanı: koyu lacivert multiply örtü, tavan lambası (geniş sıcak ışık), her masada lamba + ışık havuzu, tahta lambası.
+    /// Statik sprite'lar (animasyon yok); oda görünmezken gizli. Dokular `OfficeAssets` içinde paylaşılır.
+    private func buildNightIfNeeded() {
+        guard nightRoot == nil, isVisible else { return }
+        let w = CGFloat(kit.worldWidth), h = CGFloat(kit.worldHeight), b = kit.bounds
+        let root = SKNode()
+        root.zPosition = 4000
+        root.alpha = 0
+        root.isHidden = true
+        let dim = SKSpriteNode(color: SKColor(red: 0.14, green: 0.18, blue: 0.40, alpha: 1), size: CGSize(width: w, height: h))
+        dim.anchorPoint = .zero
+        dim.alpha = CGFloat(OfficeLighting.nightOverlayAlpha)
+        dim.blendMode = .multiply
+        root.addChild(dim)
+        func glow(_ name: String, size: CGSize, at p: CGPoint, alpha: CGFloat) {
+            guard let t = assets.artTexture(name) else { return }
+            let g = SKSpriteNode(texture: t, size: size)
+            g.position = p; g.blendMode = .add; g.alpha = alpha; g.zPosition = 1
+            root.addChild(g)
+        }
+        func sprite(_ name: String, at p: CGPoint) {
+            guard let t = assets.artTexture(name) else { return }
+            let n = SKSpriteNode(texture: t, size: t.size())
+            n.anchorPoint = CGPoint(x: 0.5, y: 0)
+            n.position = p; n.zPosition = 2
+            root.addChild(n)
+        }
+        glow("glow_bulb", size: CGSize(width: w * 1.3, height: h * 1.15), at: CGPoint(x: w / 2, y: h * 0.55), alpha: 0.85)
+        for (_, f, a) in kit.dynamicFurniture where a.id == "DESK_FRONT" || a.id == "SMALL_TABLE_FRONT" {
+            let x = CGFloat((f.col - b.minCol) * 16) + (a.id == "DESK_FRONT" ? 24 : 16)
+            let y = h - CGFloat((f.row - b.minRow) * 16) - 14
+            glow("glow_pool", size: CGSize(width: 64, height: 36), at: CGPoint(x: x, y: y - 3), alpha: 0.9)
+            sprite("lamp", at: CGPoint(x: x, y: y - 1))
+        }
+        for f in kit.layout.furniture where f.assetID == "WHITEBOARD" {
+            glow("glow_pool", size: CGSize(width: 60, height: 36), at: CGPoint(x: CGFloat((f.col - b.minCol) * 16 + 16), y: h - CGFloat((f.row - b.minRow) * 16 + 14)), alpha: 0.5)
+        }
+        content.addChild(root)
+        nightRoot = root
+    }
+
+    /// PC ekranı parıltısı (gece, yalnızca ekran açıkken).
+    private func updateScreenGlow(_ pc: Int, on: Bool) {
+        guard let root = nightRoot else { return }
+        if !on { screenGlows[pc]?.isHidden = true; return }
+        if screenGlows[pc] == nil, let t = assets.artTexture("glow_screen"), pc < kit.layout.furniture.count {
+            let f = kit.layout.furniture[pc], b = kit.bounds
+            let g = SKSpriteNode(texture: t, size: CGSize(width: 30, height: 20))
+            g.position = CGPoint(x: CGFloat((f.col - b.minCol) * 16 + 8), y: CGFloat(kit.worldHeight) - CGFloat((f.row - b.minRow) * 16 + 6))
+            g.blendMode = .add; g.zPosition = 3
+            root.addChild(g)
+            screenGlows[pc] = g
+        }
+        screenGlows[pc]?.isHidden = false
+    }
+
+    // MARK: Ofis v3 — boşta varyantları
+
+    var variantCount: Int { actors.values.filter { $0.idleVariant != nil }.count }
+    var walkerCount: Int { actors.values.filter { $0.away || $0.moving }.count }
+
+    /// Masada boşta oturan, şu an hiçbir şey yapmayan karakterler (varyant adayları), kimliğe göre sıralı.
+    func idleCandidates() -> [OfficeActor] {
+        actors.values.filter { $0.behavior.pose == .sitting && !$0.isExecutive && $0.seat.kind == .desk && !$0.moving && !$0.away && !$0.leaving && !$0.hopping && $0.idleVariant == nil }
+            .sorted { $0.member.id < $1.member.id }
+    }
+
+    /// Bir boşta varyantı oynatır (sonlu SKAction; bitince normal poza döner). Okuma / kahve / esneme / zzz.
+    @discardableResult
+    func startIdleVariant(id: String) -> OfficeIdleVariant? {
+        guard isVisible, let a = actors[id], a.idleVariant == nil, !a.moving, !a.away, !a.leaving else { return nil }
+        let v = OfficeIdle.variant(seed: a.member.id, n: a.idleCount)
+        let len = OfficeIdle.length(seed: a.member.id, n: a.idleCount)
+        a.idleCount += 1
+        a.idleVariant = v
+        let s = abs(a.body.yScale)
+        func tex(_ pose: OfficeCharacterSheet.Pose) -> SKTexture { assets.characterTexture(index: a.appearance.characterIndex, direction: a.direction, frame: OfficeCharacterSheet.frameIndex(pose)) }
+        func overlay(_ name: String, x: CGFloat, y: CGFloat) -> SKSpriteNode? {
+            guard let t = assets.artTexture(name) else { return nil }
+            let n = SKSpriteNode(texture: t, size: t.size())
+            n.position = CGPoint(x: x * s, y: y * s); n.setScale(s); n.zPosition = 12
+            a.root.addChild(n)
+            a.idleOverlay = n
+            return n
+        }
+        switch v {
+        case .read:
+            a.body.run(.repeatForever(.animate(with: [tex(.reading(0)), tex(.reading(1))], timePerFrame: 0.7, resize: false, restore: false)), withKey: "idle")
+        case .coffee:
+            if let cup = overlay("cup", x: 6, y: 8 + a.body.position.y) {
+                cup.run(.repeatForever(.sequence([.wait(forDuration: 1.4), .moveBy(x: 0, y: 3 * s, duration: 0.4), .wait(forDuration: 0.5), .moveBy(x: 0, y: -3 * s, duration: 0.4)])))
+            }
+        case .yawn:
+            a.body.run(.repeatForever(.sequence([.animate(with: [tex(.reading(0))], timePerFrame: 0.3, resize: false, restore: false), .moveBy(x: 0, y: 1.5, duration: 0.12),
+                                                 .moveBy(x: 0, y: -1.5, duration: 0.12), .animate(with: [tex(.stand)], timePerFrame: 0.3, resize: false, restore: false), .wait(forDuration: 1.2)])), withKey: "idle")
+        case .zzz:
+            if let z = overlay("zzz", x: 8, y: headTop(a) / max(s, 0.01) - 2) {
+                z.run(.repeatForever(.sequence([.moveBy(x: 0, y: 2, duration: 0.9), .moveBy(x: 0, y: -2, duration: 0.9)])))
+            }
+        }
+        a.root.run(.sequence([.wait(forDuration: len), .run { [weak self, weak a] in
+            guard let self, let a, a.idleVariant != nil else { return }
+            self.applyPose(a)
+        }]), withKey: "idleEnd")
+        notify()
+        return v
+    }
+
+    private func stopIdle(_ a: OfficeActor) {
+        guard a.idleVariant != nil || a.idleOverlay != nil else { return }
+        a.idleVariant = nil
+        a.root.removeAction(forKey: "idleEnd")
+        a.body.removeAction(forKey: "idle")
+        a.idleOverlay?.removeFromParent()
+        a.idleOverlay = nil
+        a.body.position.y = a.upright ? 0 : -Self.sitDrop
+    }
+
+    // MARK: Ofis v3 — temizlikçi + taşıyıcı (yardımcı karakterler)
+
+    /// Roller dışı yardımcı karakter (planlayıcıya girmez): `leavingActors` listesinde izlenir (ölçek/animasyon durumu).
+    private func makeProp(label: String, tint: OfficeRGB, blend: Double) -> OfficeActor {
+        let member = OfficeMember(id: "__\(label)__", parentID: nil, kind: .subagent, label: label, badge: .unknown, status: .tool(label), groupIndex: 0)
+        let look = OfficeAppearance(characterIndex: 1, tint: tint, tintBlend: blend, accessory: .none, small: false, badgeText: "")
+        let seat = kit.spots.seats.first ?? OfficeSeat(id: -1, tile: kit.spots.entrance, facing: .down, kind: .desk, pcIndex: nil)
+        let a = OfficeActor(member: member, appearance: look, seat: seat, texture: assets.characterTexture(index: 1, direction: .left, frame: 1))
+        a.leaving = true
+        a.root.position = point(kit.spots.door)
+        a.root.zPosition = yDown(kit.spots.door) + 0.5
+        a.root.alpha = 0
+        content.addChild(a.root)
+        leavingActors.append(a)
+        applyScale(a)
+        a.root.run(.fadeIn(withDuration: 0.25))
+        return a
+    }
+
+    private func dismissProp(_ a: OfficeActor, completion: @escaping @MainActor () -> Void) {
+        a.root.run(.fadeOut(withDuration: 0.25)) {
+            MainActor.assumeIsolated {
+                a.root.removeFromParent()
+                self.leavingActors.removeAll { $0 === a }
+                completion()
+                self.notify()
+            }
+        }
+    }
+
+    /// Temizlikçi zamanlayıcısı (saf kural: `OfficeCleaner.shouldStart`). Başladıysa true.
+    @discardableResult
+    func cleanerTick(now: Date, scenePaused: Bool = false) -> Bool {
+        guard !isPlaceholder, memberCount > 0 else { return false }
+        if cleanerDueAt == nil { cleanerDueAt = now.addingTimeInterval(OfficeCleaner.delay(seed: id, n: cleanerRuns)); return false }
+        guard OfficeCleaner.shouldStart(now: now, dueAt: cleanerDueAt, roomVisible: isVisible, scenePaused: scenePaused, busy: cleaning || carrying) else { return false }
+        return startCleaner(now: now)
+    }
+
+    @discardableResult
+    func startCleaner(now: Date) -> Bool {
+        let spots = kit.spots
+        let route = OfficeCleaner.route(grid: kit.grid, entrance: spots.entrance, laneRows: OfficeRoomTemplates.laneRows(stations: tier.stations))
+        cleanerRuns += 1
+        cleanerDueAt = now.addingTimeInterval(OfficeCleaner.delay(seed: id, n: cleanerRuns))
+        guard route.count > 3, !cleaning else { return false }
+        cleaning = true
+        let a = makeProp(label: "temizlikçi", tint: OfficeRGB(r: 0.15, g: 0.45, b: 0.98), blend: 0.6)
+        if let t = assets.artTexture("mop") {
+            let mop = SKSpriteNode(texture: t, size: t.size())
+            mop.anchorPoint = CGPoint(x: 0.5, y: 0)
+            mop.position = CGPoint(x: 8, y: 1)
+            mop.zPosition = 11
+            mop.run(.repeatForever(.sequence([.rotate(toAngle: 0.18, duration: 0.25), .rotate(toAngle: -0.18, duration: 0.25)])))
+            a.root.addChild(mop)
+        }
+        var steps = [spots.door] + route
+        steps.append(spots.door)
+        run(route: steps, for: a, onStep: { [weak self] tile in self?.addTrail(at: tile) }) { [weak self] in
+            self?.dismissProp(a) { self?.cleaning = false }
+        }
+        notify()
+        return true
+    }
+
+    /// Yürünen karoda kısa süre parlayan açık şerit.
+    private func addTrail(at t: OfficeTile) {
+        let n = SKSpriteNode(color: SKColor(red: 0.8, green: 0.97, blue: 1, alpha: 1), size: CGSize(width: 14, height: 7))
+        n.alpha = 0.5
+        n.blendMode = .add
+        n.position = CGPoint(x: point(t).x, y: point(t).y + 3)
+        n.zPosition = 0.5
+        content.addChild(n)
+        n.run(.sequence([.fadeOut(withDuration: 3.2), .removeFromParent()]))
+    }
+
+    /// Büyüme: yeni masa bloğunu gizle, taşıyıcı kapıdan masayı getirip bırakır (0.4 sn düşme), bilgisayar belirir, çıkar; sonra
+    /// bekleyen yeni ajan yürüyüp oturur.
+    private func startCarrier(for seat: OfficeSeat) {
+        let bc = 1 + 4 * ((seat.tile.col - 1) / 4), br = seat.tile.row - 2
+        var parts: [(node: SKNode, isDesk: Bool)] = []
+        for (i, f, a) in kit.dynamicFurniture where f.row == br && ((f.col == bc && (a.id == "DESK_FRONT" || a.id == "PC_FRONT_OFF")) || (f.col == bc + 2 && a.id == "PC_FRONT_OFF")) {
+            if let n = furnitureNodes[i] { parts.append((n, a.id == "DESK_FRONT")) }
+        }
+        let spots = kit.spots
+        let target = OfficeTile(bc + 1, br + 2)
+        guard !parts.isEmpty, let there = kit.grid.path(from: spots.entrance, to: target), let back = kit.grid.path(from: target, to: spots.entrance) else {
+            finishCarrier(); return
+        }
+        carrying = true
+        for p in parts { p.node.alpha = 0 }
+        let a = makeProp(label: "taşıyıcı", tint: OfficeRGB(r: 0.9, g: 0.55, b: 0.15), blend: 0.5)
+        var box: SKSpriteNode?
+        if let t = assets.artTexture("box") {
+            let n = SKSpriteNode(texture: t, size: t.size())
+            n.anchorPoint = CGPoint(x: 0.5, y: 0)
+            n.position = CGPoint(x: 0, y: 14)
+            n.zPosition = 11
+            a.root.addChild(n)
+            box = n
+        }
+        run(route: [spots.door, spots.entrance] + there, for: a) { [weak self] in
+            guard let self else { return }
+            box?.removeFromParent()
+            a.body.texture = self.assets.characterTexture(index: 1, direction: .up, frame: 1)
+            for p in parts {
+                if p.isDesk {
+                    let home = p.node.position
+                    p.node.position = CGPoint(x: home.x, y: home.y + 24)
+                    p.node.run(.group([.move(to: home, duration: OfficeCarrier.dropDuration), .fadeIn(withDuration: OfficeCarrier.dropDuration)]))
+                } else {
+                    p.node.run(.sequence([.wait(forDuration: OfficeCarrier.dropDuration), .fadeIn(withDuration: 0.2)]))
+                }
+            }
+            a.root.run(.wait(forDuration: 0.9)) {
+                MainActor.assumeIsolated {
+                    self.run(route: [target] + back + [spots.door], for: a) {
+                        self.dismissProp(a) { self.finishCarrier() }
+                    }
+                }
+            }
+        }
+        notify()
+    }
+
+    private func finishCarrier() {
+        carrying = false
+        let pending = pendingSpawns
+        pendingSpawns = [:]
+        for (_, p) in pending.sorted(by: { $0.key < $1.key }) where actors[p.member.id] == nil { spawn(p.member, seat: p.seat, animated: true, now: .now) }
+        notify()
+    }
+
+    // MARK: Ofis v3 — tıklama / üzerine gelme
+
+    /// Odanın yerel noktasında (y yukarı) en üstteki karakter.
+    func actor(atLocal p: CGPoint) -> OfficeActor? {
+        var best: OfficeActor?
+        for a in actors.values where !a.leaving {
+            let s = abs(a.body.yScale)
+            let r = CGRect(x: a.root.position.x - 9 * s, y: a.root.position.y + a.body.position.y - 1, width: 18 * s, height: 31 * s)
+            if r.contains(p), best == nil || a.root.zPosition > best!.root.zPosition { best = a }
+        }
+        return best
+    }
+
+    /// Beyaz tahtaya (yönetici kartı) isabet mi.
+    func boardContains(_ p: CGPoint) -> Bool {
+        guard let i = kit.spots.boardIndex, i < kit.layout.furniture.count else { return false }
+        let f = kit.layout.furniture[i], b = kit.bounds
+        return CGRect(x: CGFloat((f.col - b.minCol) * 16), y: CGFloat(kit.worldHeight) - CGFloat((f.row - b.minRow) * 16 + 32), width: 32, height: 32).contains(p)
+    }
+
+    var executiveMemberID: String? { actors.values.first { $0.isExecutive }?.member.id }
+    func member(id: String) -> OfficeMember? { actors[id]?.member }
+    func actorTop(id: String) -> CGPoint? { actors[id].map { CGPoint(x: $0.root.position.x, y: $0.root.position.y + 32 * abs($0.body.yScale)) } }
 
     private func notify() { onAnimationChange?() }
 }

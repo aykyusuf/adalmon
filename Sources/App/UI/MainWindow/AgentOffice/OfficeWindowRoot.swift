@@ -10,7 +10,7 @@ struct OfficeWindowRoot: View {
         let sessions = model.agents.monitor.state.orderedSessions
         VStack(spacing: 0) {
             strip(sessions: sessions)
-            OfficeSceneView(members: OfficeMember.members(from: sessions), selectedRoom: $state.selectedRoom)
+            OfficeSceneContainer(members: OfficeMember.members(from: sessions), selectedRoom: $state.selectedRoom)
                 .overlay { if sessions.isEmpty { emptyHint } }
                 .accessibilityLabel("Ajan ofisi: \(sessions.count) oturum")
         }
@@ -28,6 +28,7 @@ struct OfficeWindowRoot: View {
                 .help("Pencere tüm masaüstlerinde (Space) görünür")
             Menu {
                 Toggle("Şeffaf başlık çubuğu", isOn: $state.settings.transparentTitlebar)
+                OfficeLightingMenu()
             } label: {
                 Label("Seçenekler", systemImage: "ellipsis.circle")
             }

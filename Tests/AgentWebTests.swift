@@ -226,11 +226,11 @@ final class AgentWebTests: XCTestCase {
     func testLayoutJSONSchema() throws {
         let built = try XCTUnwrap(OfficeWebLayout.build(officeRoot: officeRoot))
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: built.json) as? [String: Any])
-        XCTAssertEqual(root["v"] as? Int, 1)
+        XCTAssertEqual(root["v"] as? Int, 3)
         let tiers = try XCTUnwrap(root["tiers"] as? [String: [String: Any]])
-        XCTAssertEqual(Set(tiers.keys), ["small", "medium", "large"])
-        let expectSeats = ["small": 4, "medium": 8, "large": 12]
-        let expectFloor = ["small": (8, 8), "medium": (11, 8), "large": (13, 13)]
+        XCTAssertEqual(Set(tiers.keys), ["s2", "s4", "s6", "s8", "s12", "s16"])
+        let expectSeats = ["s2": 3, "s4": 5, "s6": 7, "s8": 9, "s12": 13, "s16": 17]
+        let expectFloor = ["s2": (8, 10), "s4": (8, 10), "s6": (11, 10), "s8": (11, 14), "s12": (11, 14), "s16": (11, 18)]
         for (key, tier) in tiers {
             let seats = try XCTUnwrap(tier["seats"] as? [[String: Any]])
             XCTAssertEqual(seats.count, expectSeats[key], key)
@@ -244,7 +244,7 @@ final class AgentWebTests: XCTestCase {
             let exec = try XCTUnwrap(seats.first { $0["kind"] as? String == "executive" })
             XCTAssertFalse((exec["toBoard"] as? [[Int]] ?? []).isEmpty, "yönetici koltuğundan tahtaya yol")
             for s in seats { XCTAssertFalse(((s["enter"] as? [[Int]]) ?? []).isEmpty, "\(key) koltuk \(s["id"] ?? "?") giriş yolu") }
-            XCTAssertEqual(tier["coffeeMachine"] as? Bool, key == "large")
+            XCTAssertEqual(tier["coffeeMachine"] as? Bool, true, key)
         }
         // Mobilya: her yerleşimin varlığı kataloğda, her dosya diskte var.
         let furniture = try XCTUnwrap(root["furniture"] as? [String: [String: Any]])
@@ -295,7 +295,7 @@ final class AgentWebTests: XCTestCase {
         let r1 = try XCTUnwrap(rooms.first { $0["id"] as? String == "s1" })
         XCTAssertEqual(r1["title"] as? String, "Ofis işi")
         XCTAssertEqual(r1["badge"] as? String, "opus")
-        XCTAssertEqual(r1["tier"] as? String, "small")
+        XCTAssertEqual(r1["tier"] as? String, "s2")
         let members = try XCTUnwrap(r1["members"] as? [[String: Any]])
         XCTAssertEqual(members.count, 2)
         let main = try XCTUnwrap(members.first { $0["kind"] as? String == "session" })
@@ -319,7 +319,7 @@ final class AgentWebTests: XCTestCase {
         XCTAssertEqual(perm["pose"] as? String, "reading")
         // İzinli alanlar dışında anahtar yok.
         let allowed: Set<String> = ["id", "kind", "label", "badge", "status", "statusLabel", "working", "activity", "target", "activityAt", "bubble", "seat",
-                                    "seatKind", "pose", "alert", "pcOn", "standing", "overflow", "startedAt", "project"]
+                                    "seatKind", "pose", "alert", "pcOn", "standing", "overflow", "startedAt", "project", "role", "appearance", "seatInfo", "idleVariant"]
         for m in members + [perm] { XCTAssertTrue(Set(m.keys).isSubset(of: allowed), "\(Set(m.keys).subtracting(allowed))") }
         // Boş ofis: oda yok.
         let empty = try XCTUnwrap(JSONSerialization.jsonObject(with: builder.snapshot(sessions: [], now: now)) as? [String: Any])
@@ -341,15 +341,15 @@ final class AgentWebTests: XCTestCase {
             try XCTUnwrap(((JSONSerialization.jsonObject(with: data) as? [String: Any])?["rooms"] as? [[String: Any]])?.first)
         }
         let first = try room(builder.snapshot(sessions: [session(2)], now: now))
-        XCTAssertEqual(first["tier"] as? String, "small")
+        XCTAssertEqual(first["tier"] as? String, "s2")
         let seatOf = { (r: [String: Any]) in Dictionary(uniqueKeysWithValues: (r["members"] as! [[String: Any]]).map { ($0["id"] as! String, $0["seat"] as? Int) }) }
         let before = seatOf(first)
         let bigger = try room(builder.snapshot(sessions: [session(6)], now: now))
-        XCTAssertEqual(bigger["tier"] as? String, "medium")
+        XCTAssertEqual(bigger["tier"] as? String, "s6")
         XCTAssertEqual(bigger["reseated"] as? Bool, true)
-        let over = try room(builder.snapshot(sessions: [session(15)], now: now))
-        XCTAssertEqual(over["tier"] as? String, "large")
-        XCTAssertEqual(over["overflow"] as? Int, 4, "16 üye, 12 koltuk")
+        let over = try room(builder.snapshot(sessions: [session(19)], now: now))
+        XCTAssertEqual(over["tier"] as? String, "s16")
+        XCTAssertEqual(over["overflow"] as? Int, 3, "20 üye, 17 koltuk")
         XCTAssertEqual(before.count, 3)
     }
 

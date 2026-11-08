@@ -27,8 +27,21 @@ final class OfficeHostView: SKView {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        officeScene?.pointerDown(at: convert(event.locationInWindow, from: nil))
+        officeScene?.pointerDown(at: convert(event.locationInWindow, from: nil), clickCount: event.clickCount)
     }
+
+    // Üzerine gelme: ipucu + el imleci.
+    private var tracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) { officeScene?.hover(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseExited(with event: NSEvent) { officeScene?.hover(at: nil) }
 
     override func mouseDragged(with event: NSEvent) { officeScene?.pointerDragged(to: convert(event.locationInWindow, from: nil)) }
     override func mouseUp(with event: NSEvent) { officeScene?.pointerUp(at: convert(event.locationInWindow, from: nil)) }
@@ -59,6 +72,8 @@ struct OfficeSceneView: NSViewRepresentable {
     let members: [OfficeMember]
     /// Odaklanılan oda (tıklama/Esc sahneden, "Hepsini göster" sayfadan değiştirir).
     @Binding var selectedRoom: String?
+    var lightingMode: OfficeLightingMode = .auto
+    @Binding var card: OfficeDetailCard?
 
     @MainActor
     final class Coordinator {
@@ -70,6 +85,9 @@ struct OfficeSceneView: NSViewRepresentable {
         var setSelection: (String?) -> Void = { _ in }
         /// Sahne ile bağlama son eşitlenen odak (sahnenin eşzamansız bildirimi güncellemeyle yarışmasın).
         var knownSelection: String?
+        var knownLighting: OfficeLightingMode?
+        /// Bağlamaya son yazılan kart (kapat düğmesi bağlamayı nil yapınca sahneyi de kapatmak için).
+        var pushedCard: OfficeDetailCard?
 
         /// SKView'i ayarlar: 12 fps; sahne durağansa (ya da pencere görünmüyorsa) duraklatılır.
         func refreshRunState() {
@@ -118,6 +136,9 @@ struct OfficeSceneView: NSViewRepresentable {
             scene?.onAnimationStateChange = nil
             scene?.onActivity = nil
             scene?.onSelectionChange = nil
+            scene?.onCardChange = nil
+            scene?.onHoverChange = nil
+            scene?.shutdown()
             scene = nil
         }
     }
@@ -138,6 +159,13 @@ struct OfficeSceneView: NSViewRepresentable {
         scene.onActivity = { [weak coordinator] in coordinator?.refreshRunState() }
         scene.onSelectionChange = { [weak coordinator] id in coordinator?.knownSelection = id; coordinator?.setSelection(id) }
         coordinator.setSelection = { id in DispatchQueue.main.async { selection.wrappedValue = id } }
+        let cardBinding = $card
+        scene.onCardChange = { [weak coordinator] card in
+            DispatchQueue.main.async { coordinator?.pushedCard = card; cardBinding.wrappedValue = card }
+        }
+        scene.onHoverChange = { hand in (hand ? NSCursor.pointingHand : NSCursor.arrow).set() }
+        scene.setLightingMode(lightingMode, animated: false)
+        coordinator.knownLighting = lightingMode
         coordinator.scene = scene
         view.onVisibilityChange = { [weak coordinator] in coordinator?.refreshRunState() }
         view.presentScene(scene)
@@ -152,6 +180,12 @@ struct OfficeSceneView: NSViewRepresentable {
         guard let scene = c.scene else { return }
         let selection = $selectedRoom
         c.setSelection = { id in DispatchQueue.main.async { selection.wrappedValue = id } }
+        if c.knownLighting != lightingMode {
+            c.knownLighting = lightingMode
+            scene.setLightingMode(lightingMode, animated: view.isReallyVisible)
+            c.refreshRunState()
+        }
+        if card == nil, c.pushedCard != nil { c.pushedCard = nil; scene.setSelectedMember(nil) }
         if c.knownSelection != selectedRoom {
             c.knownSelection = selectedRoom
             scene.select(selectedRoom, animated: view.isReallyVisible)

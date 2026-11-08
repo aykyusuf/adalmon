@@ -25,6 +25,7 @@ struct AgentOfficePage: View {
                         Button("Hepsini göster", systemImage: "rectangle.grid.2x2") { selectedRoom = nil }
                             .help("Odadan çık, tüm odaları göster (Esc)")
                     }
+                    OfficeLightingMenu()
                     demoMenu
                     Button("Ayrı pencerede aç", systemImage: "arrow.up.forward.square") { router.openOfficeWindow() }
                         .labelStyle(.iconOnly)
@@ -32,7 +33,7 @@ struct AgentOfficePage: View {
                         .accessibilityLabel("Ayrı pencerede aç")
                 }
             }
-            OfficeSceneView(members: OfficeMember.members(from: sessions), selectedRoom: $selectedRoom)
+            OfficeSceneContainer(members: OfficeMember.members(from: sessions), selectedRoom: $selectedRoom)
                 .clipShape(.rect(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.08)))
                 .frame(minHeight: 360)

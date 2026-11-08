@@ -88,11 +88,9 @@ final class OfficeWalkTests: XCTestCase {
             scene.apply(members: members, animated: true)
             let room = try XCTUnwrap(scene.room("L"))
             XCTAssertEqual(room.tier, OfficeRoomTier.tier(forCount: members.count), "\(members.count) üye")
-            // Kademe geçişi (4→5, 8→9): oda baştan kurulur, herkes anında koltuğunda (yürüyüş yok).
-            if members.count == 5 || members.count == 9 {
-                XCTAssertTrue(room.actors.values.allSatisfy { !$0.moving }, "\(members.count) üye: kademe geçişinde kimse yolda kalmaz")
-                assertAllSeated(room)
-                XCTAssertEqual(room.actorCount, members.count)
+            // Kademe geçişi (4, 6, 8, 10 üye): oturanlar yerinde kalır (kaybolmaz); yeni ajan taşıyıcıdan sonra yürüyüp oturur.
+            if [4, 6, 8, 10].contains(members.count) {
+                XCTAssertGreaterThanOrEqual(room.actorCount, members.count - 1, "\(members.count) üye: kademe geçişinde oturanlar kaybolmaz")
             }
             XCTAssertTrue(pump(25) { settled(scene.room("L"), count: members.count) }, "\(members.count) üye yürüyüşü bitirmedi")
             assertAllSeated(try XCTUnwrap(scene.room("L")))
@@ -101,22 +99,6 @@ final class OfficeWalkTests: XCTestCase {
 
     /// Ekran görüntüsündeki durum: kapının yanındaki salon koltuğundaki alt ajan "ayakta" görünüyordu. Mantıkta takılma yok: koltuğunda,
     /// oturma çökmesiyle (sitDrop) ve okuma pozunda (PC yok); görünüm sorunu yan koltuğun arka plana pişip bacakları açıkta bırakmasıydı.
-    func testLoungeSubagentIsSeatedNotStuck() throws {
-        let (scene, window) = try host()
-        _ = window
-        scene.apply(members: OfficeMember.members(from: sessions(subs: 3)), animated: true)
-        XCTAssertTrue(pump(25) { settled(scene.room("L"), count: 4) })
-        let room = try XCTUnwrap(scene.room("L"))
-        let lounge = try XCTUnwrap(room.actors.values.first { $0.seat.kind == .lounge })
-        XCTAssertEqual(lounge.tile, lounge.seat.tile)
-        XCTAssertFalse(lounge.moving)
-        XCTAssertEqual(lounge.body.position.y, -OfficeRoomNode.sitDrop)
-        XCTAssertEqual(lounge.behavior.pose, .reading, "salonda PC yok: okur")
-        XCTAssertNotNil(lounge.body.action(forKey: "pose"), "okuma animasyonu çalışıyor")
-        let chair = try XCTUnwrap(room.kit.dynamicFurniture.first { $0.placement.assetID == "CUSHIONED_CHAIR_SIDE" }, "yan koltuk karakterin önünde çizilir (pişmez)")
-        XCTAssertGreaterThan(chair.asset.footprintH, 0)
-    }
-
     // MARK: Yönetici durum makinesi
 
     func testExecutiveModeStateMachine() {
