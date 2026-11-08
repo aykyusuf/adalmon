@@ -32,11 +32,12 @@ enum BatteryAnimationPolicy {
         guard hasAnimatedItem, motionAllowed(mode, reduceMotion: env.reduceMotion, lowPower: env.lowPower),
               env.visible, !env.screensAsleep, env.sessionActive else { return nil }
         let step = charging ? 2 : 1
-        if env.lowPower { return Plan(fps: 5, step: 1) } // yalnızca Canlı buraya gelir: yavaş ve sakin
+        // Kare başı maliyet yüksek ölçüldü: düşük fps; şarjda dalga hızı fps yerine faz adımıyla artar.
+        if env.lowPower { return Plan(fps: 2, step: 1) } // yalnızca Canlı buraya gelir: yavaş ve sakin
         switch mode {
         case .off: return nil
-        case .light: return Plan(fps: 8, step: step)
-        case .live: return Plan(fps: 12, step: step)
+        case .light: return Plan(fps: 4, step: step)
+        case .live: return Plan(fps: 6, step: step)
         }
     }
 }
@@ -121,6 +122,11 @@ final class BatteryLiquidAnimator {
     private(set) var target: Target?
     private var frames: (key: BatteryFrameKey, images: [NSImage])?
     private var composites: [Int: NSImage] = [:]
+    /// Katman yolu: gövde kareleri bir alt katmanın `contents`'ine yazılır (button.image ataması / NSStatusItem yeniden
+    /// çizim yolu atlanır). Düğme yoksa (testler) eski bileşik görüntü yolu kullanılır.
+    private var overlay: CALayer?
+    private var overlayBounds: CGRect = .zero
+    private var cgFrames: [Int: CGImage] = [:]
     private var frameIndex = 0
     private var timer: Timer?
     private(set) var plan: BatteryAnimationPolicy.Plan?
@@ -149,6 +155,7 @@ final class BatteryLiquidAnimator {
     func show(_ new: Target) -> NSImage {
         if frames?.key != new.frameKey {
             frames = (new.frameKey, BatteryFrameRenderer.frames(new.frameKey, appearance: new.appearance))
+            cgFrames = [:]
         }
         composites = [:]
         let newLevel = Double(new.frameKey.state.level)
@@ -161,15 +168,24 @@ final class BatteryLiquidAnimator {
         }
         target = new
         reevaluate()
+        if new.button != nil {
+            // Düğmenin görüntüsü gövdesiz taban; sıvı gövde katmanda hareket eder.
+            installOverlay(for: new)
+            applyOverlay()
+            return new.base
+        }
+        removeOverlay()
         return currentImage()
     }
 
     /// Öğe kaldırıldı ya da animasyon kapandı: timer ve tüm önbellek temizlenir.
     func clear() {
         stopTimer()
+        removeOverlay()
         target = nil
         frames = nil
         composites = [:]
+        cgFrames = [:]
         transition = nil
         displayedLevel = nil
         frameIndex = 0
@@ -179,6 +195,78 @@ final class BatteryLiquidAnimator {
 
     /// Şu anki kare (önbellekten; testler için).
     func currentFrame() -> NSImage { currentImage() }
+
+    // MARK: Katman
+
+    private func installOverlay(for target: Target) {
+        guard let button = target.button else { return }
+        button.wantsLayer = true
+        guard let host = button.layer else { return }
+        let layer: CALayer
+        if let overlay, overlay.superlayer === host {
+            layer = overlay
+        } else {
+            overlay?.removeFromSuperlayer()
+            layer = CALayer()
+            layer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "frame": NSNull()]
+            layer.contentsGravity = .resize
+            layer.isOpaque = false
+            host.addSublayer(layer)
+            overlay = layer
+        }
+        layer.contentsScale = target.frameKey.scale
+        overlayBounds = .zero
+        layoutOverlay()
+    }
+
+    private func removeOverlay() {
+        overlay?.removeFromSuperlayer()
+        overlay = nil
+        overlayBounds = .zero
+    }
+
+    /// Katmanı düğme içinde, görüntünün (ortalanmış) üstünde gövde dikdörtgenine yerleştirir; yalnızca düğme boyutu değişince.
+    private func layoutOverlay() {
+        guard let overlay, let target, let button = target.button, button.bounds != overlayBounds else { return }
+        overlayBounds = button.bounds
+        var origin = button.cell?.imageRect(forBounds: button.bounds).origin
+        if origin == nil || button.cell?.imageRect(forBounds: button.bounds).size == .zero {
+            origin = CGPoint(x: (button.bounds.width - target.base.size.width) / 2, y: (button.bounds.height - target.base.size.height) / 2)
+        }
+        let o = origin ?? .zero
+        let y = button.isFlipped ? o.y + target.base.size.height - target.rect.maxY : o.y + target.rect.minY
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        overlay.frame = CGRect(x: o.x + target.rect.minX, y: y, width: target.rect.width, height: target.rect.height)
+        CATransaction.commit()
+    }
+
+    private func applyOverlay() {
+        guard let overlay, let target, let frames else { return }
+        layoutOverlay()
+        var cg: CGImage?
+        if let transition {
+            let p = min(1, (ProcessInfo.processInfo.systemUptime - transition.start) / Self.transitionDuration)
+            let eased = p < 0.5 ? 2 * p * p : 1 - pow(-2 * p + 2, 2) / 2
+            let level = transition.from + (transition.to - transition.from) * eased
+            displayedLevel = level
+            if p >= 1 { self.transition = nil }
+            cg = Self.cgImage(BatteryFrameRenderer.frame(target.frameKey, appearance: target.appearance, level: level, index: frameIndex))
+        } else if let cached = cgFrames[frameIndex] {
+            cg = cached
+        } else {
+            cg = Self.cgImage(frames.images[frameIndex])
+            cgFrames[frameIndex] = cg
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        overlay.contents = cg
+        CATransaction.commit()
+    }
+
+    private static func cgImage(_ image: NSImage) -> CGImage? {
+        (image.representations.first as? NSBitmapImageRep)?.cgImage
+    }
 
     private func currentImage() -> NSImage {
         guard let target, let frames else { return NSImage() }
@@ -201,6 +289,7 @@ final class BatteryLiquidAnimator {
     private func tick() {
         guard let plan, target?.button != nil else { stopTimer(); return }
         frameIndex = (frameIndex + plan.step) % BatteryGlyph.frameCount
+        if overlay != nil { applyOverlay(); return }
         let image = currentImage()
         if target?.button?.image !== image { target?.button?.image = image }
     }

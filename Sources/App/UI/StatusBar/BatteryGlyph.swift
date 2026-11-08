@@ -110,11 +110,11 @@ enum BatteryGlyph {
         switch size {
         // Orta = Juicy'nin gerçek pili (ekran görüntüsüyle ölçüldü): ~29x14 pt gövde + uç ≈ 32 pt, kalın ~10 pt rakam.
         case .small: Metrics(body: CGSize(width: 26, height: 12.5), radius: 4, nub: CGSize(width: 2, height: 5),
-                             font: 9, timeFont: 10, stroke: 1.1, inset: 1.5)
+                             font: 7.5, timeFont: 10, stroke: 1.1, inset: 1.5)
         case .medium: Metrics(body: CGSize(width: 29, height: 14), radius: 4.5, nub: CGSize(width: 2.2, height: 5.5),
-                              font: 10.5, timeFont: 11, stroke: 1.2, inset: 1.6)
+                              font: 9, timeFont: 11, stroke: 1.2, inset: 1.6)
         case .large: Metrics(body: CGSize(width: 33, height: 16), radius: 5, nub: CGSize(width: 2.5, height: 6.5),
-                             font: 12, timeFont: 12, stroke: 1.3, inset: 1.8)
+                             font: 10.5, timeFont: 12, stroke: 1.3, inset: 1.8)
         }
     }
 
@@ -143,7 +143,7 @@ enum BatteryGlyph {
     static func levelFont(_ m: Metrics, size: CGFloat? = nil) -> NSFont {
         // Orantılı rakamlar: gövde genişliği sabit, "100" ve şimşek rahat sığar.
         let points = size ?? m.font
-        let base = NSFont.systemFont(ofSize: points, weight: .heavy)
+        let base = NSFont.systemFont(ofSize: points, weight: .bold)
         guard let rounded = base.fontDescriptor.withDesign(.rounded) else { return base }
         return NSFont(descriptor: rounded, size: points) ?? base
     }
@@ -301,10 +301,16 @@ enum BatteryGlyph {
         return max(1.2, innerHeight * CGFloat(l) / 100)
     }
 
-    /// Dalga genliği uçlarda (boş / tam dolu) incelir: tam dolu pil tepeden "çukur" göstermez.
+    /// Dalga genliği yalnızca boş uçta (<= %3) söner; tam dolu pilde de yüzey dalgalanır (sürekli canlı görünüm).
     static func taperedAmplitude(_ amplitude: CGFloat, level: Double) -> CGFloat {
         let l = CGFloat(max(0, min(100, level)))
-        return amplitude * max(0, min(1, l / 6, (100 - l) / 6))
+        return amplitude * min(1, l / 3)
+    }
+
+    /// Dalga açıkken %88'in üstünde sıvı üst kenardan en çok 1.5 pt aşağı iner → %100'de de görünür bir yüzey kalır.
+    static func fullLevelDrop(level: Double) -> CGFloat {
+        let t = CGFloat(max(0, min(1, (level - 88) / 12)))
+        return 1.5 * t * t * (3 - 2 * t)
     }
 
     /// Yüzey yüksekliği: iki sinüs, farklı dalga boyu ve faz; ikincisi iki kat hızlı ters yönde (döngü N karede kapanır).
@@ -321,10 +327,10 @@ enum BatteryGlyph {
     private static func liquidPath(inner: CGRect, level: Double, wave: (phase: Double, amplitude: CGFloat)?) -> NSBezierPath? {
         let h = fillHeight(level: level, innerHeight: inner.height)
         guard h > 0 else { return nil }
-        let top = inner.minY + h
+        let amp = wave.map { taperedAmplitude($0.amplitude, level: level) } ?? 0
+        let top = inner.minY + h - (amp > 0 ? fullLevelDrop(level: level) : 0)
         let path = NSBezierPath()
         path.move(to: CGPoint(x: inner.minX - 1, y: inner.minY - 1))
-        let amp = wave.map { taperedAmplitude($0.amplitude, level: level) } ?? 0
         if amp > 0, let wave {
             var x = inner.minX - 1
             while x <= inner.maxX + 1 {
@@ -404,13 +410,13 @@ enum BatteryGlyph {
             if pulsing { fill = fill.withAlphaComponent(fill.alphaComponent * (0.62 + 0.38 * pulse)) }
             fill.setFill()
             liquid.fill()
-            // Şarjda soldan sağa kayan hafif parıltı.
-            if state.isCharging, let wave {
+            // Şarjda belirgin, doluyken / prizdeyken daha hafif, soldan sağa kayan parıltı.
+            if state.isCharging || state.isFull || state.isPluggedIn, let wave {
                 liquid.addClip()
                 let band = inner.width * 0.4
                 let t = wave.phase - floor(wave.phase)
                 let cx = inner.minX - band / 2 + (inner.width + band) * CGFloat(t)
-                let gradient = NSGradient(colors: [.white.withAlphaComponent(0), .white.withAlphaComponent(0.38), .white.withAlphaComponent(0)])
+                let gradient = NSGradient(colors: [.white.withAlphaComponent(0), .white.withAlphaComponent(state.isCharging ? 0.38 : 0.24), .white.withAlphaComponent(0)])
                 gradient?.draw(in: CGRect(x: cx - band / 2, y: inner.minY, width: band, height: inner.height), angle: 0)
             }
             NSGraphicsContext.restoreGraphicsState()

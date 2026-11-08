@@ -78,8 +78,12 @@ final class BatteryLiquidGlyphTests: XCTestCase {
         XCTAssertEqual(heights[4], h)
         XCTAssertEqual(heights, heights.sorted())
         XCTAssertEqual(BatteryGlyph.fillHeight(level: 140, innerHeight: h), h)
-        XCTAssertEqual(BatteryGlyph.taperedAmplitude(1, level: 100), 0, "tam dolu pil tepede çukur göstermez")
+        XCTAssertEqual(BatteryGlyph.taperedAmplitude(1, level: 100), 1, "tam dolu pilde de dalga var")
         XCTAssertEqual(BatteryGlyph.taperedAmplitude(1, level: 0), 0)
+        XCTAssertEqual(BatteryGlyph.taperedAmplitude(1, level: 1), 1.0 / 3, accuracy: 1e-9)
+        XCTAssertEqual(BatteryGlyph.fullLevelDrop(level: 100), 1.5, accuracy: 1e-9)
+        XCTAssertEqual(BatteryGlyph.fullLevelDrop(level: 80), 0)
+        XCTAssertLessThan(BatteryGlyph.fullLevelDrop(level: 95), 1.5)
         XCTAssertEqual(BatteryGlyph.taperedAmplitude(1, level: 50), 1)
         // Dalga döngüsü N karede kapanır.
         for x in stride(from: CGFloat(0), through: 30, by: 3) {
@@ -130,6 +134,22 @@ final class BatteryLiquidGlyphTests: XCTestCase {
             let key = BatteryFrameKey(state: s, options: .init(), appearance: .aqua, scale: 1)
             XCTAssertNotNil(BatteryFrameRenderer.frame(key, index: 0).tiffRepresentation)
         }
+    }
+
+    func testFullLevelStillAnimates() {
+        for s in [state(100), state(100, charging: true), state(100, plugged: true, full: true), state(97)] {
+            let key = BatteryFrameKey(state: s, options: .init(), appearance: .darkAqua, scale: 2)
+            let frames = (0..<BatteryGlyph.frameCount).map { BatteryFrameRenderer.frame(key, index: $0).tiffRepresentation }
+            XCTAssertGreaterThan(Set(frames).count, BatteryGlyph.frameCount / 2, "seviye \(s.level) kareleri farklı (hareket var)")
+            XCTAssertNotEqual(frames[0], frames[6])
+            XCTAssertNotEqual(frames[0], frames[12])
+        }
+        let dead = BatteryFrameKey(state: state(0, charging: true), options: .init(), appearance: .darkAqua, scale: 2)
+        XCTAssertEqual(BatteryFrameRenderer.frame(dead, index: 0).tiffRepresentation, BatteryFrameRenderer.frame(dead, index: 12).tiffRepresentation,
+                       "%0: sönük")
+        let one = BatteryFrameKey(state: state(1), options: .init(), appearance: .darkAqua, scale: 2)
+        let a = BatteryFrameRenderer.frame(one, index: 0).tiffRepresentation, b = BatteryFrameRenderer.frame(one, index: 12).tiffRepresentation
+        XCTAssertNotNil(a); XCTAssertNotNil(b)
     }
 
     func testFrameKey() {
@@ -183,10 +203,12 @@ final class BatteryLiquidGlyphTests: XCTestCase {
     func testAnimationPolicy() {
         typealias P = BatteryAnimationPolicy
         let env = P.Environment()
-        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: false, env: env), P.Plan(fps: 12, step: 1))
-        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: true, env: env), P.Plan(fps: 12, step: 2), "şarjda dalga hızlanır")
-        XCTAssertEqual(P.plan(mode: .light, hasAnimatedItem: true, charging: false, env: env), P.Plan(fps: 8, step: 1))
+        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: false, env: env), P.Plan(fps: 6, step: 1))
+        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: true, env: env), P.Plan(fps: 6, step: 2), "şarjda dalga hızlanır")
+        XCTAssertEqual(P.plan(mode: .light, hasAnimatedItem: true, charging: false, env: env), P.Plan(fps: 4, step: 1))
         XCTAssertNil(P.plan(mode: .off, hasAnimatedItem: true, charging: false, env: env))
+        // Dolu (şarj bitti, takılı): plan charging=false ile de durmaz.
+        XCTAssertNotNil(P.plan(mode: .live, hasAnimatedItem: true, charging: state(100, plugged: true, full: true).isCharging, env: env), "dolu: animasyon sürer")
         XCTAssertNil(P.plan(mode: .live, hasAnimatedItem: false, charging: false, env: env), "öğe menü çubuğunda değil")
         var e = env; e.visible = false
         XCTAssertNil(P.plan(mode: .live, hasAnimatedItem: true, charging: false, env: e), "görünmezken dur")
@@ -198,7 +220,7 @@ final class BatteryLiquidGlyphTests: XCTestCase {
         XCTAssertNil(P.plan(mode: .live, hasAnimatedItem: true, charging: false, env: e), "Hareketi Azalt → statik")
         XCTAssertFalse(P.motionAllowed(.live, reduceMotion: true, lowPower: false))
         e = env; e.lowPower = true
-        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: true, env: e), P.Plan(fps: 5, step: 1), "Düşük Güç: yavaş")
+        XCTAssertEqual(P.plan(mode: .live, hasAnimatedItem: true, charging: true, env: e), P.Plan(fps: 2, step: 1), "Düşük Güç: yavaş")
         XCTAssertNil(P.plan(mode: .light, hasAnimatedItem: true, charging: false, env: e), "Düşük Güç + Hafif: dur")
         XCTAssertTrue(P.motionAllowed(.live, reduceMotion: false, lowPower: true))
         XCTAssertFalse(P.motionAllowed(.off, reduceMotion: false, lowPower: false))
@@ -244,14 +266,18 @@ final class BatteryLiquidGlyphTests: XCTestCase {
                                                                   appearance: .darkAqua, scale: 2), appearance: appearance))
         button.image = first
         XCTAssertTrue(animator.isRunning)
-        XCTAssertEqual(animator.plan, BatteryAnimationPolicy.Plan(fps: 12, step: 2))
-        var seen: [ObjectIdentifier] = [ObjectIdentifier(first)]
-        let deadline = Date().addingTimeInterval(0.6)
+        XCTAssertEqual(animator.plan, BatteryAnimationPolicy.Plan(fps: 6, step: 2))
+        XCTAssertTrue(first === base, "düğme görüntüsü gövdesiz taban; sıvı katmanda")
+        func contentsID() -> ObjectIdentifier? { button.layer?.sublayers?.last?.contents.map { ObjectIdentifier($0 as AnyObject) } }
+        var seen: [ObjectIdentifier] = contentsID().map { [$0] } ?? []
+        XCTAssertFalse(seen.isEmpty, "katman içeriği atanmış")
+        let deadline = Date().addingTimeInterval(1.3)
         while Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.02))
-            if let image = button.image, ObjectIdentifier(image) != seen.last { seen.append(ObjectIdentifier(image)) }
+            if let id = contentsID(), id != seen.last { seen.append(id) }
         }
-        XCTAssertGreaterThanOrEqual(seen.count, 4, "button.image kare kare değişir (\(seen.count))")
+        XCTAssertGreaterThanOrEqual(seen.count, 4, "katman içeriği kare kare değişir (\(seen.count))")
+        XCTAssertTrue(button.image === first || button.image == nil, "tikte button.image atanmaz")
         animator.visibilityOverride = false
         XCTAssertFalse(animator.isRunning, "görünmezken durur")
         animator.clear()
