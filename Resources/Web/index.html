@@ -13,6 +13,11 @@
   <span id="conn">bağlanıyor…</span>
   <span id="counts"></span>
   <span class="spacer"></span>
+  <select id="light" aria-label="Işık">
+    <option value="auto">Işık: Otomatik</option>
+    <option value="day">Işık: Gün</option>
+    <option value="night">Işık: Gece</option>
+  </select>
   <button id="back" type="button" hidden>Esc &middot; Tüm odalar</button>
 </header>
 <main id="stage">
@@ -22,6 +27,9 @@
     <p>Bir Claude Code oturumu başlattığınızda odası burada belirir. Adalmon'daki Claude eklentisi kurulu olmalı.</p>
   </div>
   <div id="error" hidden></div>
+  <div id="loading"><span class="spinner"></span><span id="loadingText">Ofis yükleniyor…</span></div>
+  <div id="tip" hidden></div>
+  <aside id="card" hidden></aside>
 </main>
 <script src="/app.js?t=__ADALMON_TOKEN__"></script>
 </body>

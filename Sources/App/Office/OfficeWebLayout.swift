@@ -222,7 +222,7 @@ enum OfficeWebLayout {
         }
         // Masa lambaları: her masa bloğunun ortasında (karo koordinatı + masa üstü piksel sapması) ve yönetici masasında.
         var lamps: [[String: Any]] = blocks.map { ["col": ($0["col"] ?? 0) + 1, "row": $0["row"] ?? 0, "dx": 8, "dy": 14] }
-        if let ex = layout.furniture.first(where: { $0.assetID == "SMALL_TABLE_FRONT" }) { lamps.append(["col": ex.col + 1, "row": ex.row, "dx": 8, "dy": 14]) }
+        if let ex = layout.furniture.first(where: { $0.assetID == "SMALL_TABLE_FRONT" }) { lamps.append(["col": ex.col + 1, "row": ex.row, "dx": 0, "dy": 14]) }   // sahnede x = col·16 + 16
         let ct = OfficeRoomTemplates.coffeeTable(stations: n)
         var out: [String: Any] = [
             "key": tier.key, "stations": n, "blocks": blocks, "laneRows": OfficeRoomTemplates.laneRows(stations: n),

@@ -62,6 +62,13 @@ final class AgentWebSnapshotBuilder {
             var seatKinds: [Int: OfficeSeat.Kind] = [:]
             var seatByID: [Int: OfficeSeat] = [:]
             for s in seats[room.tier] ?? [] { seatKinds[s.id] = s.kind; seatByID[s.id] = s }
+            // Boş masalar dahil tüm bilgisayarlar (oda kimliğine bağlı tohum): tarayıcı tohum hesaplamaz. Anahtar = mobilya yerleşim indeksi (`pc`).
+            var computers: [String: String] = [:]
+            for s in seats[room.tier] ?? [] {
+                guard let pc = s.pcIndex else { continue }
+                let c = s.kind == .executive ? OfficeComputer.executive : OfficeComputer.pick(roomID: room.id, seatID: OfficeRoomNode.seatKey(s))
+                computers[String(pc)] = c.artName
+            }
             var list: [[String: Any]] = []
             for m in roomMembers {
                 var item: [String: Any] = [
@@ -113,7 +120,7 @@ final class AgentWebSnapshotBuilder {
                 "cleaner": ["intervalMin": OfficeCleaner.interval.lowerBound, "intervalMax": OfficeCleaner.interval.upperBound, "route": "S",
                             "laneRows": OfficeRoomTemplates.laneRows(stations: room.tier.stations), "seed": room.id] as [String: Any], "title": room.title ?? "", "badge": room.badge?.rawValue ?? "unknown",
                 "badgeLabel": room.badge?.label ?? "", "group": room.groupIndex, "reseated": room.reseated, "memberCount": room.memberCount,
-                "overflow": room.overflowCount, "members": list,
+                "overflow": room.overflowCount, "members": list, "computers": computers,
             ])
         }
         let root: [String: Any] = [

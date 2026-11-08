@@ -1,230 +1,387 @@
 'use strict';
 // Adalmon ofis (tarayıcı): vanilla JS + Canvas 2D, dış istek yok. Sahne verisi /v1/layout'tan (Swift tek doğruluk kaynağı),
-// canlı durum /v1/stream (SSE) üzerinden gelir. Balon metinleri, koltuk atamaları ve davranışlar sunucudan hazır gelir.
+// canlı durum /v1/stream (SSE) üzerinden gelir. Balon metinleri, koltuk atamaları, roller ve boşta varyantları sunucudan hazır gelir.
+// Görünüm: modern VEKTÖR tema (docs/OFFICE-V4.md): pişirilmiş 4x oda arka planları, karakter atlası + gömlek maskesi, gece/gündüz ışığı.
+//
+// Bölümler: Ağ/çözme · Karakter atlası · Işık · Odalar ve oyuncular · Yerleşim/kamera · Çizim · Kart/ipucu · Döngü · Etkileşim · SSE · Başlangıç
 (() => {
   const T = 16;
+  const TEST = globalThis.__ADALMON_TEST__ || null;
   const params = new URLSearchParams(location.search);
   let token = params.get('t') || sessionStorage.getItem('adalmon-token') || '';
   if (params.get('t')) {
     sessionStorage.setItem('adalmon-token', token);
     history.replaceState(null, '', location.pathname); // token adres çubuğunda/geçmişte kalmasın
   }
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* özel mod */ } },
+  };
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('scene');
   const ctx = canvas.getContext('2d');
-  const els = { dot: $('dot'), conn: $('conn'), counts: $('counts'), empty: $('empty'), error: $('error'), back: $('back') };
+  const els = { dot: $('dot'), conn: $('conn'), counts: $('counts'), empty: $('empty'), error: $('error'), back: $('back'),
+                light: $('light'), loading: $('loading'), loadingText: $('loadingText'), tip: $('tip'), card: $('card') };
 
   let layout = null;
-  const images = new Map();      // dosya -> ImageBitmap
-  const tinted = new Map();      // karakter+rozet -> canvas
-  const tileCache = new Map();   // renklendirilmiş karo -> canvas
-  const artCache = new Map();    // art adı -> canvas (ya da canvas dizisi)
-  const tierData = new Map();    // kademe -> {bg, dynamic[], seatById, ...}
+  let assets = null;             // çözülmüş görseller (ImageBitmap) ve dizinler
+  const tierData = new Map();    // kademe -> {bg, w, h, ox, oy, dynamic[], seatById, ...}
   const rooms = new Map();
   let state = null;
   let skew = 0;                  // sunucu saati - yerel saat
   let initialized = false;
   let focusId = null;
-  let hitRects = [];
-  let dpr = window.devicePixelRatio || 1;
+  let hitRooms = [];
+  let hitActors = [];
+  let hitBoards = [];
+  let dpr = 1;
   let S = 1;
+  let needsRedraw = true;
+  let selected = null;           // açık kart: {a}
+  let hover = null;
 
-  const now = () => Date.now() + skew;
+  const nowMs = () => Date.now();
+  const serverNow = () => Date.now() + skew;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-  // ---------- Ağ ----------
-  async function api(path) {
-    const res = await fetch(path, { headers: { 'X-Adalmon-Token': token }, cache: 'no-store' });
-    if (!res.ok) throw new Error(String(res.status));
-    return res;
+  // ---------- Küçük yardımcılar ----------
+  function hash32(s) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return h >>> 0;
   }
-
-  function loadImage(file) {
-    if (!images.has(file)) {
-      // Düzen JSON'u mobilya dosyalarını klasör öneki olmadan verir ("PC/PC_FRONT_OFF.png"): bilinen kök yoksa furniture/ varsay.
-      const rooted = /^(characters|furniture|floors|walls|carpets|generated)\//.test(file) ? file : 'furniture/' + file;
-      images.set(file, api('/assets/' + rooted).then((r) => r.blob()).then((b) => createImageBitmap(b)));
-    }
-    return images.get(file);
+  function rng(seed) {
+    let a = (typeof seed === 'string' ? hash32(seed) : seed) >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
   }
-
-  function showError(text) { els.error.textContent = text; els.error.hidden = !text; }
-
-  // ---------- Piksel yardımcıları ----------
-  function hslToRgb(h, s, l) {
-    const c = (1 - Math.abs(2 * l - 1)) * s;
-    const hp = (h - Math.floor(h)) * 6;
-    const x = c * (1 - Math.abs((hp % 2) - 1));
-    const k = Math.floor(hp);
-    const [r, g, b] = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.min(5, k)];
-    const m = l - c / 2;
-    return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+  function hexRgb(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    const n = m ? parseInt(m[1], 16) : 0x888888;
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   }
-
+  const rgbCss = (c, a) => `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a === undefined ? 1 : a})`;
+  const hexCss = (hex, a) => { const c = hexRgb(hex); return `rgba(${c[0]},${c[1]},${c[2]},${a === undefined ? 1 : a})`; };
   function newCanvas(w, h) {
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     return c;
   }
+  const fmtDur = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    const p = (n) => String(n).padStart(2, '0');
+    return h > 0 ? `${h}:${p(m)}:${p(sec)}` : `${p(m)}:${p(sec)}`;
+  };
 
-  // Swift'teki OfficeTileColor.colorize ile aynı formül (Photoshop "colorize").
-  function colorized(img, sx, sy, w, h, color) {
-    const key = img.__k + ':' + sx + ',' + sy + ':' + color.join(',');
-    if (tileCache.has(key)) return tileCache.get(key);
-    const c = newCanvas(w, h);
-    const g = c.getContext('2d', { willReadFrequently: true });
-    g.drawImage(img, sx, sy, w, h, 0, 0, w, h);
-    const data = g.getImageData(0, 0, w, h);
-    const [hh, ss, bb, cc] = color;
-    for (let i = 0; i < data.data.length; i += 4) {
-      if (data.data[i + 3] === 0) continue;
-      let l = (0.299 * data.data[i] + 0.587 * data.data[i + 1] + 0.114 * data.data[i + 2]) / 255;
-      if (cc !== 0) l = 0.5 + (l - 0.5) * ((100 + cc) / 100);
-      if (bb !== 0) l += bb / 200;
-      l = Math.min(1, Math.max(0, l));
-      const [r, gg, b] = hslToRgb(hh / 360, Math.min(1, Math.max(0, ss / 100)), l);
-      data.data[i] = r; data.data[i + 1] = gg; data.data[i + 2] = b;
+  // ---------- Ağ ve çözme ----------
+  class HttpError extends Error { constructor(status) { super(String(status)); this.status = status; } }
+
+  async function api(path) {
+    const res = await fetch(path, { headers: { 'X-Adalmon-Token': token }, cache: 'no-store' });
+    if (!res.ok) throw new HttpError(res.status);
+    return res;
+  }
+
+  function describeError(err) {
+    const st = err && err.status;
+    if (st === 401) return 'Oturum anahtarı geçersiz ya da süresi dolmuş (401). Adalmon > Ayarlar > Claude ajanları > "Tarayıcıda aç" ile sayfayı yeniden açın.';
+    if (st === 404) return 'Ofis verisi bulunamadı (404): tarayıcı görünümü kapalı olabilir ya da Adalmon ofis varlıklarını yükleyememiş. Ayarlar > Claude ajanları bölümünü kontrol edin.';
+    return 'Sayfa verisi alınamadı (' + (err && err.message ? err.message : 'bilinmeyen hata') + '). Adalmon açık değilse ya da oturum anahtarı değiştiyse "Tarayıcıda aç" ile yeniden açın.';
+  }
+
+  function showError(text) { els.error.textContent = text; els.error.hidden = !text; }
+  function setLoading(text) {
+    if (!els.loading) return;
+    els.loading.hidden = !text;
+    if (els.loadingText) els.loadingText.textContent = text || '';
+  }
+
+  // CSP `connect-src 'self'` data: adreslerine fetch'i engeller: base64'ü elle çöz, Blob'tan ImageBitmap üret.
+  function dataToBlob(uri) {
+    const i = uri.indexOf(',');
+    if (i < 0) throw new Error('geçersiz veri adresi');
+    const bin = atob(uri.slice(i + 1));
+    const bytes = new Uint8Array(bin.length);
+    for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+    return new Blob([bytes], { type: 'image/png' });
+  }
+
+  async function decode(name, uri, opts) {
+    try {
+      if (typeof uri !== 'string' || uri.indexOf('data:') !== 0) throw new Error('veri yok');
+      const blob = dataToBlob(uri);
+      try { return await createImageBitmap(blob, opts); } catch (e) { if (!opts) throw e; return await createImageBitmap(blob); }
+    } catch (e) {
+      throw new Error(name + ' çözülemedi (' + (e && e.message ? e.message : e) + ')');
     }
-    g.putImageData(data, 0, 0);
-    tileCache.set(key, c);
-    return c;
   }
 
-  function paintArt(def) {
-    const rows = def.rows;
-    const w = Math.max(...rows.map((r) => r.length));
-    const c = newCanvas(w, rows.length);
-    const g = c.getContext('2d');
-    rows.forEach((row, y) => {
-      for (let x = 0; x < row.length; x++) {
-        const color = def.palette[row[x]];
-        if (color) { g.fillStyle = color; g.fillRect(x, y, 1, 1); }
-      }
-    });
-    return c;
-  }
-
-  function art(name) {
-    if (!artCache.has(name)) {
-      const def = layout.art[name];
-      artCache.set(name, Array.isArray(def) ? def.map(paintArt) : paintArt(def));
-    }
-    return artCache.get(name);
-  }
-
-  const rgbCss = (c, a) => `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)},${a === undefined ? 1 : a})`;
-
-  // Karakter sayfası + rozet tonu (SpriteKit colorBlendFactor gibi: renk, alfa korunarak karıştırılır).
-  function characterSheet(badge) {
-    const ap = layout.appearance[badge] || layout.appearance.unknown;
-    const key = ap.character + ':' + badge;
-    if (!tinted.has(key)) {
-      const img = images.get(layout.characters.file.replace('%d', ap.character)).__v;
-      const c = newCanvas(img.width, img.height);
-      const g = c.getContext('2d');
-      g.drawImage(img, 0, 0);
-      g.globalCompositeOperation = 'source-atop';
-      g.globalAlpha = ap.tintBlend;
-      g.fillStyle = rgbCss(ap.tint);
-      g.fillRect(0, 0, c.width, c.height);
-      tinted.set(key, c);
-    }
-    return tinted.get(key);
-  }
-
-  // ---------- Düzen hazırlığı ----------
+  // ---------- Hazırlık ----------
   async function prepare() {
+    setLoading('Ofis yükleniyor…');
     layout = await (await api('/v1/layout')).json();
-    const files = new Set(['walls/wall_0.png']);
-    Object.values(layout.appearance).forEach((a) => files.add(layout.characters.file.replace('%d', a.character)));
-    Object.values(layout.furniture).forEach((f) => { files.add(f.file); (f.pcOn || []).forEach((p) => files.add(p)); });
-    Object.values(layout.tiers).forEach((t) => {
-      for (let i = 0; i < t.tiles.length; i += 4) if (t.tiles[i] === 2) files.add(layout.files.floor.replace('%d', t.tiles[i + 1]));
-    });
-    await Promise.all([...files].map(async (f) => {
-      const img = await loadImage(f);
-      img.__k = f;
-      images.set(f, Object.assign(Promise.resolve(img), { __v: img }));
-    }));
-    for (const [key, t] of Object.entries(layout.tiers)) tierData.set(key, buildTier(key, t));
+    const v = layout.v3 && layout.v3.vector;
+    if (layout.theme !== 'vector' || !v || !v.characters || !v.characters.atlas || !v.backgrounds) {
+      throw new Error('vektör tema verisi yok: bu Adalmon sürümü yalnızca eski piksel temayı gönderiyor, Adalmon\'u güncelleyin');
+    }
+    const scale = v.scale || 4;
+    assets = { scale, bg: {}, furn: {}, gen: {}, boardWrite: [], boardOrigin: v.boardWriteOrigin || [5, 12], door: null, winDay: null, winNight: null,
+               atlas: null, acc: null };
+    const jobs = [];
+    const job = (name, uri, assign, opts) => jobs.push({ name, uri, assign, opts });
+    for (const [tier, b] of Object.entries(v.backgrounds)) job('backgrounds.' + tier, b.image, (bmp) => { assets.bg[tier] = { bmp, windows: b.windows || [] }; });
+    for (const [id, uri] of Object.entries(v.furniture || {})) job('furniture.' + id, uri, (bmp) => { assets.furn[id] = bmp; });
+    for (const [id, uri] of Object.entries(v.generated || {})) job('generated.' + id, uri, (bmp) => { assets.gen[id] = bmp; });
+    job('door', v.door, (bmp) => { assets.door = bmp; });
+    (v.boardWrite || []).forEach((uri, i) => job('boardWrite[' + i + ']', uri, (bmp) => { assets.boardWrite[i] = bmp; }));
+    job('windowDay', v.windowDay, (bmp) => { assets.winDay = bmp; });
+    job('windowNight', v.windowNight, (bmp) => { assets.winNight = bmp; });
+    const ch = v.characters;
+    const cell = ch.cell || [96, 128];
+    const index = new Map();
+    for (const e of ch.atlas.index) index.set(e.look + '|' + e.direction + '|' + e.frame, e);
+    const accIndex = new Map();
+    if (ch.accessories) for (const e of ch.accessories.index) accIndex.set(e.name + '|' + e.direction, e);
+    assets.atlas = { img: null, mask: null, index, cellW: cell[0], cellH: cell[1] };
+    job('characters.atlas.image', ch.atlas.image, (bmp) => { assets.atlas.img = bmp; });
+    job('characters.atlas.mask', ch.atlas.mask, (bmp) => { assets.atlas.mask = bmp; }, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+    if (ch.accessories) {
+      assets.acc = { img: null, index: accIndex };
+      job('characters.accessories.image', ch.accessories.image, (bmp) => { assets.acc.img = bmp; });
+    }
+    let done = 0;
+    const queue = jobs.slice();
+    const worker = async () => {
+      while (queue.length) {
+        const j = queue.shift();
+        j.assign(await decode(j.name, j.uri, j.opts));
+        done += 1;
+        setLoading(`Ofis yükleniyor… (${done}/${jobs.length})`);
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+    for (const [key, t] of Object.entries(layout.tiers)) {
+      if (!assets.bg[key]) throw new Error('backgrounds.' + key + ' eksik');
+      tierData.set(key, buildTier(key, t));
+    }
+    initLighting();
+    setLoading('');
   }
-
-  const img = (file) => images.get(file).__v;
 
   function buildTier(key, t) {
+    const a = assets.bg[key];
     const b = t.bounds;
-    const w = (b.maxCol - b.minCol + 1) * T, h = (b.maxRow - b.minRow + 1) * T;
-    const bg = newCanvas(w, h);
-    const g = bg.getContext('2d');
-    g.imageSmoothingEnabled = false;
-    const wall = img('walls/wall_0.png');
-    for (let r = b.minRow; r <= b.maxRow; r++) {
-      for (let c = b.minCol; c <= b.maxCol; c++) {
-        const i = (r * t.cols + c) * 4;
-        const kind = t.tiles[i], dx = (c - b.minCol) * T, dy = (r - b.minRow) * T;
-        const color = t.tiles[i + 3] >= 0 ? t.colors[t.tiles[i + 3]] : null;
-        if (kind === 2) {
-          const f = img(layout.files.floor.replace('%d', t.tiles[i + 1]));
-          g.drawImage(color ? colorized(f, 0, 0, T, T, color) : f, dx, dy);
-        } else if (kind === 1) {
-          const mask = t.tiles[i + 2];
-          const sx = (mask % 4) * 16, sy = Math.floor(mask / 4) * 32;
-          g.drawImage(color ? colorized(wall, sx, sy, 16, 32, color) : wall, color ? 0 : sx, color ? 0 : sy, 16, 32, dx, dy - 16, 16, 32);
-        }
-      }
-    }
-    const dynamic = [];
-    const sorted = t.furniture.slice().sort((a, c) => a.z - c.z);
+    const td = { key, t, bg: a.bmp, w: a.bmp.width / assets.scale, h: a.bmp.height / assets.scale, ox: b.minCol * T, oy: b.minRow * T,
+                 windows: a.windows, dynamic: [], seatById: new Map(t.seats.map((s) => [s.id, s])), placementByIndex: new Map(),
+                 blocked: null, doorTile: t.door, board: t.board || null };
+    const sorted = t.furniture.slice().sort((p, q) => p.z - q.z);
     for (const p of sorted) {
-      if (p.z < 0) drawFurniture(g, p, t, null); else dynamic.push(p);
+      td.placementByIndex.set(p.i, p);
+      if (p.z >= 0) td.dynamic.push(p);          // z < 0: oda arka planına pişirilmiş
     }
-    const seatById = new Map(t.seats.map((s) => [s.id, s]));
-    const placementByIndex = new Map(t.furniture.map((p) => [p.i, p]));
-    return { key, t, bg, w, h, dynamic, seatById, placementByIndex };
+    td.boardPlacement = t.boardIndex !== undefined ? td.placementByIndex.get(t.boardIndex) || null : null;
+    return td;
   }
 
-  function drawFurniture(g, p, t, frameFile) {
-    const a = layout.furniture[p.asset];
-    const image = img(frameFile || a.file);
-    const x = (p.col - t.bounds.minCol) * T, y = (p.row - t.bounds.minRow) * T;
-    if (p.mirrored) {
-      g.save(); g.translate(x + a.w, y); g.scale(-1, 1); g.drawImage(image, 0, 0); g.restore();
-    } else {
-      g.drawImage(image, x, y);
+  // ---------- Karakter atlası ----------
+  const sheetCache = new Map();
+  let scratchA = null, scratchM = null, accNightCanvas = null;
+
+  function scratch(which, w, h) {
+    let c = which === 'a' ? scratchA : scratchM;
+    if (!c || c.width !== w || c.height !== h) {
+      c = newCanvas(w, h);
+      if (which === 'a') scratchA = c; else scratchM = c;
     }
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.clearRect(0, 0, w, h);
+    return { c, g };
   }
 
-  // ---------- Odalar ve karakterler ----------
-  const tileX = (td, col) => (col - td.t.bounds.minCol) * T + 8;
-  const tileY = (td, row) => (row - td.t.bounds.minRow + 1) * T - 1;   // ayak noktası
-  const pt = (td, c) => ({ x: tileX(td, c[0]), y: tileY(td, c[1]) });
+  function liftFactors() {
+    const m = lightParams().multiplyColor;
+    return m.map((x) => Math.pow(1 / Math.max(0.05, x), 0.8));
+  }
+
+  // Gömlek rengi: rgb * lerp(beyaz, gömlek, maske); gece: sahne çarpanının (0.8 üssü) tersi ile aydınlatma (macOS `nightGrade` ile aynı mantık).
+  function bakeSheet(look, shirtHex, night) {
+    const key = look + '|' + shirtHex + '|' + (night ? 1 : 0);
+    const hit = sheetCache.get(key);
+    if (hit) return hit;
+    const A = assets.atlas, rowH = A.cellH * 3, W = A.img.width;
+    const a = scratch('a', W, rowH);
+    a.g.drawImage(A.img, 0, look * rowH, W, rowH, 0, 0, W, rowH);
+    const data = a.g.getImageData(0, 0, W, rowH);
+    let mk = null;
+    if (A.mask) {
+      const m = scratch('m', W, rowH);
+      m.g.drawImage(A.mask, 0, look * rowH, W, rowH, 0, 0, W, rowH);
+      mk = m.g.getImageData(0, 0, W, rowH).data;
+    }
+    const sh = hexRgb(shirtHex).map((v) => v / 255);
+    const lift = night ? liftFactors() : [1, 1, 1];
+    const d = data.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      const m = mk ? mk[i] / 255 : 0;
+      for (let c = 0; c < 3; c++) d[i + c] = clamp(d[i + c] * ((1 - m) + m * sh[c]) * lift[c], 0, 255);
+    }
+    const out = newCanvas(W, rowH);
+    out.getContext('2d').putImageData(data, 0, 0);
+    if (sheetCache.size >= 48) sheetCache.delete(sheetCache.keys().next().value);
+    sheetCache.set(key, out);
+    return out;
+  }
+
+  function accessorySource(night) {
+    if (!night) return assets.acc.img;
+    if (!accNightCanvas) {
+      const W = assets.acc.img.width, H = assets.acc.img.height;
+      const a = scratch('a', W, H);
+      a.g.drawImage(assets.acc.img, 0, 0);
+      const data = a.g.getImageData(0, 0, W, H);
+      const lift = liftFactors(), d = data.data;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3]) for (let c = 0; c < 3; c++) d[i + c] = clamp(d[i + c] * lift[c], 0, 255);
+      accNightCanvas = newCanvas(W, H);
+      accNightCanvas.getContext('2d').putImageData(data, 0, 0);
+    }
+    return accNightCanvas;
+  }
+
+  // Karakter görünümü: sunucudan gelen appearance/role (tint, aksesuar) kullanılır; JS'te eşleme tablosu yoktur.
+  function lookOf(m) {
+    const ap = m.appearance || (layout.appearance && (layout.appearance[m.badge] || layout.appearance.unknown)) || {};
+    const role = m.role || {};
+    let acc = role.accessory !== undefined ? role.accessory : ap.accessory;
+    if (!acc || acc === 'none') acc = null;
+    let shirt = ap.tint || role.tint || '#8A8F98';
+    if (acc === 'vest') shirt = '#F2EBD8';      // yelek altı açık gömlek (yelek rengi atlasa sabit pişirilmiş)
+    return { look: clamp(ap.character || 0, 0, 5), shirt, acc, small: !!ap.small };
+  }
+
+  const DIR_ROW = { down: 0, up: 1, right: 2, left: 2 };
+
+  // Ayak noktası (x, y) mantıksal birim, oda uzayında. frame: atlas kare dizini.
+  function drawSprite(look, shirt, dir, frame, acc, x, y, k, alpha, night) {
+    const C = layout.v3.vector.characters, A = assets.atlas;
+    const e = A.index.get(look + '|' + DIR_ROW[dir] + '|' + frame);
+    if (!e) return;
+    const sheet = bakeSheet(look, shirt, night);
+    const fw = C.frameWidth * k, fh = C.frameHeight * k;
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.translate(x, y);
+    if (dir === 'left') ctx.scale(-1, 1);
+    ctx.drawImage(sheet, e.x, e.y - look * A.cellH * 3, e.w, e.h, -fw / 2, -fh, fw, fh);
+    if (acc && assets.acc) {
+      const ae = assets.acc.index.get(acc + '|' + DIR_ROW[dir]);
+      const bob = (C.bob && C.bob[frame]) || 0;
+      if (ae) ctx.drawImage(accessorySource(night), ae.x, ae.y, ae.w, ae.h, -fw / 2, -fh + bob * k, fw, fh);
+    }
+    ctx.restore();
+  }
+
+  // ---------- Işık (gece / gündüz) ----------
+  const DEFAULT_LIGHT = { multiplyColor: [0.60, 0.66, 0.88], washColor: [0.05, 0.10, 0.34], washAlpha: 0.22, bulbAlpha: 0.38, poolAlpha: 0.40,
+                          boardAlpha: 0.30, screenAlpha: 0.9, windowAlpha: 0.22 };
+  const light = { mode: 'auto', level: 0, serverNight: null, trustServer: false, cfg: { nightStartHour: 19, nightStartMinute: 30, nightEndHour: 6, nightEndMinute: 30 } };
+
+  function lightParams() { return Object.assign({}, DEFAULT_LIGHT, layout && layout.v3 && layout.v3.vector && layout.v3.vector.lighting); }
+
+  function initLighting() {
+    const saved = store.get('adalmon-light');
+    light.mode = saved === 'day' || saved === 'night' ? saved : 'auto';
+    const base = layout.v3 && layout.v3.lighting;
+    if (base) Object.assign(light.cfg, { nightStartHour: base.nightStartHour, nightStartMinute: base.nightStartMinute, nightEndHour: base.nightEndHour, nightEndMinute: base.nightEndMinute });
+    if (els.light) els.light.value = light.mode;
+    light.level = wantNight() ? 1 : 0;
+  }
+
+  function localNight(date) {
+    const d = date || new Date();
+    const c = light.cfg, m = d.getHours() * 60 + d.getMinutes();
+    const s = c.nightStartHour * 60 + c.nightStartMinute, e = c.nightEndHour * 60 + c.nightEndMinute;
+    return s > e ? (m >= s || m < e) : (m >= s && m < e);
+  }
+
+  function wantNight() {
+    if (light.mode === 'day') return false;
+    if (light.mode === 'night') return true;
+    return light.trustServer && light.serverNight !== null ? light.serverNight : localNight();
+  }
+
+  function applyServerLighting(l) {
+    if (!l) return;
+    Object.assign(light.cfg, { nightStartHour: l.nightStartHour, nightStartMinute: l.nightStartMinute, nightEndHour: l.nightEndHour, nightEndMinute: l.nightEndMinute });
+    light.serverNight = typeof l.resolvedNight === 'boolean' ? l.resolvedNight : null;
+    light.trustServer = light.serverNight !== null && light.serverNight !== localNight();   // fark varsa sunucu esas
+  }
+
+  // 1 sn crossfade; seviye değiştiyse true.
+  function stepLight(dt) {
+    const target = wantNight() ? 1 : 0;
+    if (light.level === target) return false;
+    light.level = target > light.level ? Math.min(target, light.level + dt) : Math.max(target, light.level - dt);
+    return true;
+  }
+  const lightAnimating = () => light.level !== (wantNight() ? 1 : 0);
+  const uiNight = () => light.level > 0.5;
+
+  // ---------- Odalar ve oyuncular ----------
+  const pt = (c) => ({ x: c[0] * T + 8, y: (c[1] + 1) * T - 1 });   // karo alt-orta (mutlak mantıksal)
+  const tileOf = (x, y) => [Math.floor(x / T), Math.floor((y + 1) / T) - 1];
 
   function newRoom(r) {
     return { id: r.id, tierKey: r.tier, td: tierData.get(r.tier), actors: new Map(), title: r.title, badge: r.badge, badgeLabel: r.badgeLabel,
-             group: r.group, overflow: 0, leaving: false, alpha: 1, leaveAt: 0, rect: null, scale: 1 };
+             group: r.group, overflow: 0, leaving: false, alpha: 1, rect: null, computers: r.computers || {}, fade: null, fresh: null,
+             cleaner: newCleaner(r), carrier: null, extras: [], trail: [] };
+  }
+
+  function newCleaner(r) {
+    const seed = (r.cleaner && r.cleaner.seed) || r.id;
+    const c = r.cleaner || {};
+    const lo = (c.intervalMin || 90) * 1000, hi = (c.intervalMax || 180) * 1000;
+    const rnd = rng('cleaner|' + seed);
+    return { rnd, lo, hi, next: nowMs() + lo + rnd() * (hi - lo), entity: null, laneRows: c.laneRows || [] };
   }
 
   function newActor(room, m, seat, instant) {
     const td = room.td;
-    const a = { id: m.id, room, member: m, seat, path: [], goal: 'seat', x: 0, y: 0, dir: seat.facing, atSeat: false, execMode: null,
-                strollUntil: 0, wait: 0, leaving: false, alpha: 1, born: now(), walkT: 0, prevStatus: m.status };
-    a.exec = seat.kind === 'executive';
+    const a = { id: m.id, room, member: m, seat, path: [], goal: 'seat', x: 0, y: 0, dir: seat.facing, atSeat: false, execMode: null, strollUntil: 0,
+                wait: 0, leaving: false, alpha: 1, walkT: 0, exec: seat.kind === 'executive', idle: null, look: 0, lookNext: 0, rnd: rng(room.id + '|' + m.id) };
     if (instant) { placeInstant(a); } else {
-      const d = pt(td, td.t.door);
+      const d = pt(td.doorTile);
       a.x = d.x; a.y = d.y; a.dir = 'left'; a.goal = 'seat';
-      a.path = [pt(td, td.t.entrance)].concat(seat.enter.map((c) => pt(td, c)));
+      a.path = [pt(td.t.entrance)].concat(seat.enter.map(pt));
       a.alpha = 0;
     }
     return a;
+  }
+
+  // Yönetici tahta karosu zemin değilse (duvar karosu) ilk bölge karosuna düşer: duvarın içinde görünmesin.
+  function boardTile(td) {
+    const t = td.t;
+    if (!t.board) return null;
+    const i = (t.board[1] * t.cols + t.board[0]) * 4;
+    if (t.tiles[i] === 2) return t.board;
+    const z = (t.zoneTiles || []).find((c) => t.tiles[(c[1] * t.cols + c[0]) * 4] === 2);
+    return z || t.board;
   }
 
   function placeInstant(a) {
     const td = a.room.td;
     a.path = [];
     if (a.exec && execDesired(a) === 'board' && td.t.board) {
-      const p = pt(td, td.t.board); a.x = p.x; a.y = p.y; a.dir = 'up'; a.execMode = 'board'; a.atSeat = false; a.goal = 'board';
+      const p = pt(boardTile(td)); a.x = p.x; a.y = p.y; a.dir = 'up'; a.execMode = 'board'; a.atSeat = false; a.goal = 'board';
     } else {
-      const p = pt(td, [a.seat.col, a.seat.row]); a.x = p.x; a.y = p.y; a.dir = a.seat.facing; a.atSeat = true; a.goal = 'seat'; a.execMode = 'seated';
+      const p = pt([a.seat.col, a.seat.row]); a.x = p.x; a.y = p.y; a.dir = a.seat.facing; a.atSeat = true; a.goal = 'seat'; a.execMode = 'seated';
     }
   }
 
@@ -232,21 +389,21 @@
     const st = a.member.status;
     if (st === 'thinking' || st === 'tool') return 'board';
     if (st === 'permission') return 'stroll';
-    return now() < a.strollUntil ? 'stroll' : 'seated';
+    return nowMs() < a.strollUntil ? 'stroll' : 'seated';
   }
 
   function routeToBoard(a) {
     const td = a.room.td;
     a.goal = 'board'; a.wait = 0;
-    if (a.atSeat && a.seat.toBoard) a.path = a.seat.toBoard.map((c) => pt(td, c)); else a.path = [pt(td, td.t.board)];
+    if (a.atSeat && a.seat.toBoard) a.path = a.seat.toBoard.map(pt); else a.path = [pt(boardTile(td))];
     a.atSeat = false;
   }
 
   function routeToSeat(a) {
     const td = a.room.td;
     a.goal = 'seat';
-    const back = a.seat.toBoard ? a.seat.toBoard.slice(0, -1).reverse().map((c) => pt(td, c)) : [];
-    a.path = [pt(td, td.t.board)].concat(back, [pt(td, [a.seat.col, a.seat.row])]);
+    const back = a.seat.toBoard ? a.seat.toBoard.slice(0, -1).reverse().map(pt) : [];
+    a.path = [pt(boardTile(td))].concat(back, [pt([a.seat.col, a.seat.row])]);
   }
 
   function setExecMode(a, mode) {
@@ -254,34 +411,34 @@
     a.execMode = mode;
     if (mode === 'seated') routeToSeat(a);
     else if (a.atSeat) routeToBoard(a);
-    else { a.goal = 'board'; a.path = [pt(a.room.td, a.room.td.t.board)]; }
+    else { a.goal = 'board'; a.path = [pt(boardTile(a.room.td))]; }
     if (mode === 'stroll') a.goal = 'stroll-start';
   }
 
+  // Yönetici bölgesinde basit yatay volta.
   function strollStep(a) {
     const td = a.room.td, t = td.t;
-    const boardRow = t.board[1];
-    const tiles = t.zoneTiles.filter((c) => c[1] === boardRow);
-    const here = Math.round((a.x - 8) / T) + t.bounds.minCol;
-    let pool = tiles.filter((c) => c[0] !== here && Math.abs(c[0] - here) >= 4 && Math.abs(c[0] - here) <= 6);
+    const row = boardTile(td)[1];
+    const tiles = (t.zoneTiles || []).filter((c) => c[1] === row);
+    const here = Math.round((a.x - 8) / T);
+    let pool = tiles.filter((c) => Math.abs(c[0] - here) >= 4 && Math.abs(c[0] - here) <= 6);
     if (!pool.length) {
       const others = tiles.filter((c) => c[0] !== here);
       const far = Math.max(0, ...others.map((c) => Math.abs(c[0] - here)));
       pool = far >= 2 ? others.filter((c) => Math.abs(c[0] - here) === far) : others;
     }
     if (!pool.length) { a.wait = 2; return; }
-    const target = pool[Math.floor(Math.random() * pool.length)];
-    a.path = [pt(td, target)];
+    a.path = [pt(pool[Math.floor(a.rnd() * pool.length)])];
     a.goal = 'stroll';
   }
 
   function startLeave(a) {
     if (a.leaving) return;
-    const td = a.room.td, t = td.t;
-    a.leaving = true; a.goal = 'out'; a.atSeat = false;
-    const door = pt(td, t.door), ent = pt(td, t.entrance);
-    const seatPath = a.seat.enter.slice(0, -1).reverse().map((c) => pt(td, c));
-    const nearSeat = Math.abs(a.x - tileX(td, a.seat.col)) < 1 && Math.abs(a.y - tileY(td, a.seat.row)) < 1;
+    const td = a.room.td;
+    a.leaving = true; a.goal = 'out'; a.atSeat = false; a.idle = null;
+    const door = pt(td.doorTile), ent = pt(td.t.entrance);
+    const seatPath = a.seat.enter.slice(0, -1).reverse().map(pt);
+    const nearSeat = Math.abs(a.x - (a.seat.col * T + 8)) < 1 && Math.abs(a.y - ((a.seat.row + 1) * T - 1)) < 1;
     a.path = (nearSeat ? seatPath.concat([ent]) : [ent]).concat([door]);
   }
 
@@ -289,13 +446,16 @@
     if (a.goal === 'out') { a.done = true; return; }
     if (a.goal === 'seat') {
       a.atSeat = true; a.dir = a.seat.facing;
-      if (a.exec) a.execMode = 'seated';   // asıl mod güncelleme döngüsünde (updateActor) uygulanır
+      if (a.exec) a.execMode = 'seated';
     } else if (a.goal === 'board') {
-      a.dir = 'up';
+      a.dir = 'up'; a.lookNext = nowMs() + 3000 + a.rnd() * 2000;
     } else if (a.goal === 'stroll-start' || a.goal === 'stroll') {
-      a.dir = 'down'; a.wait = 1.5 + Math.random() * 2.5; a.goal = 'stroll-idle';
+      a.dir = 'down'; a.wait = 1.5 + a.rnd() * 2.5; a.goal = 'stroll-idle';
     }
   }
+
+  const moving = (a) => a.path.length > 0;
+  const isWorking = (m) => m.status === 'thinking' || m.status === 'tool' || m.status === 'permission';
 
   function updateActor(a, dt) {
     if (a.alpha < 1 && !a.leaving) a.alpha = Math.min(1, a.alpha + dt * 4);
@@ -321,25 +481,29 @@
         if (a.wait <= 0) strollStep(a);
       } else if (a.execMode === 'stroll' && a.goal === 'stroll-start') {
         arrive(a);
+      } else if (a.execMode === 'board' && a.goal === 'board') {
+        // tahtada yazarken 3-5 sn aralıkla ajanlara bakar (aşağı yön karesi)
+        const t = nowMs();
+        if (!a.look && t >= a.lookNext) { a.look = t + 1200; }
+        else if (a.look && t >= a.look) { a.look = 0; a.lookNext = t + 3000 + a.rnd() * 2000; }
       }
     }
   }
 
-  const moving = (a) => a.path.length > 0;
-
   function applyMember(room, a, m) {
-    const old = a.member.status;
+    const old = a.member;
     a.member = m;
     if (a.exec) {
-      const wasWorking = old === 'thinking' || old === 'tool' || old === 'permission';
-      const working = m.status === 'thinking' || m.status === 'tool' || m.status === 'permission';
-      if (working) a.strollUntil = 0; else if (wasWorking) a.strollUntil = now() + layout.strollSeconds * 1000;
+      const wasWorking = isWorking(old);
+      if (isWorking(m)) a.strollUntil = 0; else if (wasWorking) a.strollUntil = nowMs() + (layout.strollSeconds || 60) * 1000;
       setExecMode(a, execDesired(a));
     }
+    if (isWorking(m) && a.idle) a.idle.active = null;
   }
 
   function updateRoom(room, r, instant) {
     room.title = r.title; room.badge = r.badge; room.badgeLabel = r.badgeLabel; room.group = r.group; room.overflow = r.overflow;
+    room.computers = r.computers || room.computers;
     const seen = new Set();
     for (const m of r.members) {
       if (m.seat === undefined || m.overflow) continue;
@@ -354,26 +518,49 @@
     for (const [id, a] of room.actors) if (!seen.has(id)) startLeave(a);
   }
 
+  // Kademe büyümesi: oda ve oyuncular kalır, eski zemin 0.4 sn soluklaşır, yeni masalar belirir, taşıyıcı koliyle girer.
+  function growRoom(room, r) {
+    const oldTd = room.td, nd = tierData.get(r.tier);
+    const grew = nd.t.stations > oldTd.t.stations;
+    room.td = nd; room.tierKey = r.tier;
+    for (const a of room.actors.values()) {
+      const seat = nd.seatById.get(a.seat.id);
+      if (seat) a.seat = seat;
+    }
+    if (!grew) return;
+    room.fade = { old: oldTd, t: 0 };
+    const had = new Set(oldTd.dynamic.map((p) => p.asset + '@' + p.col + ',' + p.row));
+    room.fresh = { keys: new Set(nd.dynamic.filter((p) => !had.has(p.asset + '@' + p.col + ',' + p.row)).map((p) => p.asset + '@' + p.col + ',' + p.row)), t: 0, started: false };
+    const oldBlocks = (oldTd.t.blocks || []).length;
+    const stops = (nd.t.blocks || []).filter((b) => b.i >= oldBlocks).map((b) => [b.col + 1, b.row + 2]);
+    startCarrier(room, stops);
+  }
+
   function apply(s) {
     skew = s.now - Date.now();
     state = s;
+    applyServerLighting(s.lighting);
     const ids = new Set();
     for (const r of s.rooms) {
       ids.add(r.id);
       if (!tierData.has(r.tier)) continue;
       let room = rooms.get(r.id);
       let instant = !initialized;
-      if (room && (room.tierKey !== r.tier || r.reseated)) { rooms.delete(r.id); room = null; instant = true; }
-      if (!room) { room = newRoom(r); room.td = tierData.get(r.tier); rooms.set(r.id, room); }
+      if (room && r.reseated) { rooms.delete(r.id); room = null; instant = true; }
+      if (!room) { room = newRoom(r); rooms.set(r.id, room); }
+      else if (room.tierKey !== r.tier) growRoom(room, r);
+      room.leaving = false;
       updateRoom(room, r, instant);
     }
     for (const [id, room] of rooms) {
-      if (!ids.has(id) && !room.leaving) { room.leaving = true; room.leaveAt = performance.now(); room.actors.forEach(startLeave); }
+      if (!ids.has(id) && !room.leaving) { room.leaving = true; room.actors.forEach(startLeave); }
     }
     initialized = true;
     if (focusId && !rooms.has(focusId)) focusId = null;
     updateBar();
     layoutRooms();
+    refreshCard();
+    kick();
   }
 
   function updateBar() {
@@ -383,13 +570,179 @@
     els.back.hidden = !focusId;
   }
 
-  // ---------- Yerleşim ----------
-  const PLAQUE_H = () => Math.round(26 * dpr);
+  // ---------- Yürüme ızgarası (temizlikçi / taşıyıcı) ----------
+  function blockedSet(td) {
+    if (td.blocked) return td.blocked;
+    const t = td.t, set = new Set();
+    for (let r = 0; r < t.rows; r++) for (let c = 0; c < t.cols; c++) if (t.tiles[(r * t.cols + c) * 4] !== 2) set.add(c + ',' + r);
+    for (const p of t.furniture) {
+      const a = layout.furniture[p.asset];
+      if (!a || a.onWall || a.onSurface) continue;
+      for (let dy = a.bg || 0; dy < a.fh; dy++) for (let dx = 0; dx < a.fw; dx++) set.add((p.col + dx) + ',' + (p.row + dy));
+    }
+    for (const s of t.seats) set.delete(s.col + ',' + s.row);
+    set.delete(t.entrance.join(',')); set.delete(t.door.join(','));
+    td.blocked = set;
+    return set;
+  }
+
+  function bfs(td, from, to) {
+    const blocked = blockedSet(td), key = (c) => c[0] + ',' + c[1];
+    if (key(from) === key(to)) return [];
+    const prev = new Map([[key(from), null]]);
+    const q = [from];
+    for (let i = 0; i < q.length; i++) {
+      const cur = q[i];
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const n = [cur[0] + dx, cur[1] + dy], k = key(n);
+        if (prev.has(k) || (blocked.has(k) && k !== key(to))) continue;
+        if (n[0] < 0 || n[1] < 0 || n[0] >= td.t.cols || n[1] >= td.t.rows) continue;
+        prev.set(k, cur);
+        if (k === key(to)) {
+          const out = [];
+          for (let c = n; c; c = prev.get(key(c))) out.unshift(c);
+          return out.slice(1);
+        }
+        q.push(n);
+      }
+    }
+    return null;
+  }
+
+  function walkVia(td, tiles) {
+    const out = [];
+    for (let i = 1; i < tiles.length; i++) {
+      const seg = bfs(td, tiles[i - 1], tiles[i]);
+      (seg || [tiles[i]]).forEach((c) => out.push(pt(c)));
+    }
+    return out;
+  }
+
+  // ---------- Temizlikçi ve taşıyıcı (yerel simülasyon) ----------
+  function laneEnds(td, row) {
+    const t = td.t, blocked = blockedSet(td);
+    let lo = null, hi = null;
+    for (let c = 0; c < t.cols; c++) if (t.tiles[(row * t.cols + c) * 4] === 2 && !blocked.has(c + ',' + row)) { if (lo === null) lo = c; hi = c; }
+    return lo === null ? null : [lo, hi];
+  }
+
+  function startCleaner(room) {
+    const td = room.td, cl = room.cleaner;
+    const rows = (cl.laneRows || []).slice().sort((p, q) => q - p);
+    const ent = td.t.entrance, door = td.t.door;
+    const tiles = [door, ent];
+    let leftToRight = false;
+    for (const row of rows) {
+      const ends = laneEnds(td, row);
+      if (!ends) continue;
+      const a = leftToRight ? ends[0] : ends[1], b = leftToRight ? ends[1] : ends[0];
+      tiles.push([a, row], [b, row]);
+      leftToRight = !leftToRight;
+    }
+    tiles.push(ent, door);
+    const start = pt(door);
+    cl.entity = { x: start.x, y: start.y, dir: 'left', path: walkVia(td, tiles), walkT: 0, alpha: 1, kind: 'cleaner', look: 1, shirt: '#2673FA', acc: 'apron' };
+    cl.entity.path.push({ x: start.x, y: start.y, last: true });
+  }
+
+  function startCarrier(room, stops) {
+    if (!stops.length) return;
+    const td = room.td, door = td.t.door, ent = td.t.entrance;
+    const pts = [];
+    let from = ent;
+    const first = walkVia(td, [door, ent]);
+    first.forEach((p) => pts.push(p));
+    for (const s of stops) {
+      walkVia(td, [from, s]).forEach((p) => pts.push(p));
+      pts[pts.length - 1].drop = true;
+      from = s;
+    }
+    walkVia(td, [from, ent, door]).forEach((p) => pts.push(p));
+    pts.push({ x: pt(door).x, y: pt(door).y, last: true });
+    const d = pt(door);
+    room.carrier = { x: d.x, y: d.y, dir: 'left', path: pts, walkT: 0, alpha: 1, kind: 'carrier', look: 1, shirt: '#E68C26', acc: 'hardhat', pause: 0 };
+  }
+
+  function stepEntity(e, dt) {
+    if (e.pause > 0) { e.pause -= dt; return e.pause <= 0 ? 'resume' : null; }
+    let step = 64 * dt, ev = null;
+    while (step > 0 && e.path.length) {
+      const p = e.path[0], dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy);
+      if (d <= step) {
+        e.x = p.x; e.y = p.y; e.path.shift(); step -= d;
+        if (p.drop) { e.pause = 0.5; ev = 'drop'; step = 0; }
+        if (p.last) ev = 'done';
+      } else { e.x += (dx / d) * step; e.y += (dy / d) * step; step = 0; }
+      if (d > 0.01) e.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+    }
+    e.walkT += dt;
+    return ev;
+  }
+
+  function stepRoomExtras(room, dt) {
+    const cl = room.cleaner;
+    if (cl.entity) {
+      const tile = tileOf(cl.entity.x, cl.entity.y);
+      const ev = stepEntity(cl.entity, dt);
+      const last = room.trail[room.trail.length - 1];
+      if (!last || last.c !== tile[0] + ',' + tile[1]) room.trail.push({ c: tile[0] + ',' + tile[1], x: tile[0] * T, y: tile[1] * T + 8, t: 3.2 });
+      if (ev === 'done') { cl.entity = null; cl.next = nowMs() + cl.lo + cl.rnd() * (cl.hi - cl.lo); }
+    }
+    for (const tr of room.trail) tr.t -= dt;
+    if (room.trail.length && room.trail[0].t <= 0) room.trail = room.trail.filter((tr) => tr.t > 0);
+    if (room.carrier) {
+      const ev = stepEntity(room.carrier, dt);
+      if (ev === 'drop' && room.fresh && !room.fresh.started) room.fresh.started = true;
+      if (ev === 'done') room.carrier = null;
+    }
+    if (room.fade) { room.fade.t += dt / 0.4; if (room.fade.t >= 1) room.fade = null; }
+    if (room.fresh && room.fresh.started) { room.fresh.t += dt / 0.4; if (room.fresh.t >= 1) room.fresh = null; }
+    else if (room.fresh && !room.carrier) room.fresh = null;
+  }
+
+  // ---------- Boşta varyantları ve zamanlayıcılar ----------
+  function idleEligible(a) {
+    const m = a.member;
+    return !a.exec && a.atSeat && a.seat.kind === 'desk' && !moving(a) && !a.leaving && a.alpha >= 1 && !isWorking(m) && !m.alert &&
+           (m.status === 'idle' || m.status === 'done') && m.idleVariant && m.idleVariant.sequence && m.idleVariant.sequence.length > 0;
+  }
+
+  // Tek dizi: sunucudaki sıra döngüyle oynanır; aralarda statik bekleme (ucuz zamanlayıcı).
+  function scheduleActors(t) {
+    let changed = false;
+    for (const room of rooms.values()) {
+      if (!room.rect || room.leaving) continue;
+      let active = 0;
+      for (const a of room.actors.values()) if (a.idle && a.idle.active) active += 1;
+      for (const a of room.actors.values()) {
+        if (!idleEligible(a)) { if (a.idle) { if (a.idle.active) changed = true; a.idle = null; } continue; }
+        const seqn = a.member.idleVariant.sequence;
+        if (!a.idle) a.idle = { n: 0, next: t + 3000 + a.rnd() * 6000, active: null };
+        const id = a.idle;
+        if (id.active && t >= id.active.end) {
+          id.active = null; active -= 1; changed = true;
+          id.next = t + 8000 + a.rnd() * 14000;
+        } else if (!id.active && t >= id.next && active < 2) {
+          const item = seqn[id.n % seqn.length];
+          id.n += 1;
+          id.active = { variant: item.variant, start: t, end: t + (item.seconds || 6) * 1000 };
+          active += 1; changed = true;
+        }
+      }
+      const cl = room.cleaner;
+      if (!cl.entity && !room.carrier && !document.hidden && t >= cl.next) { startCleaner(room); changed = true; }
+    }
+    return changed;
+  }
+
+  // ---------- Yerleşim ve kamera ----------
+  const PLAQUE_H = () => Math.round(30 * dpr);
   const GAP = () => Math.round(14 * dpr);
 
+  // Kesirli ölçek: pencereye sığdır ve ortala (en çok 8x CSS pikseli); oda ızgarası en büyük ölçeği veren sütun sayısıyla seçilir.
   function layoutRooms() {
     const list = [...rooms.values()];
-    hitRects = [];
+    hitRooms = [];
     if (!list.length) return;
     const W = canvas.width, H = canvas.height;
     const shown = focusId && rooms.has(focusId) ? [rooms.get(focusId)] : list;
@@ -397,12 +750,11 @@
     const gap = GAP(), ph = PLAQUE_H();
     let best = null;
     for (let cols = 1; cols <= shown.length; cols++) {
-      const rows = Math.ceil(shown.length / cols);
-      // ölçek: hücre = oda + levha + boşluk
-      const sx = Math.floor((W - gap * (cols + 1)) / (cols * cw));
-      const sy = Math.floor((H - gap * (rows + 1) - ph * rows) / (rows * ch));
-      const sc = Math.max(1, Math.min(sx, sy, 8 * Math.max(1, Math.round(dpr))));
-      if (!best || sc > best.sc || (sc === best.sc && cols * rows < best.cols * best.rows)) best = { cols, rows, sc };
+      const rowsN = Math.ceil(shown.length / cols);
+      const sx = (W - gap * (cols + 1)) / (cols * cw);
+      const sy = (H - gap * (rowsN + 1) - ph * rowsN) / (rowsN * ch);
+      const sc = clamp(Math.min(sx, sy), 0.25, 8 * dpr);
+      if (!best || sc > best.sc + 1e-6 || (Math.abs(sc - best.sc) <= 1e-6 && cols * rowsN < best.cols * best.rows)) best = { cols, rows: rowsN, sc };
     }
     S = best.sc;
     const cellW = cw * S + gap, cellH = ch * S + ph + gap;
@@ -411,11 +763,13 @@
     shown.forEach((room, i) => {
       const col = i % best.cols, row = Math.floor(i / best.cols);
       const cellX = x0 + col * cellW, cellY = y0 + row * cellH;
-      const x = cellX + Math.round((cw * S - room.td.w * S) / 2), y = cellY + ph + Math.round((ch * S - room.td.h * S) / 2);
-      room.rect = { x, y, w: room.td.w * S, h: room.td.h * S, px: cellX, py: cellY, pw: cw * S, ph: ch * S + ph };
-      hitRects.push(room);
+      const w = Math.round(room.td.w * S), h = Math.round(room.td.h * S);
+      const x = Math.round(cellX + (cw * S - w) / 2), y = Math.round(cellY + ph + (ch * S - h) / 2);
+      room.rect = { x, y, w, h, px: cellX, py: cellY, pw: cw * S, ph: ch * S + ph };
+      hitRooms.push(room);
     });
     for (const room of list) if (!shown.includes(room)) room.rect = null;
+    needsRedraw = true;
   }
 
   // ---------- Çizim ----------
@@ -424,264 +778,547 @@
     if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h);
   }
 
-  function frameFor(a) {
-    const c = layout.characters;
-    if (moving(a)) return c.walkCycle[Math.floor(a.walkT / 0.125) % 4];
-    let pose = 'stand';
-    if (a.exec) {
-      if (a.execMode === 'board') pose = 'typing';
-      else if (a.atSeat) pose = 'sitting';
-    } else if (a.atSeat) {
-      pose = a.member.pose || 'sitting';
-    }
-    if (pose === 'typing') return c.frames.typing[Math.floor(performance.now() / 280) % 2];
-    if (pose === 'reading') return c.frames.reading[Math.floor(performance.now() / 600) % 2];
-    return c.frames.stand;
+  function pill(x, y, w, h, fill, stroke, shadow) {
+    ctx.save();
+    if (shadow) { ctx.shadowColor = 'rgba(8,10,18,0.28)'; ctx.shadowBlur = 5 * dpr; ctx.shadowOffsetY = 1.2 * dpr; }
+    ctx.fillStyle = fill;
+    roundRect(x, y, w, h, h / 2); ctx.fill();
+    ctx.restore();
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = Math.max(1, 0.5 * dpr); roundRect(x + 0.5, y + 0.5, w - 1, h - 1, h / 2); ctx.stroke(); }
   }
 
-  function upright(a) {
-    return moving(a) || (a.exec && a.execMode !== 'seated') || (!a.atSeat && !a.exec);
+  const dropOf = (a) => (a.atSeat && !moving(a) ? layout.v3.vector.characters.sitDrop : 0);
+
+  // Kare ve yön: durum animasyonu sunucudan gelen pose/alert/idleVariant'a göre; çeviri tablosu yok.
+  function poseOf(a, t) {
+    const F = layout.v3.vector.characters.frames, wc = layout.v3.vector.characters.walkCycle;
+    if (moving(a)) return { frame: wc[Math.floor(a.walkT / 0.125) % wc.length], dir: a.dir };
+    const m = a.member;
+    if (a.exec && a.execMode === 'board' && a.goal === 'board') {
+      if (a.look) return { frame: F.stand, dir: 'down' };
+      return { frame: F.boardWrite[Math.floor(t / 400) % 2], dir: 'up' };
+    }
+    if (a.exec && a.execMode === 'stroll') return { frame: F.stand, dir: a.dir };
+    if (!a.atSeat) return { frame: F.stand, dir: a.dir };
+    if (m.alert) return { frame: F.raiseHand[Math.floor(t / 450) % 2], dir: a.dir };
+    const act = a.idle && a.idle.active;
+    if (act) {
+      if (act.variant === 'read') return { frame: F.reading[Math.floor(t / 650) % 2], dir: a.dir };
+      if (act.variant === 'coffee') return { frame: F.coffee[Math.floor(t / 700) % 2], dir: a.dir };
+      if (act.variant === 'yawn') return { frame: Math.floor(t / 500) % 2 ? F.stand : F.yawn, dir: a.dir };
+      if (act.variant === 'zzz') return { frame: F.sleep, dir: a.dir };
+    }
+    if (m.pose === 'typing') return { frame: F.typing[Math.floor(t / 280) % 2], dir: a.dir };
+    if (m.pose === 'reading') return { frame: F.reading[Math.floor(t / 600) % 2], dir: a.dir };
+    return { frame: F.stand, dir: a.dir };
   }
 
   function bubbleOf(a) {
     const m = a.member;
-    if (a.leaving || moving(a)) return null;
-    if (m.alert) return { alert: true };
-    if (!m.bubble) return null;
-    if (m.activityAt && now() - m.activityAt >= layout.bubbleLifetime * 1000) return null;
-    return { text: m.bubble };
-  }
-
-  function drawActor(a, td) {
-    const c = layout.characters, ap = layout.appearance[a.member.badge] || layout.appearance.unknown;
-    const sheet = characterSheet(a.member.badge);
-    const frame = frameFor(a);
-    const row = c.rows[a.dir === 'left' ? 'left' : a.dir];
-    const k = ap.small && S >= 2 ? (S - 1) / S : 1;
-    const w = c.frameWidth * k, h = c.frameHeight * k;
-    const drop = upright(a) ? 0 : c.sitDrop;
-    const x = Math.round(a.x), y = Math.round(a.y) + drop;
-    ctx.save();
-    ctx.globalAlpha *= a.alpha;
-    ctx.translate(x, y);
-    if (a.dir === 'left') ctx.scale(-1, 1);
-    ctx.drawImage(sheet, frame * c.frameWidth, row * c.frameHeight, c.frameWidth, c.frameHeight, -w / 2, -h, w, h);
-    ctx.restore();
-    // aksesuar (baş üstü)
-    const still = !moving(a);
-    const low = still && (!upright(a) || (a.member.pose === 'reading'));
-    const headTop = (low ? 28 : 30) * k - drop;
-    if (ap.accessory !== 'none') {
-      const acc = art(ap.accessory);
-      ctx.save();
-      ctx.globalAlpha *= a.alpha;
-      ctx.drawImage(acc, Math.round(a.x - acc.width * k / 2), Math.round(a.y - (headTop - 1) - acc.height * k / 2), acc.width * k, acc.height * k);
-      ctx.restore();
+    if (a.leaving || moving(a) || !a.atSeat && !a.exec) return null;
+    if (m.alert) return { kind: 'alert' };
+    const act = a.idle && a.idle.active;
+    if (act && act.variant === 'zzz') return { kind: 'zzz' };
+    if (m.bubble) {
+      if (m.activityAt && serverNow() - m.activityAt >= (layout.bubbleLifetime || 6) * 1000) return null;
+      return { kind: 'text', text: m.bubble };
     }
-    return { headTop, x: a.x, y: a.y };
+    if (m.status === 'thinking') return { kind: 'think' };
+    return null;
   }
 
-  function drawRoom(room, now_ms) {
+  function computerName(room, p) {
+    if (room.computers && room.computers[p.i]) return room.computers[p.i];
+    for (const a of room.actors.values()) if (a.seat.pc === p.i && a.member.appearance && a.member.appearance.computer) return a.member.appearance.computer.name;
+    return 'imac_silver';
+  }
+
+  function drawRoom(room, t) {
     const r = room.rect, td = room.td;
     if (!r) return;
+    const lv = light.level, night = lv > 0.5, L = lightParams(), sc = assets.scale, ox = td.ox, oy = td.oy;
     const overlays = [];
     ctx.save();
-    ctx.globalAlpha = room.alpha;
+    ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip();
     ctx.setTransform(S, 0, 0, S, r.x, r.y);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(td.bg, 0, 0);
-    const items = [];
-    const b = td.t.bounds;
-    const occupiedPC = new Map();
-    const boardActor = [...room.actors.values()].find((a) => a.exec && a.execMode === 'board' && !moving(a));
-    for (const a of room.actors.values()) {
-      if (a.atSeat && a.seat.pc !== undefined && a.member.pcOn) occupiedPC.set(a.seat.pc, a);
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.globalAlpha = room.alpha;
+    if (room.fade) {
+      ctx.drawImage(room.fade.old.bg, 0, 0, room.fade.old.w, room.fade.old.h);
+      ctx.globalAlpha = room.alpha * clamp(room.fade.t, 0, 1);
     }
+    ctx.drawImage(td.bg, 0, 0, td.w, td.h);                                // zemin + duvar + sabit mobilya: tek çizim
+    ctx.globalAlpha = room.alpha;
+    if (lv > 0.001 && assets.winNight) {
+      ctx.globalAlpha = room.alpha * lv;
+      for (const w of td.windows) ctx.drawImage(assets.winNight, w[0], w[1], w[2], w[3]);
+      ctx.globalAlpha = room.alpha;
+    }
+
+    const pcOn = new Map();
+    let boardActor = null;
+    for (const a of room.actors.values()) {
+      if (a.atSeat && a.seat.pc !== undefined && a.member.pcOn) pcOn.set(a.seat.pc, a);
+      if (a.exec && a.execMode === 'board' && a.goal === 'board' && !moving(a)) boardActor = a;
+    }
+    const items = [];
     for (const p of td.dynamic) {
       items.push({ z: p.z, fn: () => {
-        let file = null;
-        const a = layout.furniture[p.asset];
-        if (a.pcOn && occupiedPC.has(p.i)) file = a.pcOn[Math.floor(now_ms / 450) % a.pcOn.length];
-        drawFurniture(ctx, p, td.t, file);
+        const isPc = p.asset.indexOf('PC_') === 0;
+        const key = p.asset + '@' + p.col + ',' + p.row;
+        let img;
+        if (isPc) {
+          const name = computerName(room, p);
+          img = assets.gen[name + (pcOn.has(p.i) ? '_on' + (1 + Math.floor(t / 450) % 3) : '_off')];
+        } else img = assets.furn[p.asset];
+        if (!img) return;
+        const w = img.width / sc, h = img.height / sc;
+        let x = p.col * T - ox, y = p.row * T - oy, al = room.alpha;
+        if (room.fresh && room.fresh.keys.has(key)) {
+          const k = room.fresh.started ? clamp(room.fresh.t, 0, 1) : 0;
+          if (k <= 0) return;
+          al *= k; y -= (1 - k) * 10;
+        }
+        ctx.globalAlpha = al;
+        if (p.mirrored) { ctx.save(); ctx.translate(x + w, y); ctx.scale(-1, 1); ctx.drawImage(img, 0, 0, w, h); ctx.restore(); } else ctx.drawImage(img, x, y, w, h);
+        ctx.globalAlpha = room.alpha;
       } });
     }
-    const door = td.t.door;
-    items.push({ z: (door[1] + 1) * T - 8, fn: () => ctx.drawImage(art('door'), (door[0] - b.minCol) * T, (door[1] - b.minRow + 1) * T - 32) });
-    if (boardActor && td.t.boardIndex !== undefined && td.placementByIndex.has(td.t.boardIndex)) {
-      const p = td.placementByIndex.get(td.t.boardIndex);
-      const frames = art('boardWrite'), o = layout.art.boardWriteOrigin;
-      items.push({ z: (p.row + 2) * T + 0.1, fn: () => ctx.drawImage(frames[Math.floor(now_ms / 500) % frames.length],
-        (p.col - b.minCol) * T + o[0], (p.row - b.minRow) * T + o[1]) });
+    if (assets.door) {
+      const d = td.doorTile, w = assets.door.width / sc, h = assets.door.height / sc;
+      items.push({ z: (d[1] + 1) * T - 8, fn: () => ctx.drawImage(assets.door, d[0] * T - ox, (d[1] + 1) * T - h - oy, w, h) });
     }
+    if (boardActor && td.boardPlacement && assets.boardWrite.length) {
+      const p = td.boardPlacement, o = assets.boardOrigin, fr = assets.boardWrite[Math.floor(t / 500) % assets.boardWrite.length];
+      items.push({ z: -1, fn: () => ctx.drawImage(fr, p.col * T - ox + o[0], p.row * T - oy + o[1], fr.width / sc, fr.height / sc) });
+    }
+    const entityDraw = (e) => items.push({ z: e.y + 1.5, fn: () => {
+      const moving_ = e.path.length > 0 && !(e.pause > 0);
+      const wc = layout.v3.vector.characters.walkCycle, F = layout.v3.vector.characters.frames;
+      const frame = e.kind === 'carrier' ? F.carry[Math.floor(e.walkT / 0.125) % 3] : wc[Math.floor(e.walkT / 0.125) % wc.length];
+      drawSprite(e.look, e.shirt, e.dir, moving_ ? frame : F.stand, e.acc, e.x - ox, e.y - oy, 1, room.alpha, night);
+      if (e.kind === 'cleaner' && assets.gen.mop) {
+        const mop = assets.gen.mop, mw = mop.width / sc, mh = mop.height / sc;
+        ctx.save(); ctx.translate(e.x - ox + (e.dir === 'left' ? -7 : 7), e.y - oy);
+        ctx.rotate(Math.sin(e.walkT * 6) * 0.18);
+        ctx.drawImage(mop, -mw / 2, -mh, mw, mh);
+        ctx.restore();
+      } else if (e.kind === 'carrier' && assets.gen.box) {
+        const bx = assets.gen.box;
+        ctx.drawImage(bx, e.x - ox - bx.width / sc / 2, e.y - oy - 22, bx.width / sc, bx.height / sc);
+      }
+    } });
+    if (room.cleaner.entity) entityDraw(room.cleaner.entity);
+    if (room.carrier) entityDraw(room.carrier);
     for (const a of room.actors.values()) {
-      items.push({ z: a.y + b.minRow * T + 1.5, fn: () => { overlays.push({ a, info: drawActor(a, td) }); } });
+      items.push({ z: a.y + 1.5, fn: () => {
+        if (a.alpha <= 0.01) return;
+        const ap = lookOf(a.member), pose = poseOf(a, t);
+        const k = ap.small && S / dpr >= 2 ? (S / dpr - 1) / (S / dpr) : 1;
+        const drop = dropOf(a);
+        drawSprite(ap.look, ap.shirt, pose.dir, pose.frame, ap.acc, a.x - ox, a.y - oy + drop, k, a.alpha * room.alpha, night);
+        overlays.push({ a, k, drop, lk: ap });
+      } });
     }
     items.sort((p, q) => p.z - q.z).forEach((i) => i.fn());
-    ctx.restore();
-    ctx.globalAlpha = 1;
-
-    // ekran uzayında: etiketler ve balonlar
-    ctx.save();
     ctx.globalAlpha = room.alpha;
-    const px = (wx) => r.x + wx * S, py = (wy) => r.y + wy * S;
-    for (const { a, info } of overlays) {
-      if (a.alpha <= 0.01) continue;
-      drawLabel(a, px(info.x), py(info.y));
+
+    // iz (temizlikçi): kısa süre parlayan açık şerit
+    if (room.trail.length) {
+      ctx.save(); ctx.globalCompositeOperation = 'lighter';
+      for (const tr of room.trail) { ctx.globalAlpha = room.alpha * clamp(tr.t / 3.2, 0, 1) * 0.28; ctx.fillStyle = '#ffffff'; ctx.fillRect(tr.x - ox + 1, tr.y - oy, 14, 7); }
+      ctx.restore();
     }
-    for (const { a, info } of overlays) {
+
+    if (lv > 0.001) drawNight(room, td, L, lv, t, pcOn);
+    ctx.restore();
+
+    // ekran uzayı: etiketler, balonlar, oda kartı
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = room.alpha;
+    const bubbles = [];
+    for (const o of overlays) {
+      const a = o.a;
+      const sx = r.x + (a.x - ox) * S, sy = r.y + (a.y - oy + o.drop) * S;
+      hitActors.push({ a, x: sx - 9 * S * o.k, y: sy - 30 * S * o.k, w: 18 * S * o.k, h: 31 * S * o.k });
+      if (a.alpha <= 0.01) continue;
+      drawLabel(a, o.lk, sx, sy);
       const bub = bubbleOf(a);
-      if (!bub || a.alpha < 0.9) continue;
-      drawBubble(bub, px(info.x), py(info.y - info.headTop), r);
+      if (bub && a.alpha >= 0.9) bubbles.push({ a, bub, sx, hy: sy - 29 * S * o.k });
+    }
+    drawBubbles(bubbles, r, t);
+    if (td.boardPlacement) {
+      const p = td.boardPlacement, def = layout.furniture[p.asset] || { w: 32, h: 32 };
+      hitBoards.push({ room, x: r.x + (p.col * T - ox) * S, y: r.y + (p.row * T - oy) * S, w: def.w * S, h: def.h * S });
     }
     ctx.restore();
     drawPlaque(room);
   }
 
-  function drawLabel(a, sx, sy) {
-    const g = layout.groupColors[a.room.group % layout.groupColors.length];
-    const text = a.member.label || '';
-    const fs = Math.round(9 * dpr);
-    ctx.font = `${fs}px -apple-system, system-ui, sans-serif`;
-    const tw = Math.ceil(ctx.measureText(text).width), padX = Math.round(4 * dpr), h = Math.round(13 * dpr), stripe = Math.max(2, Math.round(2 * dpr));
-    const w = tw + padX * 2;
-    const x = Math.round(sx - w / 2), y = Math.round(sy + 3 * S + 2 * dpr);
-    ctx.fillStyle = 'rgba(20,22,30,0.82)';
-    roundRect(x, y, w, h, Math.round(3 * dpr)); ctx.fill();
-    ctx.fillStyle = rgbCss(g);
-    ctx.fillRect(x + padX, y + h - stripe - 1, w - padX * 2, stripe);
-    ctx.fillStyle = '#fff';
-    ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
-    ctx.fillText(text, sx, y + (h - stripe) / 2);
-  }
-
-  function drawBubble(bub, sx, sy, r) {
-    if (bub.alert) {
-      const al = art('alertBubble'), k = S;
-      const bob = Math.sin(performance.now() / 190) * k;
-      ctx.drawImage(al, Math.round(sx + 7 * k), Math.round(sy + 8 * k - al.height * k + bob), al.width * k, al.height * k);
-      return;
+  // Gece: multiply örtü + lacivert wash + additive ışık havuzları; lamba sprite'ları örtünün üstünde.
+  function drawNight(room, td, L, lv, t, pcOn) {
+    const ox = td.ox, oy = td.oy, sc = assets.scale, ra = room.alpha * lv;
+    const m = L.multiplyColor.map((c) => Math.round(c * 255));
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = ra;
+    ctx.fillStyle = `rgb(${m[0]},${m[1]},${m[2]})`;
+    ctx.fillRect(0, 0, td.w, td.h);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = ra * L.washAlpha;
+    ctx.fillStyle = rgbCss(L.washColor);
+    ctx.fillRect(0, 0, td.w, td.h);
+    ctx.globalCompositeOperation = 'lighter';
+    const glow = (name, w, h, cx, cy, alpha) => {
+      const g = assets.gen[name];
+      if (!g) return;
+      ctx.globalAlpha = ra * alpha;
+      ctx.drawImage(g, cx - w / 2, cy - h / 2, w, h);
+    };
+    glow('vglow_bulb', td.w * 1.3, td.h * 1.15, td.w / 2, td.h * 0.45, L.bulbAlpha);
+    const lamps = (td.t.lamps || []).map((l) => ({ x: l.col * T - ox + l.dx, y: l.row * T - oy + l.dy }));
+    for (const l of lamps) glow('vglow_pool', 64, 36, l.x, l.y + 3, L.poolAlpha);
+    if (td.boardPlacement) glow('vglow_pool', 60, 36, td.boardPlacement.col * T - ox + 16, td.boardPlacement.row * T - oy + 14, L.boardAlpha);
+    for (const w of td.windows) glow('vglow_moon', 26, 44, w[0] + w[2] / 2, w[1] + w[3] / 2 + 22, L.windowAlpha);
+    for (const [pc] of pcOn) {
+      const p = td.placementByIndex.get(pc);
+      if (p) glow('vglow_screen', 30, 20, p.col * T - ox + 8, p.row * T - oy + 6, L.screenAlpha);
     }
-    const fs = Math.round(11 * dpr);
-    ctx.font = `${fs}px -apple-system, system-ui, sans-serif`;
-    const pad = Math.round(6 * dpr), tw = Math.ceil(ctx.measureText(bub.text).width);
-    const w = tw + pad * 2, h = Math.round(18 * dpr), tail = Math.round(5 * dpr);
-    let x = Math.round(sx - 4 * dpr);
-    if (x + w > r.x + r.w) x = r.x + r.w - w;
-    if (x < r.x) x = r.x;
-    const y = Math.round(sy - h - tail - 2 * dpr);
-    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#222'; ctx.lineWidth = Math.max(1, Math.round(dpr));
-    roundRect(x, y, w, h, Math.round(5 * dpr)); ctx.fill(); ctx.stroke();
-    const tx = Math.min(Math.max(sx, x + pad), x + w - pad);
-    ctx.beginPath(); ctx.moveTo(tx - tail, y + h - 1); ctx.lineTo(tx, y + h + tail); ctx.lineTo(tx + tail, y + h - 1); ctx.closePath();
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.fillRect(tx - tail + 1, y + h - 1, tail * 2 - 2, 2);
-    ctx.fillStyle = '#1a1a1a'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    ctx.fillText(bub.text, x + pad, y + h / 2 + 1);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = ra;
+    const lampImg = assets.gen.lamp;
+    if (lampImg) for (const l of lamps) ctx.drawImage(lampImg, l.x - lampImg.width / sc / 2, l.y + 1 - lampImg.height / sc, lampImg.width / sc, lampImg.height / sc);
+    ctx.restore();
   }
 
+  function labelText(m) {
+    const text = m.kind === 'subagent' && m.role && m.role.name ? m.role.name : (m.label || '');
+    return text.length > 22 ? text.slice(0, 21) + '…' : text;
+  }
+
+  function drawLabel(a, lk, sx, sy) {
+    const m = a.member, text = labelText(m), night = uiNight();
+    const fs = Math.round(10 * dpr);
+    ctx.font = `600 ${fs}px -apple-system, system-ui, sans-serif`;
+    const tw = Math.ceil(ctx.measureText(text).width), h = Math.round(15 * dpr), pad = Math.round(6 * dpr), dot = Math.round(3 * dpr);
+    const w = tw + pad * 2 + dot * 2 + Math.round(3 * dpr);
+    const x = Math.round(sx - w / 2), y = Math.round(sy + 2 * dpr);
+    pill(x, y, w, h, night ? 'rgba(27,33,50,0.9)' : 'rgba(255,255,255,0.92)', night ? 'rgba(255,255,255,0.2)' : 'rgba(17,20,28,0.16)', true);
+    const dotColor = m.kind === 'subagent' && m.role ? (m.role.tint || lk.shirt) : (m.appearance && m.appearance.tint) || lk.shirt;
+    ctx.fillStyle = dotColor;
+    ctx.beginPath(); ctx.arc(x + pad + dot, y + h / 2, dot, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = night ? '#E8ECF5' : '#1B2030';
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(text, x + pad + dot * 2 + Math.round(3 * dpr), y + h / 2 + 0.5);
+  }
+
+  // Konuşma balonları: beyaz yuvarlak gövde + kuyruk + gölge; komşu balonla çakışan yukarı kayar.
+  function drawBubbles(list, room, t) {
+    const placed = [];
+    list.sort((p, q) => p.sx - q.sx || p.hy - q.hy);
+    const fs = Math.round(10.5 * dpr);
+    const tail = Math.round(4 * dpr), bh = Math.round(16 * dpr), pad = Math.round(7 * dpr), tip = Math.round(4 * dpr);
+    ctx.font = `500 ${fs}px -apple-system, system-ui, sans-serif`;
+    for (const b of list) {
+      const isText = b.bub.kind === 'text';
+      let w, h;
+      if (isText) { w = Math.ceil(ctx.measureText(b.bub.text).width) + pad * 2; h = bh; } else {
+        const g = assets.gen[b.bub.kind === 'alert' ? 'bubble_alert' : b.bub.kind === 'think' ? 'bubble_think' : 'zzz'];
+        if (!g) continue;
+        b.img = g; w = g.width / assets.scale * S; h = g.height / assets.scale * S;
+      }
+      let x = Math.round(b.sx - (isText ? tip : w / 2));
+      if (x + w > room.x + room.w) x = room.x + room.w - w;
+      if (x < room.x) x = room.x;
+      const bob = b.bub.kind === 'alert' ? Math.sin(t / 190) * S : b.bub.kind === 'zzz' ? Math.sin(t / 400) * S : 0;
+      let y = Math.round(b.hy - h - (isText ? tail : 0) - 2 * dpr + bob);
+      for (let i = 0; i < 8; i++) {
+        const hit = placed.some((p) => x < p.x + p.w + 1 && x + w + 1 > p.x && y < p.y + p.h + 1 && y + h + (isText ? tail : 0) + 1 > p.y);
+        if (hit) y -= h + (isText ? tail : 0) + Math.round(1 * dpr); else break;
+      }
+      placed.push({ x, y, w, h: h + (isText ? tail : 0) });
+      if (!isText) { ctx.drawImage(b.img, x, y, w, h); continue; }
+      ctx.save();
+      ctx.shadowColor = 'rgba(8,10,18,0.3)'; ctx.shadowBlur = 5 * dpr; ctx.shadowOffsetY = 1.5 * dpr;
+      ctx.fillStyle = 'rgba(255,255,255,0.98)';
+      roundRect(x, y, w, h, Math.round(7 * dpr)); ctx.fill();
+      const tx = clamp(b.sx, x + pad, x + w - pad);
+      ctx.beginPath(); ctx.moveTo(tx - tail, y + h - 1); ctx.lineTo(tx, y + h + tail); ctx.lineTo(tx + tail, y + h - 1); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = '#2B2F3A'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      ctx.fillText(b.bub.text, x + pad, y + h / 2 + 0.5);
+    }
+  }
+
+  // Oda başlık kartı: ad + model rozeti + oturum renginde alt çizgi; "+N" taşan ajan rozeti.
   function drawPlaque(room) {
-    const r = room.rect, ph = PLAQUE_H();
+    const r = room.rect, night = uiNight();
+    if (!r) return;
     const g = layout.groupColors[room.group % layout.groupColors.length];
-    const ap = layout.appearance[room.badge] || layout.appearance.unknown;
+    const ap = layout.appearance[room.badge] || layout.appearance.unknown || { badgeText: '', tintHex: '#888888' };
     ctx.save();
     ctx.globalAlpha = room.alpha;
-    const fs = Math.round(12 * dpr), bfs = Math.round(9 * dpr);
-    ctx.font = `600 ${fs}px -apple-system, system-ui, sans-serif`;
-    const name = room.title || '';
-    const nameW = Math.min(Math.ceil(ctx.measureText(name).width), r.w - Math.round(90 * dpr));
-    let shown = name;
-    while (shown.length > 1 && ctx.measureText(shown).width > nameW) shown = shown.slice(0, -1);
-    if (shown !== name) shown = shown.slice(0, -1) + '…';
+    const fs = Math.round(12 * dpr), bfs = Math.round(9 * dpr), h = Math.round(22 * dpr), y = r.y - Math.round(28 * dpr), padX = Math.round(10 * dpr);
+    ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
+    const badge = ap.badgeText || '';
     ctx.font = `700 ${bfs}px -apple-system, system-ui, sans-serif`;
-    const badge = ap.badgeText, bw = Math.ceil(ctx.measureText(badge).width) + Math.round(10 * dpr);
-    const pad = Math.round(8 * dpr), h = Math.round(20 * dpr), y = r.y - ph + Math.round(2 * dpr);
-    ctx.font = `600 ${fs}px -apple-system, system-ui, sans-serif`;
-    const w = Math.min(r.w, Math.ceil(ctx.measureText(shown).width) + bw + pad * 3 + Math.round(6 * dpr));
-    ctx.fillStyle = 'rgba(20,22,30,0.88)';
-    roundRect(r.x, y, w, h, h / 2); ctx.fill();
+    const bw = badge ? Math.ceil(ctx.measureText(badge).width) + Math.round(10 * dpr) : 0;
+    ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
+    const maxName = Math.max(40, r.w - bw - padX * 3 - Math.round(44 * dpr));
+    let shown = room.title || '';
+    while (shown.length > 1 && ctx.measureText(shown).width > maxName) shown = shown.slice(0, -1);
+    if (shown !== (room.title || '')) shown = shown.slice(0, -1) + '…';
+    const nameW = Math.ceil(ctx.measureText(shown).width);
+    const w = Math.min(r.w, nameW + bw + padX * 2 + (bw ? Math.round(8 * dpr) : 0));
+    ctx.save();
+    ctx.shadowColor = 'rgba(8,10,18,0.35)'; ctx.shadowBlur = 6 * dpr; ctx.shadowOffsetY = 1.5 * dpr;
+    ctx.fillStyle = night ? 'rgba(42,49,68,0.96)' : 'rgba(247,248,250,0.97)';
+    roundRect(r.x, y, w, h, Math.round(8 * dpr)); ctx.fill();
+    ctx.restore();
     ctx.fillStyle = rgbCss(g);
-    roundRect(r.x, y, Math.round(5 * dpr), h, Math.round(2 * dpr)); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    ctx.fillText(shown, r.x + Math.round(12 * dpr), y + h / 2 + 1);
-    const nx = r.x + Math.round(12 * dpr) + Math.ceil(ctx.measureText(shown).width) + Math.round(8 * dpr);
-    ctx.fillStyle = rgbCss(ap.tint);
-    roundRect(nx, y + Math.round(4 * dpr), bw, h - Math.round(8 * dpr), Math.round(4 * dpr)); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-    ctx.font = `700 ${bfs}px -apple-system, system-ui, sans-serif`;
-    ctx.fillText(badge, nx + bw / 2, y + h / 2 + 1);
-    if (room.overflow > 0) {
-      const t = `+${room.overflow}`;
-      ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
-      const tw = Math.ceil(ctx.measureText(t).width) + Math.round(12 * dpr);
-      ctx.fillStyle = '#ff8a00';
-      roundRect(r.x + r.w - tw, y, tw, h, h / 2); ctx.fill();
+    ctx.fillRect(r.x + Math.round(8 * dpr), y + h - Math.round(2.5 * dpr), w - Math.round(16 * dpr), Math.max(1, Math.round(1.6 * dpr)));
+    ctx.fillStyle = night ? '#F1F3F8' : '#1B2030'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(shown, r.x + padX, y + h / 2 - 0.5 * dpr);
+    if (badge) {
+      const bx = r.x + padX + nameW + Math.round(8 * dpr), bh = Math.round(14 * dpr);
+      ctx.fillStyle = ap.tintHex || '#888';
+      roundRect(bx, y + (h - bh) / 2 - 1 * dpr, bw, bh, bh / 2); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-      ctx.fillText(t, r.x + r.w - tw / 2, y + h / 2 + 1);
+      ctx.font = `700 ${bfs}px -apple-system, system-ui, sans-serif`;
+      ctx.fillText(badge, bx + bw / 2, y + h / 2 - 1 * dpr + 0.5);
+    }
+    if (room.overflow > 0) {
+      const txt = `+${room.overflow}`;
+      ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
+      const tw = Math.ceil(ctx.measureText(txt).width) + Math.round(14 * dpr);
+      pill(r.x + r.w - tw, y, tw, h, '#FF8A00', null, true);
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+      ctx.fillText(txt, r.x + r.w - tw / 2, y + h / 2);
     }
     ctx.restore();
   }
 
-  // ---------- Döngü ----------
-  let raf = 0, last = 0, hiddenAt = 0;
+  function draw(t) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    hitActors = []; hitBoards = [];
+    for (const room of rooms.values()) drawRoom(room, t);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
 
-  function tick(dt) {
+  // ---------- Kart ve ipucu ----------
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  const roleName = (m) => (m.kind === 'session' ? 'ana ajan' : (m.role && m.role.name) || m.label || 'alt ajan');
+  const modelLabel = (m) => { const ap = layout.appearance[m.badge] || layout.appearance.unknown; return ap ? ap.badgeText || ap.label || '' : ''; };
+
+  function buildCard(a) {
+    const m = a.member, room = a.room;
+    const root = el('div', 'cardBody');
+    const head = el('div', 'cardHead');
+    const dot = el('span', 'cardDot');
+    dot.style.background = (m.appearance && m.appearance.tint) || '#888';
+    head.appendChild(dot);
+    head.appendChild(el('span', 'cardTitle', m.kind === 'session' ? (room.title || m.label || '') : labelText(m)));
+    const close = el('button', 'cardClose', '×');
+    close.setAttribute('type', 'button');
+    close.setAttribute('aria-label', 'Kartı kapat');
+    close.addEventListener('click', closeCard);
+    head.appendChild(close);
+    root.appendChild(head);
+    const sub = el('div', 'cardSub');
+    sub.appendChild(el('span', '', roleName(m)));
+    const badge = el('span', 'cardBadge', modelLabel(m));
+    const ap = layout.appearance[m.badge] || layout.appearance.unknown;
+    if (ap && ap.tintHex) badge.style.background = ap.tintHex;
+    sub.appendChild(badge);
+    root.appendChild(sub);
+    const row = (k, v, id) => {
+      const r = el('div', 'cardRow');
+      r.appendChild(el('span', 'cardKey', k));
+      const val = el('span', 'cardVal', v);
+      if (id) val.setAttribute('data-id', id);
+      r.appendChild(val);
+      root.appendChild(r);
+      return val;
+    };
+    row('Durum', m.statusLabel || m.status || '');
+    if (m.activity) row('Araç', m.activity);
+    if (m.target) row('Hedef', m.target);
+    row(m.kind === 'session' ? 'Çalışma süresi' : 'Son etkinlik', cardTimerText(m), 'timer');
+    if (m.kind === 'subagent') row('Bağlı oturum', room.title || '');
+    if (m.kind === 'session') {
+      const subs = (room.members || []).filter((x) => x.kind === 'subagent');
+      row('Alt ajanlar', String(subs.length));
+      if (subs.length) {
+        const list = el('ul', 'cardList');
+        subs.slice(0, 12).forEach((s) => list.appendChild(el('li', '', `${labelText(s)} · ${s.statusLabel || s.status}`)));
+        root.appendChild(list);
+      }
+    }
+    return root;
+  }
+
+  function cardTimerText(m) {
+    if (m.kind === 'session' && m.startedAt) return fmtDur(serverNow() - m.startedAt);
+    if (m.activityAt) return fmtDur(serverNow() - m.activityAt) + ' önce';
+    return '–';
+  }
+
+  let cardTimer = 0;
+  function openCard(a) {
+    selected = a;
+    renderCard();
+    if (!cardTimer) cardTimer = setInterval(tickCard, 1000);
+    kick();
+  }
+  function renderCard() {
+    if (!els.card) return;
+    if (!selected) { els.card.hidden = true; return; }
+    const a = selected;
+    a.room.members = state ? ((state.rooms.find((r) => r.id === a.room.id) || {}).members || []) : [];
+    while (els.card.firstChild) els.card.removeChild(els.card.firstChild);
+    els.card.appendChild(buildCard(a));
+    els.card.hidden = false;
+  }
+  function tickCard() {
+    if (!selected || !els.card || els.card.hidden) return;
+    const v = els.card.querySelector ? els.card.querySelector('[data-id="timer"]') : null;
+    if (v) v.textContent = cardTimerText(selected.member);
+  }
+  function refreshCard() {
+    if (!selected) return;
+    const live = selected.room.actors.get(selected.id);
+    if (!live || live !== selected) { closeCard(); return; }
+    renderCard();
+  }
+  function closeCard() {
+    selected = null;
+    if (els.card) els.card.hidden = true;
+    if (cardTimer) { clearInterval(cardTimer); cardTimer = 0; }
+  }
+
+  function tipText(a) {
+    const m = a.member;
+    return `${labelText(m)} · ${roleName(m)} · ${modelLabel(m)} · ${m.statusLabel || m.status}`;
+  }
+
+  // ---------- Döngü ----------
+  let raf = 0, last = 0, hiddenAt = 0, lastSig = '';
+
+  function advance(dt) {
+    stepLight(dt);
+    let layoutDirty = false;
     for (const [id, room] of rooms) {
       for (const [aid, a] of room.actors) {
         updateActor(a, dt);
-        if (a.done) { room.actors.delete(aid); continue; }
+        if (a.done) { room.actors.delete(aid); if (selected === a) closeCard(); }
       }
-      if (room.leaving) {
-        if (room.actors.size === 0) {
-          room.alpha = Math.max(0, room.alpha - dt * 1.5);
-          if (room.alpha === 0) { rooms.delete(id); layoutRooms(); }
-        }
+      stepRoomExtras(room, dt);
+      if (room.leaving && room.actors.size === 0) {
+        room.alpha = Math.max(0, room.alpha - dt * 1.5);
+        if (room.alpha === 0) { rooms.delete(id); layoutDirty = true; }
       }
     }
+    scheduleActors(nowMs());
+    if (layoutDirty) { if (focusId && !rooms.has(focusId)) focusId = null; updateBar(); layoutRooms(); }
   }
 
-  function draw(ts) {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.imageSmoothingEnabled = false;
-    for (const room of rooms.values()) drawRoom(room, ts);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // Hareket eden / animasyonlu bir şey var mı? Yoksa çizim durur (statik), yalnızca durum değişince yeniden çizilir.
+  function animating() {
+    if (lightAnimating()) return true;
+    for (const room of rooms.values()) {
+      if (room.leaving || room.fade || room.fresh || room.carrier || room.cleaner.entity || room.trail.length) return true;
+      for (const a of room.actors.values()) {
+        const m = a.member;
+        if (moving(a) || a.alpha < 1 || a.leaving || isWorking(m) || (a.idle && a.idle.active) || (a.exec && a.execMode === 'board') || (a.atSeat && m.pcOn)) return true;
+        if (a.exec && a.execMode === 'stroll') return true;
+      }
+    }
+    return false;
+  }
+
+  function anyMoving() {
+    for (const room of rooms.values()) {
+      if (room.carrier || room.cleaner.entity) return true;
+      for (const a of room.actors.values()) if (moving(a)) return true;
+    }
+    return false;
+  }
+
+  function bubbleSig() {
+    let s = '';
+    for (const room of rooms.values()) for (const a of room.actors.values()) { const b = bubbleOf(a); if (b) s += a.id + ':' + b.kind + ':' + (b.text || '') + ';'; }
+    return s;
   }
 
   function frame(ts) {
     raf = 0;
     if (document.hidden || !layout) return;
-    const anyMoving = [...rooms.values()].some((r) => [...r.actors.values()].some(moving));
-    const interval = anyMoving ? 1000 / 30 : 1000 / 12;      // CPU: hareket yoksa ≈12 fps
-    if (ts - last >= interval - 1) {
-      const dt = Math.min((ts - last) / 1000, 0.25);
-      last = ts;
-      tick(dt);
-      draw(Date.now());
-    }
+    const anim = animating();
+    if (!anim && !needsRedraw) return;                       // statik: döngü durur; durum/zamanlayıcı kick() ile uyandırır
+    const interval = anyMoving() ? 1000 / 15 : 1000 / 12;    // CPU: en çok ≈12-15 fps
+    if (last && ts - last < interval - 1) { raf = requestAnimationFrame(frame); return; }
+    const dt = last ? Math.min((ts - last) / 1000, 0.25) : 0.05;
+    last = ts;
+    advance(dt);
+    draw(nowMs());
+    needsRedraw = false;
+    lastSig = bubbleSig();
     raf = requestAnimationFrame(frame);
   }
 
-  function startLoop() { if (!raf) { last = 0; raf = requestAnimationFrame(frame); } }
+  function kick() {
+    needsRedraw = true;
+    if (!raf && !document.hidden && layout) { last = 0; raf = requestAnimationFrame(frame); }
+  }
+
+  // Statik modda yalnızca ucuz bir 1 sn kalp atışı: boşta varyantı / temizlikçi / balon süresi / ışık değişimi için uyandırır.
+  function heartbeat() {
+    if (document.hidden || !layout || raf) return;
+    let wake = scheduleActors(nowMs());
+    if (lightAnimating()) wake = true;
+    const sig = bubbleSig();
+    if (sig !== lastSig) { lastSig = sig; wake = true; }
+    if (wake) kick();
+  }
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { hiddenAt = Date.now(); return; }
-    // Gizliyken çizim durdu: uzun süre sonra hareketleri hemen tamamla.
-    if (Date.now() - hiddenAt > 2000) {
-      for (const room of rooms.values()) for (const a of room.actors.values()) {
-        const p = a.path.length ? a.path[a.path.length - 1] : null;
-        if (p) { a.x = p.x; a.y = p.y; a.path = []; arrive(a); }
+    if (document.hidden) {
+      hiddenAt = nowMs();
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      return;
+    }
+    const away = nowMs() - hiddenAt;
+    if (away > 2000) {
+      // Gizliyken çizim durdu: hareketleri hemen tamamla, temizlikçi/taşıyıcı sahnesini bırak (zamanlayıcılar öteleniyor).
+      for (const room of rooms.values()) {
+        for (const a of room.actors.values()) {
+          const p = a.path.length ? a.path[a.path.length - 1] : null;
+          if (p) { a.x = p.x; a.y = p.y; a.path = []; arrive(a); }
+        }
+        room.cleaner.entity = null; room.cleaner.next += away; room.carrier = null; room.fade = null; room.fresh = null; room.trail = [];
       }
     }
-    startLoop();
+    kick();
   });
 
-  // ---------- Boyut, etkileşim ----------
+  // ---------- Boyut ve etkileşim ----------
   function resize() {
-    dpr = window.devicePixelRatio || 1;
+    dpr = Math.min(2, window.devicePixelRatio || 1);
     const rect = canvas.getBoundingClientRect();
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
     layoutRooms();
+    kick();
   }
   let resizeQueued = false;
   window.addEventListener('resize', () => {
@@ -690,22 +1327,72 @@
     requestAnimationFrame(() => { resizeQueued = false; resize(); });
   });
 
+  function toCanvas(e) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: (e.clientX - rect.left) * (canvas.width / (rect.width || 1)), y: (e.clientY - rect.top) * (canvas.height / (rect.height || 1)) };
+  }
+  const inside = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+  const pickActor = (p) => { for (let i = hitActors.length - 1; i >= 0; i--) if (inside(p, hitActors[i])) return hitActors[i].a; return null; };
+  const pickBoard = (p) => hitBoards.find((b) => inside(p, b)) || null;
+  const pickRoom = (p) => hitRooms.find((r) => r.rect && inside(p, { x: r.rect.px, y: r.rect.py, w: r.rect.pw, h: r.rect.ph })) || null;
+
+  function setFocus(id) {
+    focusId = id;
+    updateBar(); layoutRooms(); kick();
+  }
+  function unfocus() { if (focusId) setFocus(null); }
+  function escape() {
+    if (selected) { closeCard(); kick(); return true; }
+    if (focusId) { unfocus(); return true; }
+    return false;
+  }
+
   canvas.addEventListener('click', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * dpr, y = (e.clientY - rect.top) * dpr;
-    if (focusId) return;
-    const hit = hitRects.find((r) => r.rect && x >= r.rect.px && x <= r.rect.px + r.rect.pw && y >= r.rect.py && y <= r.rect.py + r.rect.ph);
-    if (hit) { focusId = hit.id; updateBar(); layoutRooms(); }
+    const p = toCanvas(e);
+    const a = pickActor(p);
+    if (a) { openCard(a); return; }
+    const b = pickBoard(p);
+    if (b) {
+      const ex = [...b.room.actors.values()].find((x) => x.exec);
+      if (ex) { openCard(ex); return; }
+    }
+    const room = pickRoom(p);
+    if (room && !focusId) { closeCard(); setFocus(room.id); return; }
+    if (!room) { closeCard(); unfocus(); } else closeCard();
+    kick();
   });
-  canvas.addEventListener('mousemove', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * dpr, y = (e.clientY - rect.top) * dpr;
-    const over = !focusId && hitRects.some((r) => r.rect && x >= r.rect.px && x <= r.rect.px + r.rect.pw && y >= r.rect.py && y <= r.rect.py + r.rect.ph);
-    canvas.style.cursor = over && hitRects.length > 0 ? 'zoom-in' : 'default';
+  canvas.addEventListener('dblclick', (e) => {
+    const p = toCanvas(e);
+    const a = pickActor(p);
+    const room = a ? a.room : pickRoom(p);
+    if (room && !focusId) setFocus(room.id);
   });
-  function unfocus() { if (focusId) { focusId = null; updateBar(); layoutRooms(); } }
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') unfocus(); });
-  els.back.addEventListener('click', unfocus);
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch') return;
+    const p = toCanvas(e);
+    const a = pickActor(p);
+    hover = a;
+    const over = a || pickBoard(p) || (!focusId && pickRoom(p));
+    canvas.style.cursor = over ? 'pointer' : 'default';
+    if (els.tip) {
+      if (a) { els.tip.textContent = tipText(a); els.tip.style.left = Math.round(e.clientX + 12) + 'px'; els.tip.style.top = Math.round(e.clientY + 14) + 'px'; els.tip.hidden = false; } else els.tip.hidden = true;
+    }
+  });
+  canvas.addEventListener('pointerleave', () => { hover = null; if (els.tip) els.tip.hidden = true; });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { escape(); return; }
+    if ((e.key === ' ' || e.code === 'Space') && (!e.target || e.target === document.body || e.target === canvas)) {
+      if (escape()) e.preventDefault();
+    }
+  });
+  els.back.addEventListener('click', () => { closeCard(); unfocus(); });
+  if (els.light) {
+    els.light.addEventListener('change', () => {
+      light.mode = els.light.value === 'day' || els.light.value === 'night' ? els.light.value : 'auto';
+      store.set('adalmon-light', light.mode);
+      kick();
+    });
+  }
 
   // ---------- SSE ----------
   let source = null, retry = 1000, failures = 0;
@@ -715,18 +1402,23 @@
     els.conn.textContent = text;
   }
 
+  async function probe() {
+    try { await api('/v1/state'); } catch (err) { if (err && err.status) showError(describeError(err)); }
+  }
+
   function connect() {
     if (source) source.close();
     setConn('wait', failures ? 'yeniden bağlanıyor…' : 'bağlanıyor…');
     source = new EventSource('/v1/stream?t=' + encodeURIComponent(token));
     source.onopen = () => { retry = 1000; failures = 0; setConn('on', 'bağlı'); showError(''); };
     source.onmessage = (e) => {
-      try { apply(JSON.parse(e.data)); } catch (err) { /* bozuk olay yok sayılır */ }
+      try { apply(JSON.parse(e.data)); } catch (err) { if (TEST) TEST.lastError = err; /* bozuk olay yok sayılır */ }
     };
     source.onerror = () => {
       source.close(); source = null;
       failures += 1;
       setConn(failures > 6 ? 'off' : 'wait', 'yeniden bağlanıyor…');
+      if (failures >= 2) probe();
       if (failures > 6) showError('Adalmon\'a ulaşılamıyor. Adalmon açık değilse ya da adres/oturum anahtarı değiştiyse, Ayarlar > Claude ajanları > "Tarayıcıda aç" ile yeniden açın.');
       setTimeout(connect, retry);
       retry = Math.min(retry * 2, 30000);
@@ -734,15 +1426,27 @@
   }
 
   // ---------- Başlangıç ----------
-  (async () => {
+  async function boot() {
     try {
       resize();
       await prepare();
-      startLoop();
+      setInterval(heartbeat, 1000);
+      kick();
       connect();
     } catch (err) {
+      setLoading('');
       setConn('off', 'bağlanamadı');
-      showError('Sayfa verisi alınamadı (' + err.message + '). Tarayıcı görünümü kapalı olabilir ya da oturum anahtarı geçersiz: Adalmon > Ayarlar > Claude ajanları > "Tarayıcıda aç" ile yeniden açın.');
+      showError(err && err.status ? describeError(err) : 'Ofis yüklenemedi: ' + (err && err.message ? err.message : err));
     }
-  })();
+  }
+
+  if (TEST) {
+    TEST.api = { apply, layoutRooms, frame, advance, draw, animating, prepare, buildCard, openCard, closeCard, escape, setFocus, bakeSheet, heartbeat, scheduleActors,
+                 rooms, tierData, light, wantNight, localNight, applyServerLighting, stepLight, poseOf, bubbleOf, lookOf, startCleaner, bfs, boardTile,
+                 get S() { return S; }, get assets() { return assets; }, get layout() { return layout; }, get selected() { return selected; },
+                 get focusId() { return focusId; }, get hitActors() { return hitActors; }, get hitBoards() { return hitBoards; }, get raf() { return raf; }, get needsRedraw() { return needsRedraw; },
+                 set needsRedraw(v) { needsRedraw = v; } };
+  }
+  const started = boot();
+  if (TEST) TEST.ready = started;
 })();

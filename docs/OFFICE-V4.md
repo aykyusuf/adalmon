@@ -157,3 +157,11 @@ taşıyıcı → 15-17 (koli gövdeye pişirilmiş); temizlikçi önlüklü yür
 
 Kareler tembel üretilir ve `spec.key|yön|kare[|n]` anahtarıyla bellekte tutulur (RGBA8 96×128 = 48 KB/kare). 10×10 senaryosunda (~100 karakter, gündüz + gece)
 286 kare ≈ 13 MB. Düğüm sayısı piksele göre azalır (karakter başına aksesuar/rol düğümü yok); 12 fps ve duraklatma kuralları değişmedi.
+
+### Tarayıcı istemcisi (Resources/Web) için sözleşme notları
+
+* `/v1/state` → `rooms[].computers`: `{ "<pc yerleşim indeksi>": "imac_blue" | "macbook_gray" | ... }`. Boş masaların bilgisayarı da dahildir (tohum oda kimliğine
+  bağlı olduğu için tarayıcı hesaplayamaz); anahtar `layout.tiers[..].seats[].pc` / `furniture[].i` ile aynıdır. Bilgisayar sprite'ı: `v3.vector.generated[name + "_off" | "_on1".."_on3"]`.
+* `tiers[..].lamps` son öğesi (yönetici masası) artık `dx: 0` (sahnedeki x = col·16 + 16 ile uyumlu); masa bloklarında `dx: 8`.
+* CSP `connect-src 'self'` data: adreslerinde `fetch`'i engeller: istemci base64'ü `atob` ile çözüp `Blob` → `createImageBitmap` kullanır.
+* Tarayıcı testi: `node Tests/Web/office-client.test.js` (sahte DOM/canvas; gerçek tarayıcı değil).

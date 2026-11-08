@@ -132,6 +132,12 @@ final class OfficeActor {
     var labelName: SKLabelNode?
     var labelTitle = ""
     var labelBodyW = 0
+    var labelDot: SKSpriteNode?
+    /// Çakışma çözümü: metin biçimleri, ekran genişlikleri, seçili biçim ve dikey kademe (yalnızca vektör).
+    var labelVariants: [String] = []
+    var labelWidths: [CGFloat] = []
+    var labelVariant = 0
+    var labelLevel = 0
     /// Taşıyıcı: koli vektör temada gövdeye pişirilmiş "taşıma" karelerini kullanır.
     var carryingBox = false
 
@@ -207,6 +213,8 @@ final class OfficeRoomNode {
     private var boardOverlay: SKSpriteNode?
     private(set) var zoom: CGFloat = 1
     private(set) var labelsOn = false
+    private var lastLabelItems: [OfficeLabelItem] = []
+    private var lastLabelZoom: CGFloat = 0
     /// Metin balonları yalnızca yakından bakılırken (zoom ≥ 2) ve görünür/odaklı odalarda kurulur (düğüm tasarrufu); "…" balonu uzakta kalır.
     private(set) var bubblesOn = false
     private(set) var overflow = 0
@@ -344,6 +352,7 @@ final class OfficeRoomNode {
         zoom = z
         for a in actors.values { applyScale(a) }
         for a in leavingActors { applyScale(a) }
+        resolveOverlays()
         layoutChrome()
     }
 
@@ -519,6 +528,7 @@ final class OfficeRoomNode {
         guard on != labelsOn else { return }
         labelsOn = on
         for a in actors.values { refreshLabel(a) }
+        resolveOverlays()
     }
 
     /// Metin balonlarını açar/kapatır (kapanınca düğümler gizlenir, yeniden kullanılır; "…" balonu geri gelir).
@@ -574,7 +584,9 @@ final class OfficeRoomNode {
 
     /// Vektör etiket: tek yuvarlak "hap" (9-dilim doku, gölgeli), solda rol/model renk noktası, sistem yazısı (yarı kalın).
     private func buildVectorLabel(_ a: OfficeActor) {
-        a.labelTitle = a.isExecutive ? "★ " + Self.truncated(a.member.label, 9) : (a.appearance.role.map { Self.truncated($0.name, 22) } ?? Self.truncated(a.member.label, 11))
+        let full = a.isExecutive ? "★ " + Self.truncated(a.member.label, 9) : (a.appearance.role.map { Self.truncated($0.name, 22) } ?? Self.truncated(a.member.label, 11))
+        a.labelVariants = OfficeLabelLayout.variants(of: full)
+        a.labelTitle = full
         let pill = SKSpriteNode(color: .white, size: CGSize(width: 30, height: 21))
         pill.anchorPoint = CGPoint(x: 0.5, y: 0)
         pill.zPosition = 0
@@ -583,23 +595,35 @@ final class OfficeRoomNode {
         name.horizontalAlignmentMode = .left
         name.zPosition = 2
         a.labelPill = pill; a.labelName = name
-        styleLabel(a)
-        let w = (name.frame.width + 25).rounded(.up)
-        let pad = OfficeVectorUI.labelPanel(night: false).pad
-        a.labelBodyW = Int(w)
-        styleLabel(a)
-        pill.size = CGSize(width: w + 2 * pad, height: 21)
-        pill.position = CGPoint(x: 0, y: -pad + 1.5)
-        name.position = CGPoint(x: -w / 2 + 17, y: 9.3)
+        a.labelWidths = a.labelVariants.map { v in
+            name.attributedText = OfficeVectorUI.text(v, size: 10, weight: .semibold, color: Self.ns(0x1F2330))
+            return (name.frame.width + 25).rounded(.up)
+        }
         let c = a.appearance.role?.tint ?? a.appearance.tint
         let dot = SKSpriteNode(color: SKColor(red: c.r, green: c.g, blue: c.b, alpha: 1), size: CGSize(width: 5.5, height: 5.5))
         if let solid = assets.solidTexture(width: 6, height: 6) { dot.texture = solid }
         dot.colorBlendFactor = 1
-        dot.position = CGPoint(x: -w / 2 + 10.5, y: 9.3)
         dot.zPosition = 1
+        a.labelDot = dot
+        applyLabelVariant(a, 0)
         for n in [pill, dot, name] as [SKNode] { a.label.addChild(n) }
         a.label.setScale(1 / zoom)
         positionAccessoryAndBubble(a)
+    }
+
+    /// Etiketi seçili metin biçimine göre boyutlandırır (hap genişliği, yazı ve nokta konumu).
+    private func applyLabelVariant(_ a: OfficeActor, _ v: Int) {
+        guard let pill = a.labelPill, let name = a.labelName, let dot = a.labelDot, v < a.labelVariants.count else { return }
+        a.labelVariant = v
+        a.labelTitle = a.labelVariants[v]
+        let w = a.labelWidths[v]
+        a.labelBodyW = Int(w)
+        styleLabel(a)
+        let pad = OfficeVectorUI.labelPanel(night: false).pad
+        pill.size = CGSize(width: w + 2 * pad, height: 21)
+        pill.position = CGPoint(x: 0, y: -pad + 1.5)
+        name.position = CGPoint(x: -w / 2 + 17, y: 9.3)
+        dot.position = CGPoint(x: -w / 2 + 10.5, y: 9.3)
     }
 
     /// Etiket stili (gündüz açık yüzey / gece koyu cam).
@@ -937,7 +961,7 @@ final class OfficeRoomNode {
     /// Metin balonunu düğüme uygular: yalnızca seviye ≥ 2 yakınlıkta, karakter yerinde (yürümüyor) ve metin varsa görünür.
     private func renderBubble(_ a: OfficeActor, reposition: Bool = true) {
         guard let text = a.bubbleText, bubblesOn, isVisible, !a.moving, !a.away, !a.leaving else {
-            if let tb = a.textBubble, !tb.node.isHidden { tb.node.isHidden = true; resolveBubbleOverlaps() }
+            if let tb = a.textBubble, !tb.node.isHidden { tb.node.isHidden = true; resolveOverlays() }
             return
         }
         let tb: OfficeTextBubble
@@ -1040,8 +1064,8 @@ final class OfficeRoomNode {
         if let tb = a.textBubble, !tb.node.isHidden {
             tb.node.setScale(1 / zoom)
             tb.setFlipped(a.root.position.x > CGFloat(kit.worldWidth) / 2)
-            resolveBubbleOverlaps()
         }
+        resolveOverlays()
     }
 
     /// Baş üstü (root'a göre): oturma ve ayakta okuma pozlarında baş birkaç piksel aşağıdadır.
@@ -1053,17 +1077,54 @@ final class OfficeRoomNode {
 
     /// Ad etiketinin (varsa) y konumu: baş + aksesuar üstü. Yan yana oturan salon koltuklarında (kanepe) tek sütundakini bir kademe yukarı al.
     private func labelY(_ a: OfficeActor) -> CGFloat {
+        labelBaseY(a) + CGFloat(a.labelLevel) * OfficeLabelLayout.step / zoom
+    }
+
+    private func labelBaseY(_ a: OfficeActor) -> CGFloat {
         let s = a.body.yScale
         let top = headTop(a) + (a.accessory?.size.height ?? 0) * s + 3
         let stagger: CGFloat = a.seat.kind == .lounge && a.seat.tile.col % 2 != 0 ? 14 / zoom : 0
         return top + stagger
     }
 
+    /// Etiketler (vektör) önce, balonlar sonra: balon etiket kademesini de hesaba katar.
+    private func resolveOverlays() {
+        resolveLabelOverlaps()
+        resolveBubbleOverlaps()
+    }
+
+    /// Vektör etiketleri: yalnızca üye/konum/genişlik/zoom değişince yeniden hesaplanır (`OfficeLabelLayout`).
+    private func resolveLabelOverlaps() {
+        guard theme == .vector else { return }
+        var items: [OfficeLabelItem] = []
+        for a in actors.values where a.labelBuilt && !a.labelWidths.isEmpty && !a.label.isHidden {
+            if a.moving || a.hopping || a.leaving { continue }
+            items.append(OfficeLabelItem(id: a.member.id, x: a.root.position.x, y: a.root.position.y + labelBaseY(a), widths: a.labelWidths))
+        }
+        items.sort { $0.id < $1.id }
+        guard items != lastLabelItems || zoom != lastLabelZoom else { return }
+        lastLabelItems = items; lastLabelZoom = zoom
+        let result = OfficeLabelLayout.resolve(items, zoom: zoom).placements
+        for item in items {
+            guard let a = actors[item.id], let p = result[item.id] else { continue }
+            if a.labelVariant != p.variant { applyLabelVariant(a, p.variant) }
+            a.labelLevel = p.level
+            a.label.position = CGPoint(x: 0, y: labelY(a))
+        }
+    }
+
     /// Metin balonlarını yerleştirir: etiketin (varsa) üstünde; komşu balonla çakışan balon dikeyde yukarı kayar (balon boyu kadar),
     /// çakışma kalmayana dek. Soldan sağa sırayla yerleştirilir (sol balon sabit, sağdaki kayar).
     private func resolveBubbleOverlaps() {
         let z = zoom
-        var placed: [CGRect] = []
+        var placed: [(rect: CGRect, owner: String?)] = []
+        if theme == .vector {
+            // Etiketler engeldir (kendi etiketi hariç): balon komşunun etiketine binmez.
+            for a in actors.values where a.labelBuilt && !a.label.isHidden {
+                let w = (a.labelWidths.indices.contains(a.labelVariant) ? a.labelWidths[a.labelVariant] : 0) + OfficeLabelLayout.margin
+                placed.append((CGRect(x: a.root.position.x - w / 2 / z, y: a.root.position.y + labelY(a), width: w / z, height: OfficeLabelLayout.height / z), a.member.id))
+            }
+        }
         let shown = actors.values.filter { a in a.textBubble.map { !$0.node.isHidden } ?? false }
             .sorted { ($0.root.position.x, $0.root.position.y) < ($1.root.position.x, $1.root.position.y) }
         for a in shown {
@@ -1077,10 +1138,10 @@ final class OfficeRoomNode {
             var lift: CGFloat = 0
             for _ in 0..<8 {
                 let rect = CGRect(x: minX, y: a.root.position.y + base + lift, width: w, height: tb.height / z).insetBy(dx: -1 / z, dy: -0.5 / z)
-                if placed.contains(where: { $0.intersects(rect) }) { lift += step } else { break }
+                if placed.contains(where: { $0.owner != a.member.id && $0.rect.intersects(rect) }) { lift += step } else { break }
             }
             tb.node.position = CGPoint(x: 0, y: base + lift)
-            placed.append(CGRect(x: minX, y: a.root.position.y + base + lift, width: w, height: tb.height / z))
+            placed.append((CGRect(x: minX, y: a.root.position.y + base + lift, width: w, height: tb.height / z), nil))
         }
     }
 
@@ -1188,6 +1249,7 @@ final class OfficeRoomNode {
         a.textBubble?.node.isHidden = true
         a.bubble?.removeFromParent(); a.bubble = nil
         a.label.isHidden = true
+        resolveOverlays()
         let from = a.heading ?? a.tile
         let spots = kit.spots
         guard animated, let route = kit.grid.path(from: from, to: spots.entrance) else { a.root.removeFromParent(); return }
