@@ -80,6 +80,9 @@ final class AgentWebTests: XCTestCase {
         XCTAssertEqual(status(request(origin: "http://localhost:\(port)")), 403, "Host 127.0.0.1 iken farklı yazım aynı origin değil")
         XCTAssertEqual(status(request(origin: "http://127.0.0.1:\(port)")), 200)
         XCTAssertEqual(status(request(extra: ["sec-fetch-site": "cross-site"])), 403)
+        XCTAssertEqual(status(request(extra: ["sec-fetch-site": "cross-site", "sec-fetch-mode": "cors"])), 403)
+        // Üst düzey gezinme (ör. uzantı/dış uygulama açar) token ile geçer.
+        XCTAssertEqual(status(request(extra: ["sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"])), 200)
         for r in [request(), request(origin: "http://evil.example"), request(token: nil), request("/nope")] {
             let text = String(decoding: try XCTUnwrap(response(r)).serialized(), as: UTF8.self).lowercased()
             XCTAssertFalse(text.contains("access-control-"), "CORS başlığı eklenmemeli")

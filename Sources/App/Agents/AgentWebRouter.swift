@@ -134,7 +134,10 @@ enum AgentWebRouter {
         guard let host = request.headers["host"]?.lowercased(), allowedHosts.contains(host) else { return .response(error(421, request)) }
         // Origin varsa aynı origin olmalı (CORS açılmaz; "null" da reddedilir).
         if let origin = request.headers["origin"], origin.lowercased() != "http://\(host)" { return .response(error(403, request)) }
-        if let site = request.headers["sec-fetch-site"]?.lowercased(), site == "cross-site" { return .response(error(403, request)) }
+        // Üst düzey gezinme (adres çubuğu, uzantı/Ayarlar'dan açma) `cross-site` görünebilir; erişim zaten token ile korunuyor.
+        // Alt kaynak istekleri (fetch/img/script) çapraz site ise reddedilir.
+        if let site = request.headers["sec-fetch-site"]?.lowercased(), site == "cross-site",
+           request.headers["sec-fetch-mode"]?.lowercased() != "navigate" { return .response(error(403, request)) }
 
         guard !context.token.isEmpty, let provided = providedToken(request),
               AgentHTTPParser.constantTimeEqual(provided, context.token) else { return .response(error(401, request)) }
