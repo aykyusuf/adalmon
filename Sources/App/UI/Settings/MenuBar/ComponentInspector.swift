@@ -314,21 +314,32 @@ struct BatteryStylePicker: View {
                 .accessibilityLabel(swatch.displayName)
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
-            ColorPicker("Özel renk", selection: colorBinding($fillColor, fallback: BatteryGlyphOptions.Swatch.green.color),
+            let isCustom = fillColor != nil && !BatteryGlyphOptions.Swatch.allCases.contains { $0.color == fillColor }
+            chip("Özel", selected: isCustom) { if fillColor == nil || !isCustom { fillColor = Self.customDefault } }
+                .help("Kendi rengini seç: sağdaki kutuya tıkla")
+            ColorPicker("Özel renk", selection: colorBinding($fillColor, fallback: Self.customDefault),
                         supportsOpacity: false)
                 .labelsHidden()
+                .opacity(isCustom ? 1 : 0.4)
                 .help("Özel renk")
         }
     }
+
+    /// Hazır renklerden farklı bir başlangıç: "Özel"e basınca seçimin gerçekten değişmesi için.
+    private static let customDefault = RGBAColor(hex: "#7B5CFF") ?? BatteryGlyphOptions.Swatch.purple.color
+    private static let secondDefault = RGBAColor(hex: "#FF7A59") ?? BatteryGlyphOptions.Swatch.orange.color
 
     private var secondRow: some View {
         HStack(spacing: 6) {
             Text("İkinci renk")
             chip("Otomatik", selected: secondColor == nil) { secondColor = nil }
                 .help(style == .stripes ? "Şeritler dolgunun açık tonuyla çizilir" : "Birinci renkten türetilir")
-            ColorPicker("İkinci renk", selection: colorBinding($secondColor, fallback: BatteryGlyphOptions.Swatch.purple.color),
+            chip("Özel", selected: secondColor != nil) { if secondColor == nil { secondColor = Self.secondDefault } }
+                .help("Kendi rengini seç: sağdaki kutuya tıkla")
+            ColorPicker("İkinci renk", selection: colorBinding($secondColor, fallback: Self.secondDefault),
                         supportsOpacity: false)
                 .labelsHidden()
+                .opacity(secondColor != nil ? 1 : 0.4)
         }
     }
 
