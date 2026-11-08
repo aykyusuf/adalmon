@@ -33,6 +33,7 @@ targets:
         NSBluetoothAlwaysUsageDescription: Adalmon, bağlı aksesuarların (AirPods, klavye, fare, iPhone) pil düzeyini göstermek için Bluetooth'u kullanır.
         NSLocalNetworkUsageDescription: Adalmon, aynı Wi‑Fi ağındaki eşleşmiş iPhone ve iPad'lerin pil sağlığını okumak için yerel ağı kullanır.
         NSBonjourServices: [_apple-mobdev2._tcp]
+        NSAppleEventsUsageDescription: Adalmon, yalnızca “Safari sekme listesini göster” ayarı açıkken Safari'deki açık sekmelerin başlık ve adreslerini okumak için Safari'ye erişir; Safari'de hiçbir şeyi değiştirmez.
         CFBundleURLTypes:
           - CFBundleURLName: com.example.adalmon
             CFBundleURLSchemes: [adalmon]
@@ -43,6 +44,8 @@ targets:
         com.apple.developer.networking.networkextension: [content-filter-provider, app-proxy-provider]
         com.apple.security.application-groups: [YOUR_TEAM_ID.com.example.adalmon]
         com.apple.security.device.bluetooth: true
+        # Hardened runtime: Safari sekme listesi (AppleScript, opt-in) için Apple olayı göndermek bu yetkiyi gerektirir.
+        com.apple.security.automation.apple-events: true
     attributes:
       SystemCapabilities:
         com.apple.NetworkExtensions: {enabled: 1}

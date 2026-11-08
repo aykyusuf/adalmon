@@ -13,6 +13,8 @@
 	<array>
 		<string>YOUR_TEAM_ID.com.example.adalmon</string>
 	</array>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 	<key>com.apple.security.device.bluetooth</key>
 	<true/>
 </dict>

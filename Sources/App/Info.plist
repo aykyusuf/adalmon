@@ -35,6 +35,8 @@
 	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Adalmon, yalnızca “Safari sekme listesini göster” ayarı açıkken Safari'deki açık sekmelerin başlık ve adreslerini okumak için Safari'ye erişir; Safari'de hiçbir şeyi değiştirmez.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Adalmon, bağlı aksesuarların (AirPods, klavye, fare, iPhone) pil düzeyini göstermek için Bluetooth'u kullanır.</string>
 	<key>NSBonjourServices</key>
