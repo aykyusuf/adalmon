@@ -43,11 +43,20 @@ enum ProcessTableLayout {
         }
     }
 
-    /// `width`: sütunlara ayrılabilen genişlik (satır iç boşlukları düşülmüş).
-    static func columns(forWidth width: CGFloat) -> ProcessTableColumns {
+    /// Dokunulmamış bilgi sütununun kendiliğinden göründüğü en küçük içerik genişliği; ölçüt sütunlarında nil (her zaman).
+    static func autoMinWidth(_ column: ProcessColumn) -> CGFloat? {
+        extraColumnThresholds.first { $0.column == column }?.minWidth
+    }
+
+    /// `width`: sütunlara ayrılabilen genişlik (satır iç boşlukları düşülmüş). `layout`: kullanıcının sütun sırası/görünürlüğü.
+    static func columns(forWidth width: CGFloat, layout: ProcessColumnLayout = .default) -> ProcessTableColumns {
         let w = max(0, width)
-        let metrics = numericColumns + extraColumnThresholds.filter { w >= $0.minWidth }.map(\.column)
+        let metrics = layout.visibleColumns(width: w)
         let baseSum = metrics.reduce(0) { $0 + baseWidth($1) }
+        guard baseSum > 0 else {
+            // Tüm sütunlar gizli: yalnızca Ad.
+            return ProcessTableColumns(nameWidth: min(w, nameMaxWidth).rounded(.down), entries: [])
+        }
         // Adın asgari payı: tablonun ~%32'si, ama en az `nameMinWidth`, en çok `nameIdealWidth`.
         let nameFloor = min(nameIdealWidth, max(nameMinWidth, w * nameMinShare))
 

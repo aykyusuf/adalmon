@@ -6,14 +6,17 @@ struct ProcessTableView: View {
     let router: SettingsRouter
     @Bindable var live: ProcessLiveModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Ölçülen genişliğe göre hesaplanan sütunlar (ilk ölçümden önce makul bir varsayılan).
-    @State private var columns = ProcessTableLayout.columns(forWidth: 700)
+    /// Sütunlara ayrılabilen ölçülmüş genişlik (ilk ölçümden önce makul bir varsayılan).
+    @State private var contentWidth: CGFloat = 700
+    /// Kullanıcının sütun sırası / görünürlüğü (UserDefaults'ta kalıcı).
+    @State private var columnLayout = ProcessColumnLayout.load()
 
     var body: some View {
         let sections = live.sections
+        let columns = ProcessTableLayout.columns(forWidth: contentWidth, layout: columnLayout)
         VStack(spacing: 0) {
             ProcessColumnHeader(columns: columns, totals: live.totals, sortColumn: live.sortColumn, sortAscending: live.sortAscending,
-                                onSort: live.sort(by:))
+                                onSort: live.sort(by:), layout: $columnLayout, contentWidth: contentWidth)
                 .padding(.leading, ProcessTableLayout.leadingInset)
                 .padding(.trailing, ProcessTableLayout.trailingInset)
             Divider()
@@ -21,7 +24,7 @@ struct ProcessTableView: View {
                 ForEach(sections) { section in
                     Section {
                         ForEach(section.rows) { row in
-                            tableRow(row)
+                            tableRow(row, columns: columns)
                         }
                     } header: {
                         ProcessSectionHeader(category: section.category, count: section.groupCount,
@@ -50,7 +53,11 @@ struct ProcessTableView: View {
             footer(sections)
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
-            columns = ProcessTableLayout.columns(forWidth: ProcessTableLayout.contentWidth(forContainer: width))
+            contentWidth = ProcessTableLayout.contentWidth(forContainer: width)
+        }
+        .onChange(of: columnLayout) { _, layout in
+            layout.save()
+            applySortFallback()
         }
         .searchable(text: $live.query, prompt: "İşlem veya uygulama ara")
         .toolbar { ProcessToolbar(live: live) }
@@ -72,11 +79,13 @@ struct ProcessTableView: View {
 
     // MARK: Satır
 
-    private func tableRow(_ row: LiveRow) -> some View {
+    private func tableRow(_ row: LiveRow, columns: ProcessTableColumns) -> some View {
         ProcessTableRow(row: row, columns: columns, memoryTotal: Double(live.totals.memoryTotal), isSelected: live.selection == row.id,
                         isExpanded: live.expanded.contains(row.key), canExpand: live.canExpand(row), isMeasuring: live.isMeasuring) {
             live.setExpanded(row.key, !live.expanded.contains(row.key), service: model.resources, model: model)
         }
+        // Görünen içeriği değişmeyen satırlar her ölçümde yeniden çizilmez (bkz. `ProcessTableRow.==`).
+        .equatable()
         .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
         .listRowSeparator(.hidden)
         .contextMenu { ProcessContextMenu(row: row, model: model, router: router, live: live) }
@@ -112,6 +121,12 @@ struct ProcessTableView: View {
     }
 
     // MARK: Yardımcılar
+
+    /// Kullanıcı sıralama sütununu gizlediyse tablo görünmeyen bir sütuna göre sıralı kalmasın. (Pencere daralıp bir bilgi
+    /// sütunu kendiliğinden düştüğünde sıralama korunur; genişleyince geri gelir.)
+    private func applySortFallback() {
+        if let fallback = columnLayout.sortFallback(for: live.sortColumn, width: contentWidth) { live.sort(by: fallback) }
+    }
 
     private func toggleExpansionOfSelection() -> KeyPress.Result {
         guard let row = live.row(id: live.selection), live.canExpand(row) else { return .ignored }

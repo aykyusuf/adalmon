@@ -4,7 +4,7 @@ import Observation
 import SwiftUI
 
 /// Bir kategorinin tabloda görünen bölümü.
-struct ProcessSection: Identifiable {
+struct ProcessSection: Identifiable, Equatable {
     var category: ProcessCategory
     /// Üst satırlar; açık gruplarda altlarında üye süreçler (isMember) gelir.
     var rows: [LiveRow]
@@ -106,17 +106,33 @@ final class ProcessLiveModel {
     func run(service: ResourceService, model: AppModel) async {
         host = model
         await service.live.reset()
-        isMeasuring = true
+        if !isMeasuring { isMeasuring = true }
         var first = true
+        var paused = false
         while !Task.isCancelled {
-            let visible = model.mainWindowVisible
-            if visible { await refresh(service: service, model: model) }
-            // Pencere küçültülmüş / örtülüyken boşuna uyanma (pil): seyrek yokla.
-            let seconds = !visible ? 5 : first ? 1 : max(1, model.prefs.updateInterval)
-            if visible { interval = seconds }
+            // Pencere kapalı / küçültülmüş / örtülü ya da uygulama arka plandayken örnekleme tamamen durur (pil); seyrek yoklanır.
+            let active = model.mainWindowVisible && NSApp.isActive
+            if active && paused {
+                // Duraklamadan dönüş: sessiz bir taban örneği al ki ilk oranlar tüm duraklama süresine yayılmasın.
+                paused = false
+                await rebaseline(service: service)
+                try? await Task.sleep(for: .seconds(1), tolerance: .milliseconds(150))
+                continue
+            }
+            if active { await refresh(service: service, model: model) } else if !first { paused = true }
+            let seconds = !active ? 5 : first ? 1 : max(1, model.prefs.updateInterval)
+            if active && interval != seconds { interval = seconds }
             first = false
             try? await Task.sleep(for: .seconds(seconds), tolerance: .milliseconds(seconds * 150))
         }
+    }
+
+    /// Uygulamadan bağımsız taban örneği (tabloya yazılmaz).
+    private func rebaseline(service: ResourceService) async {
+        guard !isSampling else { return }
+        isSampling = true
+        defer { isSampling = false }
+        _ = await service.live.sample(expanded: expanded)
     }
 
     /// Tek uçuşlu: üst üste biniyorsa atlanır. `membersOnly`: yalnızca yeni açılan grupların üyelerini al (satır oranları
@@ -148,8 +164,9 @@ final class ProcessLiveModel {
     }
 
     func apply(_ snap: LiveSnapshot, snapshot: SystemSnapshot?, net: [String: UInt64]) {
-        isMeasuring = snap.elapsed == 0
-        totalProcessCount = snap.totalProcessCount
+        // @Observable eşit yazmada da bildirir: yalnızca değişince yaz.
+        if isMeasuring != (snap.elapsed == 0) { isMeasuring = snap.elapsed == 0 }
+        if totalProcessCount != snap.totalProcessCount { totalProcessCount = snap.totalProcessCount }
         let regular = Set(NSWorkspace.shared.runningApplications.lazy.filter { $0.activationPolicy == .regular }.compactMap { $0.bundleURL?.path })
         var out: [LiveRow] = []
         var mem: [String: [LiveRow]] = [:]
@@ -174,10 +191,11 @@ final class ProcessLiveModel {
         if !hints.isEmpty {
             for i in out.indices { out[i].pathHint = hints[out[i].key] }
         }
-        rows = out
-        members = mem
-        totals = ProcessTotals(snapshot: snapshot, rows: out)
-        if let snapshot { latest = snapshot }
+        if rows != out { rows = out }
+        if members != mem { members = mem }
+        let nextTotals = ProcessTotals(snapshot: snapshot, rows: out)
+        if totals != nextTotals { totals = nextTotals }
+        if let snapshot, latest != snapshot { latest = snapshot }
         applyCount += 1
         // Sıra yalnızca seyrek yenilenir ve imleç listedeyken donar; yalnızca gerçek yeniden sıralama animasyonlu.
         let reorder = !isReorderHeld && (resortPending || applyCount % Self.resortEvery == 0)
@@ -227,7 +245,7 @@ final class ProcessLiveModel {
         let filtered = needle.isEmpty ? rows : rows.filter { $0.name.localizedStandardContains(needle) }
         if doResort { orderRank = [:] }
         let ordered = stableOrder(filtered, resort: doResort)
-        sections = ProcessCategory.allCases.compactMap { category in
+        let next: [ProcessSection] = ProcessCategory.allCases.compactMap { category in
             let groups = ordered.filter { $0.category == category }
             guard !groups.isEmpty else { return nil }
             var flat: [LiveRow] = []
@@ -241,13 +259,13 @@ final class ProcessLiveModel {
             }
             return ProcessSection(category: category, rows: flat, groupCount: groups.count)
         }
+        if sections != next { sections = next }
     }
 
     private func stableOrder(_ list: [LiveRow], resort: Bool) -> [LiveRow] {
-        let fresh = sorted(list)
         var result: [LiveRow]
         if resort {
-            result = fresh
+            result = sorted(list)
         } else {
             let rank = orderRank
             let known = list.filter { rank[$0.id] != nil }.sorted { rank[$0.id, default: 0] < rank[$1.id, default: 0] }
@@ -255,6 +273,8 @@ final class ProcessLiveModel {
             result = known
             if !unknown.isEmpty {
                 // Yeni satır, sıralı listede kendinden önce gelen bilinen satır sayısı kadar yere girer.
+                // (Tam sıralama yalnızca yeni satır varken; sıra korunan ölçümlerde her seferinde sıralanmaz.)
+                let fresh = sorted(list)
                 let knownIDs = Set(known.map(\.id))
                 var seenKnown = 0
                 for row in fresh {

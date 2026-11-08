@@ -1,7 +1,9 @@
 import SwiftUI
 
 /// "İşlemler" satırı: ad hücresi + ısı haritası tonlu sayısal hücreler.
-struct ProcessTableRow: View {
+/// `Equatable`: ham değerler (CPU %0,01 oynar, bellek KB değişir) yerine ekranda görünen metin ve ısı tonu karşılaştırılır;
+/// `.equatable()` ile görünümü değişmeyen satırlar her ölçümde yeniden kurulmaz/çizilmez.
+struct ProcessTableRow: View, Equatable {
     let row: LiveRow
     let columns: ProcessTableColumns
     let memoryTotal: Double
@@ -114,18 +116,36 @@ struct ProcessTableRow: View {
         }
     }
 
-    private func cell(_ entry: ProcessTableColumns.Entry) -> some View {
-        let column = entry.column
-        let t = column.isMetric && !isSelected && !isMeasuring
+    nonisolated static func == (a: ProcessTableRow, b: ProcessTableRow) -> Bool {
+        MainActor.assumeIsolated {
+            guard a.row.id == b.row.id, a.row.name == b.row.name, a.row.key == b.row.key, a.row.pathHint == b.row.pathHint,
+                  a.row.processCount == b.row.processCount, a.row.isSuspended == b.row.isSuspended,
+                  a.row.isEfficient == b.row.isEfficient, a.row.pid == b.row.pid,
+                  a.columns == b.columns, a.isSelected == b.isSelected, a.isExpanded == b.isExpanded,
+                  a.canExpand == b.canExpand, a.isMeasuring == b.isMeasuring else { return false }
+            for entry in a.columns.entries {
+                if a.text(entry.column) != b.text(entry.column) || a.tint(entry.column) != b.tint(entry.column) { return false }
+            }
+            return true
+        }
+    }
+
+    /// Hücrenin (kuantize) ısı tonu; seçili satırda ve ilk ölçümde ton yok.
+    private func tint(_ column: ProcessColumn) -> Double {
+        column.isMetric && !isSelected && !isMeasuring
             ? HeatTint.quantized(HeatTint.intensity(column: column, value: column.value(of: row), memoryTotal: memoryTotal))
             : 0
-        let value = text(column)
-        return Text(value)
+    }
+
+    private func cell(_ entry: ProcessTableColumns.Entry) -> some View {
+        let column = entry.column
+        let t = tint(column)
+        // Satır hücrelerinde rakam geçiş animasyonu yok: ~40 satır × 6 hücrede her ölçümde bulanıklaştırmalı glif
+        // animasyonu en büyük çizim maliyetiydi. Başlıktaki toplamlar animasyonlu kalır.
+        return Text(text(column))
             .monospacedDigit()
             .lineLimit(1)
             .foregroundStyle(row.isMember ? .secondary : .primary)
-            .contentTransition(.numericText())
-            .animation(reduceMotion ? nil : .snappy(duration: 0.25), value: value)
             .padding(.horizontal, 8)
             .frame(width: entry.width, height: ProcessTableLayout.rowHeight, alignment: .trailing)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
