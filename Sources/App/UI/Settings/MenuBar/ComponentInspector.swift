@@ -34,7 +34,7 @@ struct ComponentInspector: View {
             Picker("Tıklayınca açılacak panel", selection: $component.panelKind) {
                 Text("Otomatik (\(PanelRouter.automaticKind(for: component).displayName))").tag(PanelKind?.none)
                 Divider()
-                ForEach(PanelKind.allCases) { Text($0.displayName).tag(PanelKind?.some($0)) }
+                ForEach(PanelKind.allCases.filter { $0 != .agents }) { Text($0.displayName).tag(PanelKind?.some($0)) }
             }
             .labelsHidden()
             .fixedSize()

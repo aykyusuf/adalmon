@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Ayarlar penceresinin kenar çubuğu bölümleri.
 enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
-    case menuBar, panel, batteryAlerts, widgets, shortcuts, throttle, mobileData, filter, general
+    case menuBar, panel, batteryAlerts, widgets, shortcuts, agents, throttle, mobileData, filter, general
 
     var id: String { rawValue }
 
@@ -13,6 +13,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .batteryAlerts: "Pil uyarıları"
         case .widgets: "Widget'lar"
         case .shortcuts: "Kestirmeler"
+        case .agents: "Claude ajanları"
         case .throttle: "Hız sınırı"
         case .mobileData: "Mobil veri"
         case .filter: "Filtre"
@@ -27,6 +28,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .batteryAlerts: "battery.50percent"
         case .widgets: "square.grid.2x2.fill"
         case .shortcuts: "command"
+        case .agents: "person.3.fill"
         case .throttle: "speedometer"
         case .mobileData: "antenna.radiowaves.left.and.right"
         case .filter: "line.3.horizontal.decrease"
@@ -41,6 +43,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .batteryAlerts: .green
         case .widgets: .cyan
         case .shortcuts: .indigo
+        case .agents: .purple
         case .throttle: .orange
         case .mobileData: .green
         case .filter: .orange

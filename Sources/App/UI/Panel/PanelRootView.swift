@@ -16,6 +16,9 @@ struct PanelRootView: View {
             switch session.kind {
             case .combined:
                 PanelContent(data: data, config: $store.config, actions: actions, maxHeight: session.maxHeight)
+            case .agents:
+                AgentsPanelView(monitor: model.agents.monitor, actions: actions, opensMainWindow: data.opensMainWindow,
+                                maxHeight: session.maxHeight)
             default:
                 PanelKindView(kind: session.kind, data: data, live: live, config: $store.config, actions: actions,
                               battery: BatteryPanelSource(model: model), maxHeight: session.maxHeight,

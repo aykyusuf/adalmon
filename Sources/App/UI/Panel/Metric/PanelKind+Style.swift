@@ -10,6 +10,7 @@ extension PanelKind {
         case .network: .cyan
         case .temperature: .orange
         case .battery: .green
+        case .agents: .purple
         case .combined: .accentColor
         }
     }

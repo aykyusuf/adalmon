@@ -1,0 +1,78 @@
+import SwiftUI
+
+/// Ayarlar › Claude ajanları: özelliği aç, plugin'i kur/kaldır, durum satırları, gizlilik notu.
+struct AgentsSettingsPane: View {
+    let model: AppModel
+    @Bindable var prefs: Preferences
+
+    init(model: AppModel) {
+        self.model = model
+        self.prefs = model.prefs
+    }
+
+    private var agents: AgentService { model.agents }
+
+    var body: some View {
+        Form {
+            Section {
+                Text("Claude Code oturumlarını ve alt ajanlarını Adalmon'da canlı gösterir (menü çubuğundaki \"Ajanlar\" öğesi ve paneli). Bir Claude Code plugin'i, olay adlarını bu Mac'te 127.0.0.1 üzerindeki yerel bir dinleyiciye iletir. ~/.claude/settings.json dosyanıza Adalmon dokunmaz.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Özelliği aç", isOn: Binding(get: { prefs.agentsEnabled }, set: { agents.setEnabled($0) }))
+                Toggle("Menü çubuğunda \"Ajanlar\" öğesini göster", isOn: $prefs.agentsInMenuBar)
+                    .disabled(!prefs.agentsEnabled)
+            }
+
+            Section("Plugin") {
+                LabeledContent("Dinleyici", value: listenerText)
+                LabeledContent("Plugin", value: pluginText)
+                LabeledContent("Son olay") {
+                    if let last = agents.monitor.lastEventAt { Text(last, style: .relative) } else { Text("henüz yok").foregroundStyle(.secondary) }
+                }
+                HStack {
+                    if agents.pluginStatus == .installed {
+                        Button("Kaldır", role: .destructive) { Task { await agents.uninstallPlugin() } }
+                    } else {
+                        Button("Plugin'i kur") { Task { await agents.installPlugin() } }
+                            .disabled(!prefs.agentsEnabled || agents.port == nil)
+                    }
+                    if agents.isBusy { ProgressView().controlSize(.small) }
+                }
+                .disabled(agents.isBusy)
+                Text("Önemli: açık olan Claude Code oturumları plugin'i görmez. Kurulumdan sonra yeni bir Claude Code oturumu açın (ya da oturumu yeniden başlatın).")
+                    .font(.caption).foregroundStyle(agents.needsNewSession ? .orange : .secondary)
+                if let message = agents.errorMessage {
+                    Text(message).font(.caption).foregroundStyle(.red)
+                    ForEach(agents.manualCommands, id: \.self) { command in
+                        Text(command).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                    }
+                }
+            }
+
+            Section("Gizlilik") {
+                Text("İletilir: olay adı, oturum ve ajan kimliği, ajan türü, araç adı, model adı, bildirim türü, proje klasörünün adı (yolun son parçası), izin modu ve zaman.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("İletilmez: istemleriniz, araç girdi ve çıktıları, Claude'un yanıtları, dosya içerikleri, transkript. Dinleyici yalnızca bu Mac'ten, rastgele bir token ile erişilebilir; özellik kapalıyken hiç çalışmaz.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .task { await agents.refreshPluginStatus() }
+    }
+
+    private var listenerText: String {
+        switch agents.listener {
+        case .off: "kapalı"
+        case .starting: "başlıyor…"
+        case .running(let port): "çalışıyor (127.0.0.1:\(port))"
+        case .failed(let reason): "hata: \(reason)"
+        }
+    }
+
+    private var pluginText: String {
+        switch agents.pluginStatus {
+        case .installed: "yüklü"
+        case .notInstalled: "yüklü değil"
+        case .unknown: "bilinmiyor (claude komutu bulunamadı ya da yanıt vermedi)"
+        }
+    }
+}

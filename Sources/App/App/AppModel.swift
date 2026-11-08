@@ -54,6 +54,8 @@ final class AppModel {
         defaults: .standard)
     /// Faz 3: süreç/kaynak geçmişi ve saatlik klasör taraması (dakikada bir arka plan örnekleyici).
     @ObservationIgnored private(set) lazy var resources = ResourceService(store: store)
+    /// Claude ajanları: yerel olay dinleyicisi + oturum modeli (özellik kapalıyken hiçbir şey çalışmaz).
+    @ObservationIgnored private(set) lazy var agents = AgentService(prefs: prefs)
     @ObservationIgnored private(set) lazy var widgets = WidgetPublisher.live()
     @ObservationIgnored private let sampler = MetricsSampler()
     @ObservationIgnored private let samplerQueue = DispatchQueue(label: "adalmon.metrics", qos: .utility)
@@ -105,6 +107,7 @@ final class AppModel {
         battery.onPowerStateChange = { [weak self] in self?.publishWidgets(forced: true) }
         battery.start()
         devices.start()
+        agents.apply()
     }
 
     /// Güncelleme aralığı ayarı değişince zamanlayıcıyı hemen yeniden kur ve bir ölçüm al.

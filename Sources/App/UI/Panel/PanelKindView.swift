@@ -55,8 +55,8 @@ struct PanelKindView: View {
                     }
                 } footer: { EmptyView() }
             }
-        case .combined:
-            EmptyView()
+        case .agents, .combined:
+            EmptyView() // Ajanlar paneli PanelRootView'da (model gerektirir)
         }
     }
 }

@@ -1,0 +1,247 @@
+import XCTest
+@testable import Adalmon
+
+/// Plugin üretimi YALNIZCA geçici dizine; gerçek `claude` komutu ve ~/.claude ASLA kullanılmaz (sahte `CommandRunning`).
+final class AgentPluginTests: XCTestCase {
+    private var tmp: URL!
+
+    override func setUpWithError() throws {
+        tmp = FileManager.default.temporaryDirectory.appending(path: "agent-plugin-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    }
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: tmp) }
+
+    private func generator(python: Bool = true) -> AgentPluginGenerator {
+        AgentPluginGenerator(root: tmp.appending(path: "ClaudePlugin", directoryHint: .isDirectory), usesPython: python)
+    }
+
+    private func json(_ url: URL) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    }
+
+    // MARK: Üretici
+
+    func testGeneratedFilesAndJSONValidity() throws {
+        let g = generator()
+        try g.write(port: 51234, token: "abc")
+        let manifest = try json(g.manifestURL)
+        XCTAssertEqual(manifest["name"] as? String, "adalmon-agents")
+        let market = try json(g.marketplaceURL)
+        XCTAssertEqual(market["name"] as? String, "adalmon-local")
+        let plugins = try XCTUnwrap(market["plugins"] as? [[String: Any]])
+        XCTAssertEqual(plugins.first?["name"] as? String, "adalmon-agents")
+        XCTAssertEqual(plugins.first?["source"] as? String, "./plugins/adalmon-agents")
+
+        let hooks = try XCTUnwrap(try json(g.hooksURL)["hooks"] as? [String: Any])
+        XCTAssertEqual(Set(hooks.keys), Set(["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
+                                             "PermissionRequest", "Notification", "Stop", "SubagentStart", "SubagentStop", "PostModelSwitch"]))
+        for (_, value) in hooks {
+            let entry = try XCTUnwrap((value as? [[String: Any]])?.first)
+            let command = try XCTUnwrap((entry["hooks"] as? [[String: Any]])?.first)
+            XCTAssertEqual(command["type"] as? String, "command")
+            XCTAssertEqual(command["async"] as? Bool, true)
+            XCTAssertEqual(command["timeout"] as? Int, 5)
+            XCTAssertEqual(command["command"] as? String, "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/forward.py\"")
+        }
+        for url in [g.pythonScriptURL, g.shellScriptURL] {
+            let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+            XCTAssertEqual(mode, 0o755)
+        }
+    }
+
+    func testShellFallbackCommandAndConfigPermissions() throws {
+        let g = generator(python: false)
+        XCTAssertTrue(g.hookCommand.hasPrefix("/bin/sh "))
+        try g.write(port: 50000, token: "t0k")
+        let mode = try FileManager.default.attributesOfItem(atPath: g.configURL.path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o600)
+        XCTAssertEqual(g.readConfig()?.port, 50000)
+        XCTAssertEqual(g.readConfig()?.token, "t0k")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: g.pluginDirectory.appending(path: "config.json").path), "config plugin dizininde değil")
+        try g.writeConfig(port: 50001, token: "t0k")
+        XCTAssertEqual(g.readConfig()?.port, 50001)
+    }
+
+    func testTokenIs32RandomBytesHex() {
+        let a = AgentPluginGenerator.makeToken(), b = AgentPluginGenerator.makeToken()
+        XCTAssertEqual(a.count, 64)
+        XCTAssertNotEqual(a, b)
+        XCTAssertNotNil(a.range(of: "^[0-9a-f]{64}$", options: .regularExpression))
+    }
+
+    // MARK: Forward betiği süzmesi
+
+    private let sample = """
+    {"hook_event_name":"PostToolUse","session_id":"sess-1","transcript_path":"/Users/x/.claude/SECRET-TRANSCRIPT.jsonl",
+     "cwd":"/Users/x/projects/MyApp/","permission_mode":"default","tool_name":"Agent","agent_id":"a1","agent_type":"Explore",
+     "prompt":"SECRET-PROMPT","tool_input":{"prompt":"SECRET-INPUT","command":"SECRET-CMD"},
+     "tool_response":{"agentId":"a1","resolvedModel":"claude-haiku-4-5","content":"SECRET-OUTPUT"},
+     "last_assistant_message":"SECRET-ASSISTANT","compact_summary":"SECRET-SUMMARY","model":"claude-opus-4-8"}
+    """
+
+    private func runScript(_ interpreter: String, _ script: URL, stdin: String) throws -> [String: Any] {
+        let process = Process()
+        process.executableURL = URL(filePath: interpreter)
+        process.arguments = (interpreter.hasSuffix("python3") ? ["-I"] : []) + [script.path, "--dry-run"]
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        input.fileHandleForWriting.write(Data(stdin.utf8))
+        try input.fileHandleForWriting.close()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+        let text = String(decoding: data, as: UTF8.self)
+        XCTAssertFalse(text.contains("SECRET"), "içerik alanı sızdı: \(text)")
+        XCTAssertFalse(text.contains("transcript"))
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    private func assertFiltered(_ payload: [String: Any], file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(Set(payload.keys).isSubset(of: AgentEvent.allowedKeys), "izinsiz anahtar: \(payload.keys)", file: file, line: line)
+        XCTAssertEqual(payload["event"] as? String, "PostToolUse", file: file, line: line)
+        XCTAssertEqual(payload["session_id"] as? String, "sess-1", file: file, line: line)
+        XCTAssertEqual(payload["project"] as? String, "MyApp", "yalnızca son klasör adı", file: file, line: line)
+        XCTAssertEqual(payload["resolved_model"] as? String, "claude-haiku-4-5", file: file, line: line)
+        XCTAssertEqual(payload["resolved_agent_id"] as? String, "a1", file: file, line: line)
+        XCTAssertEqual(payload["model"] as? String, "claude-opus-4-8", file: file, line: line)
+        XCTAssertNotNil(payload["ts"], file: file, line: line)
+    }
+
+    func testPythonForwardScriptFiltersContent() throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3"), AgentPluginGenerator.pythonAvailable() else {
+            throw XCTSkip("/usr/bin/python3 yok")
+        }
+        let g = generator()
+        try g.write(port: 1, token: "x")
+        let payload = try runScript("/usr/bin/python3", g.pythonScriptURL, stdin: sample)
+        assertFiltered(payload)
+        // Agent aracı değilse çözümlenmiş model alınmaz; bozuk girdi sessiz kalır.
+        let other = try runScript("/usr/bin/python3", g.pythonScriptURL, stdin: sample.replacingOccurrences(of: "\"tool_name\":\"Agent\"", with: "\"tool_name\":\"Bash\""))
+        XCTAssertNil(other["resolved_model"])
+        XCTAssertTrue(try runScript("/usr/bin/python3", g.pythonScriptURL, stdin: "garbage SECRET").isEmpty)
+    }
+
+    func testPythonScriptExitsZeroWhenNoListener() throws {
+        guard AgentPluginGenerator.pythonAvailable() else { throw XCTSkip("/usr/bin/python3 yok") }
+        let g = generator()
+        try g.write(port: 1, token: "x")   // port 1: bağlantı reddedilir
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/python3")
+        process.arguments = ["-I", g.pythonScriptURL.path]
+        process.environment = ["ADALMON_AGENTS_CONFIG": g.configURL.path]
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        input.fileHandleForWriting.write(Data(sample.utf8))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+    }
+
+    func testShellFallbackScriptFiltersContent() throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/plutil") else { throw XCTSkip("plutil yok") }
+        let g = generator(python: false)
+        try g.write(port: 1, token: "x")
+        let payload = try runScript("/bin/sh", g.shellScriptURL, stdin: sample)
+        assertFiltered(payload)
+    }
+
+    // MARK: Kurulum (sahte çalıştırıcı)
+
+    private func installer(runner: FakeRunner, cli: String? = "/fake/claude") -> AgentPluginInstaller {
+        AgentPluginInstaller(generator: generator(), runner: runner, cliPath: { cli })
+    }
+
+    func testInstallCommandSequence() async throws {
+        let runner = FakeRunner()
+        let sut = installer(runner: runner)
+        try await sut.install(port: 50123, token: "tok")
+        XCTAssertEqual(runner.calls, [
+            ["/fake/claude", "plugin", "marketplace", "add", sut.generator.root.path],
+            ["/fake/claude", "plugin", "install", "adalmon-agents@adalmon-local"],
+        ])
+        XCTAssertEqual(sut.generator.readConfig()?.port, 50123, "dosyalar komutlardan önce yazılır")
+    }
+
+    func testInstallFailureSurfacesOutput() async throws {
+        let runner = FakeRunner(results: ["install": CommandResult(status: 1, output: "boom")])
+        let sut = installer(runner: runner)
+        do {
+            try await sut.install(port: 50123, token: "tok")
+            XCTFail("hata beklenirdi")
+        } catch let error as AgentPluginInstaller.InstallError {
+            XCTAssertEqual(error, .commandFailed(step: "Plugin kurulumu", output: "boom"))
+        }
+    }
+
+    func testMissingCLIWritesFilesButRunsNothing() async throws {
+        let runner = FakeRunner()
+        let sut = installer(runner: runner, cli: nil)
+        do {
+            try await sut.install(port: 50123, token: "tok")
+            XCTFail("hata beklenirdi")
+        } catch let error as AgentPluginInstaller.InstallError {
+            XCTAssertEqual(error, .cliNotFound)
+        }
+        XCTAssertTrue(runner.calls.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sut.generator.marketplaceURL.path))
+        XCTAssertEqual(sut.manualInstallCommands.count, 2)
+        XCTAssertTrue(sut.manualInstallCommands[1].hasSuffix("adalmon-agents@adalmon-local"))
+        let missing = await sut.status()
+        XCTAssertEqual(missing, .unknown)
+    }
+
+    func testTimeoutIsReported() async throws {
+        let runner = FakeRunner(results: ["add": CommandResult(status: -2, output: "")])
+        let sut = installer(runner: runner)
+        do {
+            try await sut.install(port: 1, token: "t")
+            XCTFail("hata beklenirdi")
+        } catch let error as AgentPluginInstaller.InstallError {
+            XCTAssertEqual(error, .timedOut(step: "Marketplace ekleme"))
+        }
+    }
+
+    func testUninstallSequenceAndStatus() async throws {
+        let runner = FakeRunner(results: ["list": CommandResult(status: 0, output: "Installed plugins:\n  other@x\n")])
+        let sut = installer(runner: runner)
+        try sut.generator.write(port: 1, token: "t")
+        try await sut.uninstall()
+        XCTAssertEqual(runner.calls, [
+            ["/fake/claude", "plugin", "uninstall", "adalmon-agents@adalmon-local"],
+            ["/fake/claude", "plugin", "marketplace", "remove", "adalmon-local"],
+            ["/fake/claude", "plugin", "list"],
+        ])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sut.generator.root.path), "yerel dosyalar silinir")
+
+        let listed = FakeRunner(results: ["list": CommandResult(status: 0, output: "  adalmon-agents@adalmon-local  1.0.0  enabled\n")])
+        let status = await installer(runner: listed).status()
+        XCTAssertEqual(status, .installed)
+        XCTAssertEqual(listed.calls, [["/fake/claude", "plugin", "list"]])
+        XCTAssertFalse(AgentPluginInstaller.isInstalled(listOutput: "adalmon-agents@other"))
+    }
+}
+
+/// Komutları kaydeder; `results` anahtarı = argümanlarda geçen bir sözcük.
+private final class FakeRunner: CommandRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [[String]] = []
+    private let results: [String: CommandResult]
+
+    init(results: [String: CommandResult] = [:]) { self.results = results }
+
+    private func record(_ call: [String]) { lock.lock(); recorded.append(call); lock.unlock() }
+
+    var calls: [[String]] { lock.lock(); defer { lock.unlock() }; return recorded }
+
+    func run(_ executable: String, _ arguments: [String], timeout: TimeInterval) async -> CommandResult {
+        record([executable] + arguments)
+        for (key, result) in results where arguments.contains(key) { return result }
+        return CommandResult(status: 0, output: "")
+    }
+}

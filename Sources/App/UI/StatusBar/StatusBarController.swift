@@ -27,6 +27,7 @@ final class StatusBarController: NSObject {
             self?.render()
         }
         observeConfig()
+        observeAgents()
         render()
     }
 
@@ -43,6 +44,40 @@ final class StatusBarController: NSObject {
         }
     }
 
+    /// "Ajanlar" öğesi (Claude Code oturumları): bileşen düzeninden bağımsız, kendi anahtarı. Yalnızca özet değişince çizilir.
+    static let agentsKey = "agents"
+    private var lastAgents: AgentSummary?
+
+    private func observeAgents() {
+        withObservationTracking {
+            _ = model.agents.monitor.summary
+            _ = model.prefs.agentsEnabled
+            _ = model.prefs.agentsInMenuBar
+        } onChange: { @Sendable [weak self] in
+            Task { @MainActor in
+                self?.render()
+                self?.observeAgents()
+            }
+        }
+    }
+
+    private var agentsVisible: Bool { model.prefs.agentsEnabled && model.prefs.agentsInMenuBar }
+
+    private func renderAgentsItem() {
+        guard agentsVisible, let button = items[Self.agentsKey]?.button else { lastAgents = nil; return }
+        let summary = model.agents.monitor.summary
+        guard lastAgents != summary || button.image == nil else { return }
+        lastAgents = summary
+        let image = NSImage(systemSymbolName: "person.3.fill", accessibilityDescription: "Claude ajanları")
+        image?.isTemplate = true
+        button.image = image
+        button.imagePosition = summary.working > 0 ? .imageLeading : .imageOnly
+        button.title = summary.working > 0 ? "\(summary.working)" : ""
+        let text = summary.working > 0 ? "Claude ajanları: \(summary.working) çalışıyor" : "Claude ajanları: çalışan yok"
+        button.toolTip = text
+        button.setAccessibilityLabel(text)
+    }
+
     private var appearanceObservers: [String: NSKeyValueObservation] = [:]
     private var appearanceNames: [String: NSAppearance.Name] = [:]
 
@@ -54,7 +89,8 @@ final class StatusBarController: NSObject {
         let values = WidgetValues(model: model)
 
         let groups = StatusItemPlan.groups(for: config)
-        syncItems(keys: groups.map(\.key))
+        syncItems(keys: groups.map(\.key) + (agentsVisible ? [Self.agentsKey] : []))
+        renderAgentsItem()
         let animatedKey = animatedGroupKey(groups, values: values)
         if animatedKey == nil, batteryAnimator.target != nil { batteryAnimator.clear() }
 
@@ -159,6 +195,10 @@ final class StatusBarController: NSObject {
 
     @objc private func clicked(_ sender: NSStatusBarButton) {
         guard let key = items.first(where: { $0.value.button === sender })?.key else { return }
+        if key == Self.agentsKey {
+            onClick(sender, PanelRoute(itemKey: key, kind: .agents))
+            return
+        }
         let config = model.prefs.menuBar.config
         let components = groupComponents[key] ?? []
         var target = components

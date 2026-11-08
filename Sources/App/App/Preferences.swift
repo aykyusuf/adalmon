@@ -47,6 +47,13 @@ final class Preferences {
     /// Cihaz kimliği → gizle / uyarı ayarı.
     var deviceSettings: [String: DeviceSettings] { didSet { Self.store(deviceSettings, "deviceSettings", d) } }
 
+    /// Claude ajanları: yerel olay dinleyicisi (127.0.0.1) yalnızca bu açıkken çalışır. Varsayılan kapalı.
+    var agentsEnabled: Bool { didSet { d.set(agentsEnabled, forKey: "agentsEnabled") } }
+    /// Menü çubuğunda "Ajanlar" öğesi. Varsayılan kapalı.
+    var agentsInMenuBar: Bool { didSet { d.set(agentsInMenuBar, forKey: "agentsInMenuBar") } }
+    /// Dinleyicinin kalıcı rastgele portu; 0 = henüz seçilmedi.
+    var agentsPort: Int { didSet { d.set(agentsPort, forKey: "agentsPort") } }
+
     /// Menü çubuğu widget düzeni (eski show*Item bayrakları yalnızca ilk açılışta buraya taşınır).
     let menuBar: MenuBarConfigStore
     let panel: PanelConfigStore
@@ -88,6 +95,9 @@ final class Preferences {
         deviceMonitoring = d.object(forKey: "deviceMonitoring") as? Bool ?? true
         deviceIncludeWifi = d.object(forKey: "deviceIncludeWifi") as? Bool ?? true
         deviceSettings = Self.load([String: DeviceSettings].self, "deviceSettings", d) ?? [:]
+        agentsEnabled = d.bool(forKey: "agentsEnabled")
+        agentsInMenuBar = d.bool(forKey: "agentsInMenuBar")
+        agentsPort = d.integer(forKey: "agentsPort")
         menuBar = MenuBarConfigStore(defaults: d)
         panel = PanelConfigStore(defaults: d)
     }

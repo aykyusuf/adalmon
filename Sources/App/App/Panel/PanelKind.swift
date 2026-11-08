@@ -2,7 +2,7 @@ import Foundation
 
 /// Menü çubuğu panelinin içeriği: her metriğin kendi paneli ya da eski birleşik panel.
 enum PanelKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    case cpu, gpu, memory, disk, network, temperature, battery, combined
+    case cpu, gpu, memory, disk, network, temperature, battery, agents, combined
 
     var id: String { rawValue }
 
@@ -15,6 +15,7 @@ enum PanelKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .network: "Ağ"
         case .temperature: "Sıcaklık"
         case .battery: "Pil"
+        case .agents: "Claude ajanları"
         case .combined: "Birleşik panel"
         }
     }
@@ -28,6 +29,7 @@ enum PanelKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .network: "arrow.up.arrow.down"
         case .temperature: "thermometer.medium"
         case .battery: "battery.100percent"
+        case .agents: "person.3.fill"
         case .combined: "square.grid.2x2"
         }
     }
