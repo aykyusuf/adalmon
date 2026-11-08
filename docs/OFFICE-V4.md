@@ -35,7 +35,7 @@ ve kamera değişti. Sahne birimi hâlâ 16 pt/karo. Tek doğruluk kaynağı Swi
 
 Anahtarlar: bilgisayar adları `OfficeArt.computerName` (`imac_{blue,green,pink,silver}`, `macbook_{silver,gray}` × `_off|_on1|_on2|_on3`, 64×128 px);
 `lamp` (8×10 mantıksal); ışıklar `vglow_bulb` 64×64, `vglow_pool` 40×24, `vglow_screen` 24×16, `vglow_moon` 24×40 (tepe alfa 1, sprite alfası ile kısılır, additive).
-Rol aksesuarı, fincan, zzz, mop, koli, balonlar ve karakterler bu turda piksel kalır (`v3.generated`, `characters/`).
+Karakterler, aksesuarlar, balonlar ve zzz/mop/fincan/koli artık vektördür (aşağıdaki "Karakter atlası"); piksel tema `v3.generated` ve `characters/` ile aynen kalır.
 Oda arka planı `backgrounds[tier]`: `bounds` başlangıcından, boyut = (kat genişliği+2)·16·4 × (yükseklik+2)·16·4; içinde zemin, halı, duvar, pencereler,
 gün ışığı hüzmesi ve pişirilebilir mobilya (duvar öğeleri, bank, yönetici sandalyesi, kahve tezgâhı+makine) vardır; dinamik mobilya (`DESK_FRONT`,
 `SMALL_TABLE_FRONT`, `PLANT`, `PLANT_2`, bilgisayarlar) ayrı sprite olarak (`furniture`/`generated`) çizilir; z sırası v3 ile aynı.
@@ -85,3 +85,75 @@ yakınlaşma `focusScale` (12 birim boşluk). Çok odada ızgara seçimi (`Offic
 Oda başına zemin+duvar+sabit mobilya TEK doku; kademe (tier) başına **bir kez** pişirilir, tüm odalar paylaşır (`OfficeAssets.background(_:theme:)`).
 Boyut (4x RGBA8): s2/s4 640×768 (1.9 MB), s6 832×768 (2.4 MB), s8/s12 832×1024 (3.3 MB), s16 832×1280 (4.1 MB); 6 kademe toplam ≈ 17 MB.
 Düğüm sayısı piksel temayla aynı (gündüz); gece vektörde oda başına +≤ 2·pencere+1 düğüm. 12 fps üst sınırı ve duraklatma kuralları değişmedi.
+
+## Karakter atlası (`v3.vector.characters`)
+
+Kaynak: `OfficeVectorCharacter*.swift` (parametrik CoreGraphics figürü; `OfficeVectorUI.swift` etiket/balon). Tema `vector` iken macOS sahnesi
+karakteri (kıyafet rengi, model + rol aksesuarı, kapüşon/yelek/kravat/önlük) **tek dokuya pişirir**; ek düğüm yoktur. Tarayıcı için aynı çizim
+atlas olarak gelir.
+
+**Kare ve ölçek.** Mantıksal kare `frameWidth × frameHeight` = **24×32** (16 genişlik figür + her yanda `padX` = 4 boşluk; kolu/aksesuar/koli taşabilsin);
+4x ile hücre **96×128 px** (`cell`). Sprite, ayak ortası alt-orta (anchor 0.5, 0) hizalı; sahne/zoom/z-sırası/boy ölçeği (`small` → `spriteScale`) piksel
+tema ile aynı. Oturan karakter `sitDrop` = 3 mantıksal birim aşağı çizilir (ayakta/tahtada/voltada 0). Ayak gölgesi karenin içindedir.
+
+**Yön ve kare dizini.** `directions` = `["down","up","right"]` (satır sırası); **sol = sağ karenin yatay yansıması** (hücre merkezi etrafında `scaleX(-1)`).
+Kare dizinleri (sütun) — 0-6 piksel sheet ile aynı, 7+ vektöre özel:
+
+| dizin | poz | | dizin | poz |
+|---|---|---|---|---|
+| 0, 1, 2 | yürüme (`walkCycle` = 0,1,2,1; 1 = ayakta) | | 11 | esneme (kollar yukarı) |
+| 3, 4 | yazma (dönüşümlü kollar) | | 12 | uyuklama (baş eğik; `zzz` aksesuarı ayrı) |
+| 5, 6 | okuma (kitap elde) | | 13, 14 | kahve (fincan elde / ağızda) |
+| 7, 8 | tahtada yazma (sağ kol yukarı, yön `up`) | | 15, 16, 17 | koli taşıma (yürüme 0,1,2) |
+| 9, 10 | el kaldırma (izin bekleme; dönüşümlü sallanır) | | | |
+
+`bob[kare]` = baş/gövde zıplaması (mantıksal birim, + aşağı; yürüme/taşıma kareleri 0.45, uyuklama 0.9).
+macOS kullanımı: izin bekleme (`!` balonu) → 9,10; yönetici tahtada yazma → 7,8 (aşağı bakarken 1); `.coffee` boşta → 13↔14; esneme → 11; zzz → 12;
+taşıyıcı → 15-17 (koli gövdeye pişirilmiş); temizlikçi önlüklü yürüme + `mop` dokusu (7×16, anchor alt-orta, x +7, ±0.18 rad sallanır).
+
+**Atlas.**
+```jsonc
+"characters": {
+  "scale": 4, "frameWidth": 24, "frameHeight": 32, "figureWidth": 16, "padX": 4, "cell": [96, 128],
+  "frameCount": 18, "frameNames": ["walk0","stand","walk2","type0","type1","read0","read1","board0","board1","raise0","raise1","yawn","sleep","coffee0","coffee1","carry0","carry1","carry2"],
+  "walkCycle": [0,1,2,1], "directions": ["down","up","right"], "sitDrop": 3, "bob": [...18],
+  "frames": {"stand":1, "walk":[0,1,2], "typing":[3,4], "reading":[5,6], "boardWrite":[7,8], "raiseHand":[9,10], "yawn":11, "sleep":12, "coffee":[13,14], "carry":[15,16,17]},
+  "looks": [{"index":0,"skin":"#EFC29E","hair":"#3A2A22","hairStyle":"short","pants":"#394868","shoe":"#F6F6F8"}, ...6],
+  "neutralShirt": "#F2F2F4", "shirtTint": "color = atlas.rgb * lerp(white, shirt, mask.gray) ...",
+  "atlas": { "image": "data:...png" /*RGBA*/, "mask": "data:...png" /*8-bit gri*/, "width": 1728, "height": 2304,
+             "layout": "x = frame * w, y = (look * 3 + directionRow) * h",
+             "index": [{"look":0,"direction":0,"frame":0,"x":0,"y":0,"w":96,"h":128}, ... 324 giriş] },
+  "accessories": { "image": "data:...png", "width": 288, "height": 2304,
+                   "index": [{"name":"crown","kind":"model","direction":0,"x":0,"y":0,"w":96,"h":128}, ...] },
+  "models": [{"badge":"opus","look":2,"shirt":"#B052DE","accessory":"crown","small":false}, ...],
+  "roles":  [{"key":"reviewer","shirt":"#E04848","accessory":"glasses","place":"face","hoodie":false,"vest":false,"small":false}, ...],
+  "props":  [{"key":"cleaner","shirt":"#2673FA","look":1,"accessory":"apron"}, {"key":"carrier","shirt":"#E68C26","look":1,"accessory":"hardhat"}],
+  "bindings": {"head":[12,11], "face":[12,11], "chest":[12,20], "hand":[18,22], "unit":"logical, cell origin top-left, y down, before bob"}
+}
+```
+* **Look → model:** `appearance[badge].character` (Opus 2, Sonnet 0, Haiku 4, Fable 5, bilinmeyen 3; 1 = yardımcı/yedek). Alt ajanda look model rozetinden,
+  kıyafet rengi (`shirt`) rolden gelir (`models[].shirt` yöneticide model rengi).
+* **Gömlek rengi:** atlas nötr gömlekle (`#F2F2F4`) çizilir; `mask` düzlemi (beyaz = gömlek + kollar + kapüşon) ile hücre rengi `rgb * lerp(white, shirt, mask)`
+  çarpılır (macOS gömleği doğrudan `shirt` ile pişirir; web çarpımı aynı görünümü yaklaşık verir). Alfa `atlas.image`'dan alınır.
+* **Aksesuarlar:** `accessories` atlası (model: crown/cap/star/sprout; rol: binoculars/book/hood/headphones/glasses/magnifier/vest/compass/clipboard/tie/ruler/tag;
+  yardımcı: hardhat/apron) karakterle **aynı hücre boyutunda, ayakta (kare 1) pozunda** çizilmiş saydam kaplamalardır: karakter karesinin üstüne aynı konumda
+  çizilir; zıplayan karelerde `bob` kadar kaydırılır. Baş/yüz öğeleri kafayı, `chest` (yelek, kravat, etiket, binoküler) gövdeyi izler; **el öğeleri** (kitap, pano,
+  pusula, büyüteç, cetvel) her pozda sağ kalçanın yanındadır. Kapüşonun (`hoodie: true`) kafa arkası parçası kaplamada yoktur: web için `shirt` + `mask` yeterli,
+  yaka/cep ayrıntısı macOS'a özgüdür. Yelek (`vest`): gömlek açık krem, `shirt` rengi yelektir.
+* **Boyut:** `atlas.image` ≈ 1.28 MB, `mask` ≈ 0.17 MB, `accessories` ≈ 0.05 MB (data URI toplamı ≈ 1.5 MB); `/v1/layout` yalnızca özellik açılırken bir kez üretilir.
+* **Gece:** macOS yöneticisi/karakteri geceye özel doku (`nightGrade`: renk, sahne multiply çarpanının tersiyle açılır). Web `lighting.multiplyColor` uygularsa
+  karakter hücresini aynı çarpanın 0.8 üssünün tersi ile aydınlatmalı (ya da çarpan örtüsünün altında bırakıp gömlek renklerini doygun tutmalı).
+
+### Etiket / balon / başlık (macOS vektör teması)
+
+* Ad etiketi: tek 4x yuvarlak "hap" dokusu (genişliğe göre üretilir, gölgeli), solda rol/model renk noktası, sistem yazısı (SF, yarı kalın, 10 pt ekran
+  eşdeğeri); gündüz açık yüzey (beyaz α .92, ince koyu kenar), gece koyu cam (`#1B2132` α .9, ince beyaz kenar). Zoom'dan bağımsız boyut (düğüm ölçeği 1/zoom).
+* Konuşma balonu: beyaz yuvarlak gövde (14 pt) + 4 pt kuyruk + yumuşak gölge, koyu gri metin; `OfficeTextBubble.height`/`tailX` temaya göre (vektör 18 / 4);
+  `resolveBubbleOverlaps` aynıdır. `!` ve `…` balonları (`bubble_alert`, `bubble_think`, 11×12 / 11×10) aynı dilde vektör dokulardır.
+* Oda başlığı: yuvarlak kart (gündüz açık, gece koyu slate), kalın ad, renkli model rozeti, oturum renginde ince alt çizgi; "+N" rozeti yuvarlak hap.
+* Vektör yardımcı dokular `v3.vector.generated` içinde de vardır: `zzz` 9×8, `mop` 7×16, `cup` 6×5, `box` 10×7, `bubble_alert`, `bubble_think` (mantıksal boyut / 4x).
+
+### Bellek / performans
+
+Kareler tembel üretilir ve `spec.key|yön|kare[|n]` anahtarıyla bellekte tutulur (RGBA8 96×128 = 48 KB/kare). 10×10 senaryosunda (~100 karakter, gündüz + gece)
+286 kare ≈ 13 MB. Düğüm sayısı piksele göre azalır (karakter başına aksesuar/rol düğümü yok); 12 fps ve duraklatma kuralları değişmedi.

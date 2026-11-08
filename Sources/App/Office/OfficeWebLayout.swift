@@ -137,6 +137,7 @@ enum OfficeWebLayout {
             "boardWriteOrigin": [OfficeVectorArt.boardWriteOrigin.x, OfficeVectorArt.boardWriteOrigin.y],
             "windowDay": uri(OfficeVectorArt.windowImage(night: false)) ?? "", "windowNight": uri(OfficeVectorArt.windowImage(night: true)) ?? "",
             "backgrounds": backgrounds,
+            "characters": OfficeVectorCharacter.atlasJSON(),
             "lighting": ["multiplyColor": OfficeLightParams.duskFactor, "washColor": lp.overlayRGB, "washAlpha": lp.overlayAlpha, "bulbAlpha": lp.bulbAlpha,
                           "poolAlpha": lp.poolAlpha, "boardAlpha": lp.boardAlpha, "screenAlpha": lp.screenAlpha, "windowAlpha": lp.windowAlpha] as [String: Any],
         ]

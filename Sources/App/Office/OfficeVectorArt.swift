@@ -124,7 +124,7 @@ enum OfficeVectorArt {
             out.append(OfficeArt.computerName(pc, frame: nil))
             for f in 0..<3 { out.append(OfficeArt.computerName(pc, frame: f)) }
         }
-        return out + ["lamp"] + glowSpecs.map(\.name)
+        return out + ["lamp"] + glowSpecs.map(\.name) + OfficeVectorUI.overlayNames
     }
 
     static func hasArt(_ name: String) -> Bool { artNames.contains(name) }
@@ -132,6 +132,7 @@ enum OfficeVectorArt {
     static func art(_ name: String) -> CGImage? {
         if let g = glowSpecs.first(where: { $0.name == name }) { return glow(g) }
         if name == "lamp" { return render(8, 10) { drawLamp($0) } }
+        if OfficeVectorUI.overlayNames.contains(name) { return OfficeVectorUI.overlay(name) }
         for pc in OfficeArt.allComputers {
             if name == OfficeArt.computerName(pc, frame: nil) { return computer(pc, frame: nil) }
             for f in 0..<3 where name == OfficeArt.computerName(pc, frame: f) { return computer(pc, frame: f) }
@@ -143,6 +144,7 @@ enum OfficeVectorArt {
     static func artSize(_ name: String) -> CGSize? {
         if let g = glowSpecs.first(where: { $0.name == name }) { return CGSize(width: g.logicalW, height: g.logicalH) }
         if name == "lamp" { return CGSize(width: 8, height: 10) }
+        if let s = OfficeVectorUI.overlaySize(name) { return s }
         return hasArt(name) ? CGSize(width: 16, height: 32) : nil
     }
 

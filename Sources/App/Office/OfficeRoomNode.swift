@@ -2,19 +2,28 @@ import SpriteKit
 
 /// Karakter başına tek metin balonu: 9-dilimli arka plan sprite'ı + tek SKLabelNode (yeniden kullanılır; metin değişmedikçe dokunulmaz).
 /// Ekran sabit boyutludur (`node` ölçeği 1/zoom); kuyruk ucu `node` orijinindedir. `flipped`: gövde sola uzanır (odanın sağ yarısı).
+/// Vektör tema: yuvarlak beyaz balon + yumuşak gölge, sistem yazısı; `height`/`tailX` temaya göre.
 @MainActor
 final class OfficeTextBubble {
-    /// Ekran pikseli: 12 gövde + 2 kuyruk.
+    /// Ekran pikseli (piksel tema): 12 gövde + 2 kuyruk.
     static let height: CGFloat = 14
     let node = SKNode()
     let background: SKSpriteNode
-    let label = SKLabelNode(fontNamed: "HelveticaNeue-Bold")
+    let label: SKLabelNode
+    let theme: OfficeTheme
     private(set) var text = ""
     private(set) var width: CGFloat = 0
     private(set) var flipped = false
 
-    init() {
-        background = SKSpriteNode(color: .clear, size: CGSize(width: 22, height: Self.height))
+    /// Kuyruk ucundan balon üstüne yükseklik ve kuyruk ucunun gövde sol kenarına uzaklığı (ekran pt).
+    var height: CGFloat { theme == .vector ? OfficeVectorUI.bubbleHeight : Self.height }
+    var tailX: CGFloat { theme == .vector ? OfficeVectorUI.bubbleTipX : OfficePixelArt.speechBubbleTailX }
+
+    init(theme: OfficeTheme = .pixel) {
+        self.theme = theme
+        let vec = theme == .vector
+        label = vec ? SKLabelNode() : SKLabelNode(fontNamed: "HelveticaNeue-Bold")
+        background = SKSpriteNode(color: .clear, size: CGSize(width: 22, height: vec ? CGFloat(OfficeVectorUI.bubbleTexH) : Self.height))
         background.anchorPoint = .zero
         label.fontSize = 9
         label.fontColor = SKColor(white: 0.13, alpha: 1)
@@ -29,6 +38,19 @@ final class OfficeTextBubble {
 
     func setText(_ value: String, assets: OfficeAssets) {
         text = value
+        if theme == .vector {
+            label.attributedText = OfficeVectorUI.text(value, size: 9.5, color: NSColor(srgbRed: 0.17, green: 0.18, blue: 0.22, alpha: 1))
+            width = max(OfficeVectorUI.bubbleMinBody, (label.frame.width + 14).rounded(.up))
+            width = width.rounded(.up)
+            if let texture = assets.bubbleBodyTexture(bodyWidth: Int(width)) {
+                background.texture = texture
+                background.color = .white
+                background.colorBlendFactor = 0
+            }
+            background.size = CGSize(width: width + 2 * OfficeVectorUI.bubblePad, height: CGFloat(OfficeVectorUI.bubbleTexH))
+            layout()
+            return
+        }
         label.text = value
         width = max(18, (label.frame.width + 10).rounded(.up))
         if let texture = assets.speechBubbleTexture(width: Int(width)) {
@@ -47,8 +69,14 @@ final class OfficeTextBubble {
     }
 
     private func layout() {
-        let tail = OfficePixelArt.speechBubbleTailX
         background.xScale = flipped ? -1 : 1
+        if theme == .vector {
+            let tip = OfficeVectorUI.bubblePad + OfficeVectorUI.bubbleTipX
+            background.position = CGPoint(x: flipped ? tip : -tip, y: -OfficeVectorUI.bubblePad)
+            label.position = CGPoint(x: flipped ? OfficeVectorUI.bubbleTipX - width / 2 : width / 2 - OfficeVectorUI.bubbleTipX, y: 11)
+            return
+        }
+        let tail = OfficePixelArt.speechBubbleTailX
         background.position = CGPoint(x: flipped ? tail : -tail, y: 0)
         label.position = CGPoint(x: flipped ? tail - width / 2 : width / 2 - tail, y: 8)
     }
@@ -99,19 +127,32 @@ final class OfficeActor {
     var idleVariant: OfficeIdleVariant?
     var idleOverlay: SKNode?
     var idleCount = 0
+    /// Vektör: ad etiketi parçaları (gece/gündüz stili değişince yeniden boyanır).
+    var labelPill: SKSpriteNode?
+    var labelName: SKLabelNode?
+    var labelTitle = ""
+    var labelBodyW = 0
+    /// Taşıyıcı: koli vektör temada gövdeye pişirilmiş "taşıma" karelerini kullanır.
+    var carryingBox = false
 
     var isExecutive: Bool { seat.kind == .executive }
     /// Ayakta (tahta önünde ya da voltada): oturma çökmesi yok.
     var upright: Bool { atBoard || strolling }
 
-    init(member: OfficeMember, appearance: OfficeAppearance, seat: OfficeSeat, texture: SKTexture) {
+    init(member: OfficeMember, appearance: OfficeAppearance, seat: OfficeSeat, texture: SKTexture, theme: OfficeTheme = .pixel) {
         self.member = member; self.appearance = appearance; self.seat = seat; self.tile = seat.tile
         behavior = OfficeBehavior.behavior(for: member.status, atDesk: seat.kind == .desk, executive: seat.kind == .executive)
         body = SKSpriteNode(texture: texture)
         body.anchorPoint = CGPoint(x: 0.5, y: 0)
-        body.size = CGSize(width: 16, height: 32)
-        body.color = SKColor(red: appearance.tint.r, green: appearance.tint.g, blue: appearance.tint.b, alpha: 1)
-        body.colorBlendFactor = appearance.tintBlend
+        if theme == .vector {
+            // Vektör: kıyafet rengi ve aksesuar dokuya pişirilmiş (16 genişlik figür + 4'er kenar boşluğu); çalışma zamanı tonu yok.
+            body.size = CGSize(width: CGFloat(OfficeVectorCharacter.canvasW), height: CGFloat(OfficeVectorCharacter.canvasH))
+            body.colorBlendFactor = 0
+        } else {
+            body.size = CGSize(width: 16, height: 32)
+            body.color = SKColor(red: appearance.tint.r, green: appearance.tint.g, blue: appearance.tint.b, alpha: 1)
+            body.colorBlendFactor = appearance.tintBlend
+        }
         root.addChild(body)
     }
 
@@ -226,6 +267,19 @@ final class OfficeRoomNode {
 
     private func yDown(_ t: OfficeTile) -> CGFloat { CGFloat((t.row + 1) * 16) }
 
+    /// Tema'ya göre karakter karesi (piksel: sheet dilimi; vektör: tembel üretilen parametrik kare).
+    private func tex(_ a: OfficeActor, _ d: OfficeCharacterSheet.Direction, _ frame: Int) -> SKTexture {
+        assets.characterTexture(for: a.appearance, direction: d, frame: frame, theme: theme, night: nightWanted)
+    }
+
+    /// Vektör gece: çarpan örtüsü karakteri de karartır; hafif sıcak ton karışımı ile okunur kalır.
+    private func nightLift(_ a: OfficeActor) {
+        guard theme == .vector else { return }
+        // Gece rengi dokuya pişirilir (`OfficeVectorCharacter.nightGrade`); duran karakterin dokusu yenilenir.
+        a.body.colorBlendFactor = 0
+        if !a.moving, !a.away, !a.leaving, a.idleVariant == nil, actors[a.member.id] === a, !a.hopping { applyPose(a) }
+    }
+
     // MARK: Kurulum
 
     private func buildWorld() {
@@ -306,7 +360,84 @@ final class OfficeRoomNode {
         return "…"
     }
 
+    private static func ns(_ hex: UInt32, _ a: CGFloat = 1) -> NSColor {
+        NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: a)
+    }
+
+    /// Vektör başlık kartı: yuvarlak köşeli açık/koyu kart, kalın ad, renkli model rozeti, oturum renginde ince alt çizgi.
+    private func layoutPlaqueVector() {
+        let z = zoom
+        plaque.setScale(1 / z)
+        plaque.position = CGPoint(x: 2, y: CGFloat(kit.worldHeight) + 3)
+        let night = nightWanted
+        let panel = OfficeVectorUI.cardPanel(night: night)
+        let pad = panel.pad
+        let height = CGFloat(panel.h) - 2 * pad
+        let placeholder = title == nil
+        let look = badge.map { OfficeAppearance.appearance(for: $0) }
+        let g = OfficeAppearance.groupColors[group % OfficeAppearance.groupColors.count]
+        let maxW = CGFloat(kit.worldWidth) * z - 6 - (overflowNode == nil ? 0 : overflowWidth + 6)
+        let ink = Self.ns(night ? 0xEEF1F8 : 0x1E222B)
+
+        var badgeW: CGFloat = 0
+        if let look {
+            plaqueBadge.attributedText = OfficeVectorUI.text(look.badgeText, size: 8.5, weight: .bold, color: .white)
+            badgeW = plaqueBadge.frame.width + 11
+        }
+        let badgeSpace: CGFloat = look == nil ? 0 : badgeW + 6
+        let textMax = max(24, maxW - 18 - badgeSpace)
+        var shown = title ?? Self.placeholderTitle
+        plaqueName.attributedText = OfficeVectorUI.text(shown, size: 12, weight: .bold, color: ink)
+        if plaqueName.frame.width > textMax {
+            var chars = Array(shown)
+            while chars.count > 1 {
+                chars.removeLast()
+                let t = String(chars) + "…"
+                plaqueName.attributedText = OfficeVectorUI.text(t, size: 12, weight: .bold, color: ink)
+                shown = t
+                if plaqueName.frame.width <= textMax { break }
+            }
+        }
+        plaqueName.attributedText = OfficeVectorUI.text(shown, size: 12, weight: .bold, color: placeholder ? Self.ns(night ? 0xA7AEBF : 0x7A8190) : ink)
+        let nameW = plaqueName.frame.width
+        let width = 9 + nameW + 9 + badgeSpace
+        let bodyW = Int(width.rounded(.up))
+        if let tex = assets.panelTexture(panel, bodyWidth: bodyW) {
+            plaquePill.texture = tex
+            plaquePill.color = .white; plaquePill.colorBlendFactor = 0
+        }
+        plaquePill.size = CGSize(width: CGFloat(bodyW) + 2 * pad, height: CGFloat(panel.h))
+        plaquePill.position = CGPoint(x: -pad, y: -pad)
+        plaquePill.alpha = placeholder ? 0.7 : 1
+        plaqueName.horizontalAlignmentMode = .left
+        plaqueName.position = CGPoint(x: 9, y: height / 2 + 1.6)
+        let stripe = placeholder ? OfficeRGB(r: 0.5, g: 0.5, b: 0.55) : g
+        let stripeW = Int(max(8, width - 18).rounded(.up))
+        plaqueStripe.texture = assets.solidTexture(width: stripeW, height: 2)
+        plaqueStripe.colorBlendFactor = 1
+        plaqueStripe.color = SKColor(red: stripe.r, green: stripe.g, blue: stripe.b, alpha: 1)
+        plaqueStripe.size = CGSize(width: CGFloat(stripeW), height: 2)
+        plaqueStripe.position = CGPoint(x: 9, y: 1.4)
+        if let look {
+            plaqueBadgeBG.isHidden = false; plaqueBadge.isHidden = false
+            plaqueBadgeBG.texture = assets.solidTexture(width: Int(badgeW.rounded(.up)), height: 13)
+            plaqueBadgeBG.colorBlendFactor = 1
+            plaqueBadgeBG.color = SKColor(red: look.tint.r * 0.82, green: look.tint.g * 0.82, blue: look.tint.b * 0.82, alpha: 1)
+            plaqueBadgeBG.size = CGSize(width: badgeW.rounded(.up), height: 13)
+            plaqueBadgeBG.position = CGPoint(x: 9 + nameW + 6, y: (height - 13) / 2 + 1.4)
+            plaqueBadge.horizontalAlignmentMode = .center
+            plaqueBadge.position = CGPoint(x: 9 + nameW + 6 + badgeW / 2, y: height / 2 + 1.4)
+        } else {
+            plaqueBadgeBG.isHidden = true; plaqueBadge.isHidden = true
+        }
+        if let o = overflowNode {
+            o.setScale(1 / z)
+            o.position = CGPoint(x: CGFloat(kit.worldWidth) - 2, y: CGFloat(kit.worldHeight) + 3)
+        }
+    }
+
     private func layoutChrome() {
+        if theme == .vector { layoutPlaqueVector(); return }
         let z = zoom
         plaque.setScale(1 / z)
         plaque.position = CGPoint(x: 2, y: CGFloat(kit.worldHeight) + 3)
@@ -360,10 +491,16 @@ final class OfficeRoomNode {
             text.fontSize = 12
             text.text = "+\(n)"
             text.fontColor = .white
+            if theme == .vector { text.attributedText = OfficeVectorUI.text("+\(n)", size: 12, weight: .bold, color: .white) }
             text.verticalAlignmentMode = .center
             text.horizontalAlignmentMode = .right
             let w = text.frame.width + 14
             let pill = SKSpriteNode(color: SKColor(red: 0.86, green: 0.24, blue: 0.2, alpha: 0.95), size: CGSize(width: w, height: 20))
+            if theme == .vector, let solid = assets.solidTexture(width: Int(w.rounded(.up)), height: 21) {
+                pill.texture = solid
+                pill.colorBlendFactor = 1; pill.color = SKColor(red: 0.89, green: 0.30, blue: 0.27, alpha: 1)
+                pill.size = CGSize(width: w.rounded(.up), height: 21)
+            }
             pill.anchorPoint = CGPoint(x: 1, y: 0)
             pill.zPosition = 0
             text.position = CGPoint(x: -7, y: 11)
@@ -404,6 +541,7 @@ final class OfficeRoomNode {
         a.labelBuilt = true
         a.label.zPosition = 6_000
         a.root.addChild(a.label)
+        if theme == .vector { buildVectorLabel(a); return }
         let name = SKLabelNode(fontNamed: "HelveticaNeue-Bold")
         name.fontSize = 9
         // Yönetici (ana ajan) etiketi ayrı görünür: "★ ad".
@@ -432,6 +570,51 @@ final class OfficeRoomNode {
         }
         a.label.setScale(1 / zoom)
         positionAccessoryAndBubble(a)
+    }
+
+    /// Vektör etiket: tek yuvarlak "hap" (9-dilim doku, gölgeli), solda rol/model renk noktası, sistem yazısı (yarı kalın).
+    private func buildVectorLabel(_ a: OfficeActor) {
+        a.labelTitle = a.isExecutive ? "★ " + Self.truncated(a.member.label, 9) : (a.appearance.role.map { Self.truncated($0.name, 22) } ?? Self.truncated(a.member.label, 11))
+        let pill = SKSpriteNode(color: .white, size: CGSize(width: 30, height: 21))
+        pill.anchorPoint = CGPoint(x: 0.5, y: 0)
+        pill.zPosition = 0
+        let name = SKLabelNode()
+        name.verticalAlignmentMode = .center
+        name.horizontalAlignmentMode = .left
+        name.zPosition = 2
+        a.labelPill = pill; a.labelName = name
+        styleLabel(a)
+        let w = (name.frame.width + 25).rounded(.up)
+        let pad = OfficeVectorUI.labelPanel(night: false).pad
+        a.labelBodyW = Int(w)
+        styleLabel(a)
+        pill.size = CGSize(width: w + 2 * pad, height: 21)
+        pill.position = CGPoint(x: 0, y: -pad + 1.5)
+        name.position = CGPoint(x: -w / 2 + 17, y: 9.3)
+        let c = a.appearance.role?.tint ?? a.appearance.tint
+        let dot = SKSpriteNode(color: SKColor(red: c.r, green: c.g, blue: c.b, alpha: 1), size: CGSize(width: 5.5, height: 5.5))
+        if let solid = assets.solidTexture(width: 6, height: 6) { dot.texture = solid }
+        dot.colorBlendFactor = 1
+        dot.position = CGPoint(x: -w / 2 + 10.5, y: 9.3)
+        dot.zPosition = 1
+        for n in [pill, dot, name] as [SKNode] { a.label.addChild(n) }
+        a.label.setScale(1 / zoom)
+        positionAccessoryAndBubble(a)
+    }
+
+    /// Etiket stili (gündüz açık yüzey / gece koyu cam).
+    private func styleLabel(_ a: OfficeActor) {
+        guard let pill = a.labelPill, let name = a.labelName else { return }
+        let night = nightWanted
+        let panel = OfficeVectorUI.labelPanel(night: night)
+        if a.labelBodyW > 0, let t = assets.panelTexture(panel, bodyWidth: a.labelBodyW) { pill.texture = t }
+        name.attributedText = OfficeVectorUI.text(a.labelTitle, size: 10, weight: .semibold, color: Self.ns(night ? 0xEEF1F8 : 0x1F2330))
+    }
+
+    private func restyleChrome() {
+        guard theme == .vector else { return }
+        for a in actors.values where a.labelBuilt { styleLabel(a) }
+        layoutPlaqueVector()
     }
 
     static func truncated(_ s: String, _ n: Int) -> String { s.count <= n ? s : String(s.prefix(n - 1)) + "…" }
@@ -468,7 +651,8 @@ final class OfficeRoomNode {
     private func spawn(_ m: OfficeMember, seat: OfficeSeat, animated: Bool, now: Date) {
         let look = OfficeAppearance.appearance(for: m)
         let actor = OfficeActor(member: m, appearance: look, seat: seat,
-                                texture: assets.characterTexture(index: look.characterIndex, direction: seat.facing, frame: 1))
+                                texture: assets.characterTexture(for: look, direction: seat.facing, frame: 1, theme: theme, night: nightWanted), theme: theme)
+        nightLift(actor)
         actor.idleSince = now
         actors[m.id] = actor
         evaluateBubble(actor, now: now)
@@ -758,7 +942,7 @@ final class OfficeRoomNode {
         }
         let tb: OfficeTextBubble
         if let existing = a.textBubble { tb = existing } else {
-            tb = OfficeTextBubble()
+            tb = OfficeTextBubble(theme: theme)
             tb.node.zPosition = 5_500
             a.root.addChild(tb.node)
             a.textBubble = tb
@@ -784,17 +968,22 @@ final class OfficeRoomNode {
     private func applyPose(_ a: OfficeActor) {
         stopIdle(a)
         a.body.removeAction(forKey: "pose")
-        let frames: [Int]
+        var frames: [Int]
         switch a.behavior.pose {
         case .typing: frames = [OfficeCharacterSheet.frameIndex(.typing(0)), OfficeCharacterSheet.frameIndex(.typing(1))]
         case .reading: frames = [OfficeCharacterSheet.frameIndex(.reading(0)), OfficeCharacterSheet.frameIndex(.reading(1))]
         case .sitting: frames = [OfficeCharacterSheet.frameIndex(.stand)]
         }
-        let tex = frames.map { assets.characterTexture(index: a.appearance.characterIndex, direction: a.direction, frame: $0) }
+        if theme == .vector {
+            // Vektör ek pozlar: izin beklerken el kaldırma (9-10); tahtada yazarken kol yukarı yazma (7-8; aşağı bakarken ayakta).
+            if a.behavior.bubble == .alert { frames = [9, 10] }
+            else if a.atBoard && a.behavior.pose == .typing { frames = a.direction == .up ? [7, 8] : [OfficeCharacterSheet.frameIndex(.stand)] }
+        }
+        let tex = frames.map { self.tex(a, a.direction, $0) }
         a.body.xScale = (OfficeCharacterSheet.mirrorsHorizontally(a.direction) ? -1 : 1) * abs(a.body.xScale)
         a.body.texture = tex[0]
         a.body.position.y = a.upright ? 0 : -Self.sitDrop   // tahtada/voltada ayakta (oturma çökmesi yok)
-        if a.behavior.pose != .sitting {
+        if a.behavior.pose != .sitting && tex.count > 1 {
             // Okuma (izin bekleme) yavaş, yazma hızlı.
             let t = a.behavior.pose == .typing ? 0.28 : 0.6
             a.body.run(.repeatForever(.animate(with: tex, timePerFrame: t, resize: false, restore: false)), withKey: "pose")
@@ -810,10 +999,11 @@ final class OfficeRoomNode {
     private func setBubble(_ a: OfficeActor) {
         a.bubble?.removeFromParent()
         a.bubble = nil
-        guard let kind = a.behavior.bubble, let tex = assets.bubbleTexture(kind) else { return }
+        guard let kind = a.behavior.bubble, let tex = assets.bubbleTexture(kind, theme: theme) else { return }
         // Yakınken "…" yerine "Düşünüyor…" metin balonu; 10 sn olay yoksa hiçbir düşünme balonu kalmaz.
         if kind == .thinking && (bubblesOn || a.bubbleExpired) { return }
         let node = SKSpriteNode(texture: tex)
+        if theme == .vector, let size = OfficeVectorUI.overlaySize(kind == .alert ? "bubble_alert" : "bubble_think") { node.size = size }
         node.anchorPoint = CGPoint(x: 0, y: 0)
         node.zPosition = 5_000
         a.root.addChild(node)
@@ -873,28 +1063,29 @@ final class OfficeRoomNode {
     /// çakışma kalmayana dek. Soldan sağa sırayla yerleştirilir (sol balon sabit, sağdaki kayar).
     private func resolveBubbleOverlaps() {
         let z = zoom
-        let tail = OfficePixelArt.speechBubbleTailX / z
-        let step = (OfficeTextBubble.height + 1) / z
         var placed: [CGRect] = []
         let shown = actors.values.filter { a in a.textBubble.map { !$0.node.isHidden } ?? false }
             .sorted { ($0.root.position.x, $0.root.position.y) < ($1.root.position.x, $1.root.position.y) }
         for a in shown {
             guard let tb = a.textBubble else { continue }
+            let tail = tb.tailX / z
+            let step = (tb.height + 1) / z
             let labelSpace: CGFloat = a.labelBuilt && !a.label.isHidden ? 16 / z : 1 / z
             let base = labelY(a) + labelSpace
             let w = tb.width / z, x = a.root.position.x
             let minX = tb.flipped ? x + tail - w : x - tail
             var lift: CGFloat = 0
             for _ in 0..<8 {
-                let rect = CGRect(x: minX, y: a.root.position.y + base + lift, width: w, height: OfficeTextBubble.height / z).insetBy(dx: -1 / z, dy: -0.5 / z)
+                let rect = CGRect(x: minX, y: a.root.position.y + base + lift, width: w, height: tb.height / z).insetBy(dx: -1 / z, dy: -0.5 / z)
                 if placed.contains(where: { $0.intersects(rect) }) { lift += step } else { break }
             }
             tb.node.position = CGPoint(x: 0, y: base + lift)
-            placed.append(CGRect(x: minX, y: a.root.position.y + base + lift, width: w, height: OfficeTextBubble.height / z))
+            placed.append(CGRect(x: minX, y: a.root.position.y + base + lift, width: w, height: tb.height / z))
         }
     }
 
     private func buildAccessory(_ a: OfficeActor) {
+        guard theme == .pixel else { return }   // vektör: model/rol aksesuarı karaktere pişirilmiş (ek düğüm yok)
         if let role = a.appearance.role, a.roleAccessory == nil, let name = OfficeArt.roleAccessoryName(role.accessory), let tex = assets.artTexture(name) {
             let n = SKSpriteNode(texture: tex)
             n.size = tex.size()
@@ -931,7 +1122,8 @@ final class OfficeRoomNode {
         var actions: [SKAction] = []
         for (from, to) in zip(route, route.dropFirst()) {
             let dir = direction(from: from, to: to)
-            let walk = (0..<4).map { assets.characterTexture(index: a.appearance.characterIndex, direction: dir, frame: OfficeCharacterSheet.frameIndex(.walk($0))) }
+            let base = theme == .vector && a.carryingBox ? 15 : 0
+            let walk = (0..<4).map { tex(a, dir, base + OfficeCharacterSheet.frameIndex(.walk($0))) }
             let z = max(yDown(from), yDown(to)) + 0.5
             actions.append(.run { [weak a, weak self] in
                 guard let a else { return }
@@ -1050,7 +1242,7 @@ final class OfficeRoomNode {
         run(route: [a.tile] + there, for: a) { [weak self, weak a] in
             guard let self, let a, a.away else { return }
             a.direction = target.facing
-            a.body.texture = self.assets.characterTexture(index: a.appearance.characterIndex, direction: a.direction, frame: 1)
+            a.body.texture = self.tex(a, a.direction, 1)
             a.body.xScale = (OfficeCharacterSheet.mirrorsHorizontally(a.direction) ? -1 : 1) * abs(a.body.xScale)
             if target.seatID != nil { a.body.position.y = -Self.sitDrop }
             a.idleCount += 1
@@ -1115,6 +1307,8 @@ final class OfficeRoomNode {
 
     func setNight(_ on: Bool, animated: Bool) {
         nightWanted = on
+        restyleChrome()
+        if theme == .vector { for a in actors.values { nightLift(a) }; for a in leavingActors { nightLift(a) } }
         if on { buildNightIfNeeded() }
         guard let root = nightRoot else { return }
         let target: CGFloat = on ? 1 : 0
@@ -1231,10 +1425,12 @@ final class OfficeRoomNode {
         a.idleCount += 1
         a.idleVariant = v
         let s = abs(a.body.yScale)
-        func tex(_ pose: OfficeCharacterSheet.Pose) -> SKTexture { assets.characterTexture(index: a.appearance.characterIndex, direction: a.direction, frame: OfficeCharacterSheet.frameIndex(pose)) }
+        let vec = theme == .vector
+        func tex(_ pose: OfficeCharacterSheet.Pose) -> SKTexture { self.tex(a, a.direction, OfficeCharacterSheet.frameIndex(pose)) }
+        func extra(_ frame: Int) -> SKTexture { self.tex(a, a.direction, frame) }
         func overlay(_ name: String, x: CGFloat, y: CGFloat) -> SKSpriteNode? {
-            guard let t = assets.artTexture(name) else { return nil }
-            let n = SKSpriteNode(texture: t, size: t.size())
+            guard let t = assets.artTexture(name, theme: theme) else { return nil }
+            let n = SKSpriteNode(texture: t, size: vec ? (OfficeVectorArt.artSize(name) ?? t.size()) : t.size())
             n.position = CGPoint(x: x * s, y: y * s); n.setScale(s); n.zPosition = 12
             a.root.addChild(n)
             a.idleOverlay = n
@@ -1243,14 +1439,18 @@ final class OfficeRoomNode {
         switch v {
         case .read:
             a.body.run(.repeatForever(.animate(with: [tex(.reading(0)), tex(.reading(1))], timePerFrame: 0.7, resize: false, restore: false)), withKey: "idle")
+        case .coffee where vec:
+            // Vektör: fincan eldedir (13) ve ağıza kalkar (14); ayrı fincan düğümü yok.
+            a.body.run(.repeatForever(.sequence([.setTexture(extra(13), resize: false), .wait(forDuration: 1.4), .setTexture(extra(14), resize: false), .wait(forDuration: 0.9)])), withKey: "idle")
         case .coffee:
             if let cup = overlay("cup", x: 6, y: 8 + a.body.position.y) {
                 cup.run(.repeatForever(.sequence([.wait(forDuration: 1.4), .moveBy(x: 0, y: 3 * s, duration: 0.4), .wait(forDuration: 0.5), .moveBy(x: 0, y: -3 * s, duration: 0.4)])))
             }
         case .yawn:
-            a.body.run(.repeatForever(.sequence([.animate(with: [tex(.reading(0))], timePerFrame: 0.3, resize: false, restore: false), .moveBy(x: 0, y: 1.5, duration: 0.12),
+            a.body.run(.repeatForever(.sequence([.animate(with: [vec ? extra(11) : tex(.reading(0))], timePerFrame: 0.3, resize: false, restore: false), .moveBy(x: 0, y: 1.5, duration: 0.12),
                                                  .moveBy(x: 0, y: -1.5, duration: 0.12), .animate(with: [tex(.stand)], timePerFrame: 0.3, resize: false, restore: false), .wait(forDuration: 1.2)])), withKey: "idle")
         case .zzz:
+            if vec { a.body.texture = extra(12) }
             if let z = overlay("zzz", x: 8, y: headTop(a) / max(s, 0.01) - 2) {
                 z.run(.repeatForever(.sequence([.moveBy(x: 0, y: 2, duration: 0.9), .moveBy(x: 0, y: -2, duration: 0.9)])))
             }
@@ -1276,11 +1476,13 @@ final class OfficeRoomNode {
     // MARK: Ofis v3 — temizlikçi + taşıyıcı (yardımcı karakterler)
 
     /// Roller dışı yardımcı karakter (planlayıcıya girmez): `leavingActors` listesinde izlenir (ölçek/animasyon durumu).
-    private func makeProp(label: String, tint: OfficeRGB, blend: Double) -> OfficeActor {
+    private func makeProp(label: String, tint: OfficeRGB, blend: Double, prop: OfficeVectorCharacter.Prop = .none) -> OfficeActor {
         let member = OfficeMember(id: "__\(label)__", parentID: nil, kind: .subagent, label: label, badge: .unknown, status: .tool(label), groupIndex: 0)
-        let look = OfficeAppearance(characterIndex: 1, tint: tint, tintBlend: blend, accessory: .none, small: false, badgeText: "")
+        var look = OfficeAppearance(characterIndex: 1, tint: tint, tintBlend: blend, accessory: .none, small: false, badgeText: "")
+        look.prop = prop
         let seat = kit.spots.seats.first ?? OfficeSeat(id: -1, tile: kit.spots.entrance, facing: .down, kind: .desk, pcIndex: nil)
-        let a = OfficeActor(member: member, appearance: look, seat: seat, texture: assets.characterTexture(index: 1, direction: .left, frame: 1))
+        let a = OfficeActor(member: member, appearance: look, seat: seat, texture: assets.characterTexture(for: look, direction: .left, frame: 1, theme: theme, night: nightWanted), theme: theme)
+        nightLift(a)
         a.leaving = true
         a.root.position = point(kit.spots.door)
         a.root.zPosition = yDown(kit.spots.door) + 0.5
@@ -1320,11 +1522,11 @@ final class OfficeRoomNode {
         cleanerDueAt = now.addingTimeInterval(OfficeCleaner.delay(seed: id, n: cleanerRuns))
         guard route.count > 3, !cleaning else { return false }
         cleaning = true
-        let a = makeProp(label: "temizlikçi", tint: OfficeRGB(r: 0.15, g: 0.45, b: 0.98), blend: 0.6)
-        if let t = assets.artTexture("mop") {
-            let mop = SKSpriteNode(texture: t, size: t.size())
+        let a = makeProp(label: "temizlikçi", tint: OfficeRGB(r: 0.15, g: 0.45, b: 0.98), blend: 0.6, prop: .cleaner)
+        if let t = assets.artTexture("mop", theme: theme) {
+            let mop = SKSpriteNode(texture: t, size: theme == .vector ? (OfficeVectorArt.artSize("mop") ?? t.size()) : t.size())
             mop.anchorPoint = CGPoint(x: 0.5, y: 0)
-            mop.position = CGPoint(x: 8, y: 1)
+            mop.position = CGPoint(x: theme == .vector ? 7 : 8, y: 1)
             mop.zPosition = 11
             mop.run(.repeatForever(.sequence([.rotate(toAngle: 0.18, duration: 0.25), .rotate(toAngle: -0.18, duration: 0.25)])))
             a.root.addChild(mop)
@@ -1364,9 +1566,10 @@ final class OfficeRoomNode {
         }
         carrying = true
         for p in parts { p.node.alpha = 0 }
-        let a = makeProp(label: "taşıyıcı", tint: OfficeRGB(r: 0.9, g: 0.55, b: 0.15), blend: 0.5)
+        let a = makeProp(label: "taşıyıcı", tint: OfficeRGB(r: 0.9, g: 0.55, b: 0.15), blend: 0.5, prop: .carrier)
         var box: SKSpriteNode?
-        if let t = assets.artTexture("box") {
+        if theme == .vector { a.carryingBox = true }   // vektör: koli gövdeye pişirilmiş taşıma karelerinde
+        else if let t = assets.artTexture("box") {
             let n = SKSpriteNode(texture: t, size: t.size())
             n.anchorPoint = CGPoint(x: 0.5, y: 0)
             n.position = CGPoint(x: 0, y: 14)
@@ -1377,7 +1580,8 @@ final class OfficeRoomNode {
         run(route: [spots.door, spots.entrance] + there, for: a) { [weak self] in
             guard let self else { return }
             box?.removeFromParent()
-            a.body.texture = self.assets.characterTexture(index: 1, direction: .up, frame: 1)
+            a.carryingBox = false
+            a.body.texture = self.tex(a, .up, 1)
             for p in parts {
                 if p.isDesk {
                     let home = p.node.position

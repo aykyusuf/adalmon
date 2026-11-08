@@ -277,6 +277,8 @@ struct OfficeAppearance: Equatable, Sendable {
     /// Alt ajan rolü (ofis v3): ton/aksesuar/boy buradan gelir; `modelDot` model rengini etikette minik nokta olarak taşır.
     var role: OfficeRoleStyle? = nil
     var modelDot: OfficeRGB? = nil
+    /// Yardımcı karakter (temizlikçi/taşıyıcı): vektör temada önlük/baret çizilir.
+    var prop: OfficeVectorCharacter.Prop = .none
 
     /// Üye görünümü: ana ajan model aksesuarını korur; alt ajanlarda ROL stili baskındır, model rengi nokta olarak kalır.
     static func appearance(for member: OfficeMember) -> OfficeAppearance {

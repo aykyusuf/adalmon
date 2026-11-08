@@ -353,6 +353,61 @@ final class OfficeAssets {
         return characterFrames(index)[row * OfficeCharacterSheet.columns + frame]
     }
 
+    // MARK: Vektör karakterler + arayüz dokuları
+
+    private var vectorCharTextures: [String: SKTexture] = [:]
+    /// Üretilen vektör karakter kareleri toplam bayt (RGBA8, 96x128): bellek bütçesi ölçümü için.
+    private(set) var vectorCharacterBytes = 0
+    var vectorCharacterFrameCount: Int { vectorCharTextures.count }
+
+    /// Tema'ya göre karakter karesi: piksel → sheet dilimi; vektör → parametrik kare (tembel üretilir, `spec.key|yön|kare` anahtarlı, bellekte tutulur).
+    func characterTexture(for a: OfficeAppearance, direction: OfficeCharacterSheet.Direction, frame: Int, theme: OfficeTheme, night: Bool = false) -> SKTexture {
+        guard theme == .vector else { return characterTexture(index: a.characterIndex, direction: direction, frame: frame) }
+        let spec = OfficeVectorCharacter.spec(for: a)
+        return vectorCharacterTexture(spec, direction: direction, frame: frame, night: night)
+    }
+
+    func vectorCharacterTexture(_ spec: OfficeVectorCharacter.Spec, direction: OfficeCharacterSheet.Direction, frame: Int, night: Bool = false) -> SKTexture {
+        let dir = direction == .left ? OfficeCharacterSheet.Direction.right : direction
+        let key = "\(spec.key)|\(dir.rawValue)|\(frame)" + (night ? "|n" : "")
+        if let t = vectorCharTextures[key] { return t }
+        guard var img = OfficeVectorCharacter.image(spec: spec, direction: dir, frame: frame) else { return SKTexture() }
+        if night { img = OfficeVectorCharacter.nightGrade(img) }
+        vectorCharacterBytes += img.width * img.height * 4
+        let t = Self.smooth(img)
+        vectorCharTextures[key] = t
+        return t
+    }
+
+    private var uiTextures: [String: SKTexture] = [:]
+
+    func panelTexture(_ p: OfficeVectorUI.Panel, bodyWidth: Int) -> SKTexture? {
+        let key = String(format: "panel-%06X-%d-%d", p.fill, bodyWidth, p.h)
+        if let t = uiTextures[key] { return t }
+        guard let img = OfficeVectorUI.panelImage(p, bodyWidth: bodyWidth) else { return nil }
+        let t = Self.smooth(img)
+        uiTextures[key] = t
+        return t
+    }
+
+    func bubbleBodyTexture(bodyWidth: Int) -> SKTexture? {
+        let key = "bubble-\(bodyWidth)"
+        if let t = uiTextures[key] { return t }
+        guard let img = OfficeVectorUI.bubbleImage(bodyWidth: bodyWidth) else { return nil }
+        let t = Self.smooth(img)
+        uiTextures[key] = t
+        return t
+    }
+
+    func solidTexture(width: Int = 16, height: Int = 16) -> SKTexture? {
+        let key = "solid-\(width)x\(height)"
+        if let t = uiTextures[key] { return t }
+        guard let img = OfficeVectorUI.solidImage(width: width, height: height) else { return nil }
+        let t = Self.smooth(img)
+        uiTextures[key] = t
+        return t
+    }
+
     // MARK: Kodla çizilenler
 
     func accessoryTexture(_ a: OfficeAccessory) -> SKTexture? {
@@ -364,6 +419,11 @@ final class OfficeAssets {
         case .sprout: OfficePixelArt.sprout
         }
         return img.map { Self.nearest(SKTexture(cgImage: $0)) }
+    }
+
+    func bubbleTexture(_ b: OfficeBehavior.Bubble, theme: OfficeTheme) -> SKTexture? {
+        if theme == .vector { return artTexture(b == .alert ? "bubble_alert" : "bubble_think", theme: .vector) }
+        return bubbleTexture(b)
     }
 
     func bubbleTexture(_ b: OfficeBehavior.Bubble) -> SKTexture? {
