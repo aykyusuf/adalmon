@@ -89,6 +89,14 @@
       "done_when": "Tam ekranda hareketsizken ust paneller ve kucult dugmesi gizleniyor, hareketle geliyor; saat ortada, bilgi karti seridin altinda; elle kucultulen oturum calisirken de kucuk kaliyor ve sol kenarda cikiyor; kullanici onayladi",
       "status": "todo",
       "evidence": "Kuruldu; birim ve uctan uca testler gecti (OfficeLiveArrivalTests, OfficeTuckRecoveryTests); gercek tam ekranda gozle bakilmadi"
+    },
+    {
+      "id": "HOOK-01",
+      "title": "Ajan hook hatti (config.json) testlerden ve ikinci ornekten etkilenmesin",
+      "priority": 1,
+      "done_when": "Tam test suite'i sonrasi ~/Library/Application Support/Adalmon/ClaudePlugin/config.json degismiyor ve calisan uygulamanin dinleyicisi erisilebilir; config ezilirse uygulama one gelince kendini onariyor",
+      "status": "done",
+      "evidence": "2026-11-09: tam suite oncesi/sonrasi config md5 ayni, /v1/state erisilebilir; AgentConfigGuardTests; AppModel.start testte agents.apply() cagirmiyor"
     }
   ]
 }

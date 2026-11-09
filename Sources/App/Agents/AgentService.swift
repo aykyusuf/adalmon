@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -30,6 +31,7 @@ final class AgentService {
     @ObservationIgnored private var webBuilder: AgentWebSnapshotBuilder?
     /// Açık SSE akışı varken izleyici sayacına +1 yazılmış mı (arka plan işlemleri yalnızca tarayıcı görünümü açıkken örneklenir).
     @ObservationIgnored private var webObserving = false
+    @ObservationIgnored private var activationObserver: (any NSObjectProtocol)?
 
     init(prefs: Preferences, installer: AgentPluginInstaller = AgentPluginInstaller()) {
         self.prefs = prefs
@@ -119,6 +121,23 @@ final class AgentService {
         server.start(preferredPort: UInt16(exactly: saved).flatMap { AgentEventServer.portRange.contains($0) ? $0 : nil })
         web.setEnabled(prefs.agentsWebEnabled)
         prepareWeb()
+        // Hook betikleri port+token'ı config.json'dan okur. Başka bir işlem (ikinci örnek, test) dosyayı ezerse olaylar ölü porta
+        // gider; uygulama öne her geldiğinde dosya bu örneğin değerleriyle karşılaştırılıp gerekirse geri yazılır.
+        if activationObserver == nil {
+            activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.repairConfigIfNeeded() }
+            }
+        }
+    }
+
+    /// config.json bu örneğin port/token'ından farklıysa (başkası yazmışsa) geri yazar. Dinleyici çalışmıyorsa hiçbir şey yapmaz.
+    @discardableResult
+    func repairConfigIfNeeded() -> Bool {
+        guard case .running(let port) = listener, !token.isEmpty else { return false }
+        let current = installer.generator.readConfig()
+        guard current?.port != port || current?.token != token else { return false }
+        try? installer.generator.writeConfig(port: port, token: token, showTargets: prefs.agentsShowTargets)
+        return true
     }
 
     private func setWebObserving(_ on: Bool) {
@@ -128,6 +147,8 @@ final class AgentService {
     }
 
     private func stopListening() {
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+        activationObserver = nil
         setWebObserving(false)
         web.setEnabled(false)
         server?.stop()

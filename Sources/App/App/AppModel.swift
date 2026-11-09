@@ -107,7 +107,9 @@ final class AppModel {
         battery.onPowerStateChange = { [weak self] in self?.publishWidgets(forced: true) }
         battery.start()
         devices.start()
-        agents.apply()
+        // Test host'u da Adalmon'un kendisidir: gerçek dinleyiciyi başlatırsa kullanıcının config.json'unu ve kayıtlı portunu ezer
+        // (çalışan uygulamanın hook'ları ölü porta gider). Testler dinleyiciyi kendi geçici dizinleriyle kurar.
+        if !AppEnvironment.isRunningTests { agents.apply() }
     }
 
     /// Güncelleme aralığı ayarı değişince zamanlayıcıyı hemen yeniden kur ve bir ölçüm al.

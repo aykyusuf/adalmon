@@ -459,3 +459,40 @@ private final class FakeRunner: CommandRunning, @unchecked Sendable {
         return CommandResult(status: 0, output: "")
     }
 }
+
+/// Hook betiklerinin okuduğu config.json başka bir işlem tarafından ezilirse uygulama kendini onarır; test host'u gerçek config'e dokunmaz.
+@MainActor
+final class AgentConfigGuardTests: XCTestCase {
+    func testServiceRepairsOverwrittenConfigAndDoesNotTouchTheRealOne() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appending(path: "cfg-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let realConfig = AgentPluginGenerator().configURL
+        let realBefore = try? Data(contentsOf: realConfig)
+
+        let suite = "AgentConfigGuard-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let prefs = Preferences(defaults: defaults)
+        prefs.agentsEnabled = true
+        let generator = AgentPluginGenerator(root: tmp, usesPython: false)
+        let service = AgentService(prefs: prefs, installer: AgentPluginInstaller(generator: generator))
+        service.apply()
+        defer { service.setEnabled(false) }
+        var port: UInt16?
+        for _ in 0..<50 { if let p = service.port { port = p; break }; try await Task.sleep(for: .milliseconds(100)) }
+        let running = try XCTUnwrap(port, "dinleyici başlamalı")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(generator.readConfig()?.port, running)
+        XCTAssertFalse(service.repairConfigIfNeeded(), "dosya güncelken yeniden yazılmaz")
+
+        // Başka bir işlem dosyayı ezdi (ör. ikinci örnek farklı port + token yazdı).
+        try generator.writeConfig(port: running &+ 1, token: "baska-token")
+        XCTAssertTrue(service.repairConfigIfNeeded(), "ezilmiş config geri yazılmalı")
+        XCTAssertEqual(generator.readConfig()?.port, running)
+        XCTAssertNotEqual(generator.readConfig()?.token, "baska-token")
+
+        // Gerçek (kullanıcının) config.json'u bu testle değişmemeli.
+        XCTAssertEqual(try? Data(contentsOf: realConfig), realBefore, "test gerçek config.json'a dokunmamalı")
+    }
+}

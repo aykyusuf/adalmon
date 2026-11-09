@@ -14,6 +14,10 @@
 - Ajan modeli (YALNIZCA o oturum için söylendi, kalıcı değil): "ajanları opus açma ben sdiyene kadar en fazla sonnet high ajan açabilirsin"; basit işte sonnet medium.
 - Silme komutlarında crew-chief guard: 5 satır SAFE/RISKY gerekçesi yaz, sonra aynı komutu tekrar çalıştır.
 
+## Dersler (doğrulanmış nedenler)
+- Test host'u Adalmon.app'in kendisidir: `AppModel.start()` testte gerçek ajan dinleyicisini kurarsa kullanıcının `~/Library/Application Support/Adalmon/ClaudePlugin/config.json` dosyasını ve `agentsPort` tercihini ezer; çalışan uygulamanın hook'ları ölü porta gider, ajanlar ofiste görünmez. Önlem: `AppModel.start` testte `agents.apply()` çağırmaz; dinleyici testleri kendi geçici dizinini kullanır (`AgentPluginGenerator(root:)`). Tam suite sonrası config md5 ve `/v1/state` kontrol edilir.
+- Mac pildeyken macOS Düşük Güç Modu'nu açar; `BatteryLiquidGlyphTests` içindeki 7 animasyon testi bu yüzden düşer (fişteyken geçer).
+
 ## Çalışan
 - NE içerik filtresi (system extension) kurulu, aktif. SpoofDPI (127.0.0.1:8080) ayrıştırma: app→proxy akışı app'e yazılır, proxy egress hariç tutulur. Spike'ta 50 MB testinde %0,15 sapma, YouTube testi googlevideo'yu Chrome altında gösterdi.
 - XPC (pull, 1 sn), SQLite (~/Library/Application Support/Adalmon/usage.sqlite), mobil veri tespiti (NWPathMonitor isExpensive/isConstrained), 50 MB/dk ve günlük limit bildirimleri, mobilde engelleme.
