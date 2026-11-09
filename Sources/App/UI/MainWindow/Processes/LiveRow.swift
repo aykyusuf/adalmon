@@ -55,7 +55,7 @@ struct LiveRow: Identifiable, Hashable, Sendable {
         let r = Rates(usage: member.usage, elapsed: elapsed, cores: cores)
         // Terminal üyeleri çalıştırılabilire göre gruplanır (kimlik: alt anahtar); tek süreç üyeleri pid ile.
         let id = member.childKey.map { "\(group.key)|member|\($0)" } ?? "\(group.key)|\(member.pid)"
-        return LiveRow(id: id, key: group.key, name: member.name, pid: member.pid, processCount: member.pids.count,
+        return LiveRow(id: id, key: group.key, name: BrowserProcessNaming.display(rawName: member.name, groupKey: group.key), pid: member.pid, processCount: member.pids.count,
                        pids: member.pids, category: group.category, path: member.path ?? group.path, cpu: r.cpu,
                        memory: Double(member.usage.footprint), gpu: r.gpu, disk: r.disk, network: 0, energy: r.watts)
     }

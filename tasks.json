@@ -65,6 +65,14 @@
       "done_when": "Ayarlarda Doldur ve Sigdir secimi var; MacBook Pro 14'te Sigdir secilince video kirpilmadan siyah barlarla gorunur; saver ve duvar kagidinda calisir; kullanici onayladi",
       "status": "todo",
       "evidence": "Neden: AspectFill (LoopInstance/LoopingQueueBackend/AdalmonSaverView); henuz kod yok"
+    },
+    {
+      "id": "BROWSER-01",
+      "title": "Tarayicilar sayfasi (Safari/Chrome sekme seridi) ve Surecler'de okunur alt surec adlari canli dogrula",
+      "priority": 2,
+      "done_when": "Tarayicilar sayfasinda Safari/Chrome sekmeleri, site rozetleri, arama ve surec cubuklari gercek veriyle dogru gorunuyor; Surecler'de Safari/Chrome altinda 'Web Icerigi (sekme)' gibi adlar RAM ile listeleniyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "cb13381 sonrasi kuruldu; birim ve onizleme testleri gecti; gercek Safari/Chrome ile canli bakilmadi. Not: Safari ve Chrome surec-sekme eslemesini vermiyor"
     }
   ]
 }
