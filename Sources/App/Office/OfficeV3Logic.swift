@@ -259,6 +259,7 @@ struct OfficeDetailCard: Equatable, Sendable {
 
     /// Fare üstü ipucu: "ad · rol · model · durum".
     var tooltip: String {
-        [title, isSession ? nil : roleName, badge.label, status].compactMap { $0 }.joined(separator: " · ")
+        // Alt ajanda başlık zaten rol adıdır: aynı metni iki kez yazma.
+        [title, (isSession || roleName == title) ? nil : roleName, badge.label, status].compactMap { $0 }.joined(separator: " · ")
     }
 }

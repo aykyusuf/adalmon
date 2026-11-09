@@ -510,3 +510,13 @@ final class OfficeCleanerPacingTests: XCTestCase {
         XCTAssertNil(OfficeCleaner.sweepPause(afterStep: 5, routeCount: 8))
     }
 }
+
+final class OfficeTooltipTests: XCTestCase {
+    func testSubagentTooltipDoesNotRepeatTheRoleName() {
+        let card = OfficeDetailCard(memberID: "a", isSession: false, title: "crew-chief:scanner", roleName: "crew-chief:scanner",
+                                    badge: .haiku, status: "Bash", tool: nil, startedAt: nil, parentTitle: "oturum", subagentCount: 0,
+                                    children: [], shells: .empty, shellsKnown: false)
+        XCTAssertEqual(card.tooltip.components(separatedBy: "crew-chief:scanner").count - 1, 1)
+        XCTAssertTrue(card.tooltip.contains("Haiku"))
+    }
+}

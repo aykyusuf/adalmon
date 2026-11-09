@@ -1481,7 +1481,8 @@
 
   function tipText(a) {
     const m = a.member;
-    return `${labelText(m)} · ${roleName(m)} · ${modelLabel(m)} · ${m.statusLabel || m.status}`;
+    const name = labelText(m), role = roleName(m);
+    return [name, role === name ? null : role, modelLabel(m), m.statusLabel || m.status].filter(Boolean).join(' · ');
   }
 
   // ---------- Döngü ----------
