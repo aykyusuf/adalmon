@@ -2,7 +2,7 @@ import Foundation
 import Network
 import os
 
-private let log = Logger(subsystem: "com.example.adalmon", category: "xpc")
+private let log = Logger(subsystem: AdalmonIdentity.appBundleID, category: "xpc")
 
 /// Filtrenin Mach servisi. Uygulama bağlanır, ayar gönderir ve kullanım tamponunu çeker (pull modeli).
 final class XPCServer: NSObject, NSXPCListenerDelegate, FilterControl, @unchecked Sendable {

@@ -2,7 +2,7 @@ import Foundation
 
 /// Uygulama ile widget eklentisi arasındaki sabitler. İki hedefe de derlenir.
 enum WidgetShared {
-    static let appGroupID = "YOUR_TEAM_ID.com.example.adalmon"
+    static let appGroupID = AdalmonIdentity.appGroupID
     static let snapshotFileName = "widget-snapshot.json"
     static let schemaVersion = 1
     /// Bu süreden eski veri "Adalmon'dan veri gelmedi" ile işaretlenir.

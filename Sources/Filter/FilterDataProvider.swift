@@ -3,7 +3,7 @@ import Network
 @preconcurrency import NetworkExtension
 import os
 
-private let log = Logger(subsystem: "com.example.adalmon", category: "filter")
+private let log = Logger(subsystem: AdalmonIdentity.appBundleID, category: "filter")
 
 /// Ağ akışlarını sayan içerik filtresi. Fail-open: her hata durumunda izin verir.
 ///

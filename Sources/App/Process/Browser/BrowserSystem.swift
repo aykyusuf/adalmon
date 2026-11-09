@@ -16,7 +16,7 @@ protocol SafariTabsSource: Sendable {
 /// Swift tarafında zaman aşımı (geç gelen sonuç atılır). NSAppleScript nesnesi kuyruğun içinde oluşturulur.
 final class SafariAppleScriptSource: SafariTabsSource, @unchecked Sendable {
     static let safariBundleID = "com.apple.Safari"
-    private let queue = DispatchQueue(label: "com.example.adalmon.safari-tabs", qos: .utility)
+    private let queue = DispatchQueue(label: "\(AdalmonIdentity.appBundleID).safari-tabs", qos: .utility)
     private let lock = NSLock()
     private var busy = false
     private let timeout: Double

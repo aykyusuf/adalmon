@@ -14,6 +14,15 @@ macOS 26+ için menü çubuğu sistem monitörü: CPU, GPU, RAM, disk, sıcaklı
 ## Derleme
 Gereksinimler: Xcode 27+, [XcodeGen](https://github.com/yonaskolb/XcodeGen), Network Extension yetkisi olan bir Apple geliştirici hesabı.
 
+Önce kendi kimliğini yerel (gitignored) dosyaya yaz; depoda takım kimliği ya da paket öneki yoktur:
+
+```bash
+cat > Config/Identity.local.xcconfig <<'CONF'
+ADALMON_TEAM_ID = ABCDE12345          # developer.apple.com › Membership › Team ID
+ADALMON_BUNDLE_PREFIX = com.sirketin  # ters alan adı; uygulama "com.sirketin.adalmon" olur
+CONF
+```
+
 ```bash
 brew install libimobiledevice && tools/vendor-libimobiledevice.sh   # iPhone/iPad pil detayı için gömülü dylib'ler
 xcodegen generate
@@ -21,7 +30,7 @@ xcodebuild -project Adalmon.xcodeproj -scheme Adalmon -configuration Release \
   -derivedDataPath build -allowProvisioningUpdates build
 ```
 
-`project.yml` içindeki `DEVELOPMENT_TEAM` ve bundle id'leri kendi hesabına göre değiştir. System extension'ın yüklenebilmesi için uygulama `/Applications` altında çalışmalıdır.
+Takım kimliği ve paket öneki `Config/Identity.xcconfig` üzerinden okunur; `xcodegen generate` bunlardan Swift sabitlerini (`Sources/Identity/Identity.generated.swift`, gitignored) üretir. Hepsini kendi hesabına göre `Config/Identity.local.xcconfig`'te ver. System extension'ın yüklenebilmesi için uygulama `/Applications` altında çalışmalıdır.
 
 ## Notlar
 - Sıcaklık (IOHID, SMC) ve GPU yükü (IOReport) özel API'ler kullanır; App Store'a uygun değildir.

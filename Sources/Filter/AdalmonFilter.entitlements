@@ -11,7 +11,7 @@
 	<true/>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>YOUR_TEAM_ID.com.example.adalmon</string>
+		<string>$(ADALMON_TEAM_ID).$(ADALMON_BUNDLE_PREFIX).adalmon</string>
 	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>

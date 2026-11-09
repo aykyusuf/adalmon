@@ -20,7 +20,7 @@ enum SaverPaths {
     }
     static let playlistFileName = "playlist.json"
     static let bundleName = "AdalmonSaver.saver"
-    static let bundleIdentifier = "com.example.adalmon.saver"
+    static let bundleIdentifier = AdalmonIdentity.saverBundleID
     /// Sistem Ayarları > Ekran Koruyucu.
     static let settingsURLString = "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension"
 

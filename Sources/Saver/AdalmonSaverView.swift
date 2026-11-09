@@ -223,10 +223,10 @@ final class AdalmonSaverView: ScreenSaverView {
     }
 }
 
-/// Soğuk başlangıç ölçümleri: `log stream --predicate 'subsystem == "com.example.adalmon" AND category == "saver"'`.
+/// Soğuk başlangıç ölçümleri: `log stream --predicate 'subsystem == "<paket-öneki>.adalmon" AND category == "saver"'`.
 /// Yalnızca başlangıç olaylarında yazar (döngü sırasında hiçbir şey yok).
 enum SaverTrace {
-    static let logger = Logger(subsystem: "com.example.adalmon", category: "saver")
+    static let logger = Logger(subsystem: AdalmonIdentity.appBundleID, category: "saver")
     static let signposter = OSSignposter(logger: logger)
 
     static func event(_ name: StaticString, _ detail: String) {

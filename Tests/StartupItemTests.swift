@@ -109,7 +109,7 @@ final class StartupItemTests: XCTestCase {
             XCTAssertFalse(apple.canModify)
             XCTAssertFalse(apple.needsAdmin)
         }
-        XCTAssertFalse(StartupItemPermissions.evaluate(label: "com.example.adalmon.helper", scope: .user).canModify)
+        XCTAssertFalse(StartupItemPermissions.evaluate(label: AdalmonIdentity.appBundleID + ".helper", scope: .user).canModify)
         XCTAssertFalse(StartupItemPermissions.evaluate(label: "bad/label", scope: .user).canModify)
     }
 

@@ -1,11 +1,16 @@
 name: Adalmon
 options:
   bundleIdPrefix: com.example
+  # Kişisel kimlikten (Config/Identity.local.xcconfig) Swift sabitlerini üretir
+  preGenCommand: tools/gen-identity.sh
+configFiles:
+  Debug: Config/Identity.xcconfig
+  Release: Config/Identity.xcconfig
   deploymentTarget:
     macOS: "26.0"
 settings:
   base:
-    DEVELOPMENT_TEAM: YOUR_TEAM_ID
+    DEVELOPMENT_TEAM: $(ADALMON_TEAM_ID)
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
@@ -21,6 +26,7 @@ targets:
       - Sources/Shared
       - Sources/WidgetShared
       - Sources/SaverShared
+      - Sources/Identity
       # Ajan ofisi piksel-art görselleri: klasör olarak kopyalanır (manifest.json adları çakışmasın)
       - path: Resources/Office
         type: folder
@@ -41,14 +47,14 @@ targets:
         NSBonjourServices: [_apple-mobdev2._tcp]
         NSAppleEventsUsageDescription: Adalmon, yalnızca “Safari sekme listesini göster” ayarı açıkken Safari'deki açık sekmelerin başlık ve adreslerini okumak için Safari'ye erişir; Safari'de hiçbir şeyi değiştirmez.
         CFBundleURLTypes:
-          - CFBundleURLName: com.example.adalmon
+          - CFBundleURLName: $(ADALMON_BUNDLE_PREFIX).adalmon
             CFBundleURLSchemes: [adalmon]
     entitlements:
       path: Sources/App/Adalmon.entitlements
       properties:
         com.apple.developer.system-extension.install: true
         com.apple.developer.networking.networkextension: [content-filter-provider, app-proxy-provider]
-        com.apple.security.application-groups: [YOUR_TEAM_ID.com.example.adalmon]
+        com.apple.security.application-groups: [$(ADALMON_TEAM_ID).$(ADALMON_BUNDLE_PREFIX).adalmon]
         com.apple.security.device.bluetooth: true
         # Hardened runtime: Safari sekme listesi (AppleScript, opt-in) için Apple olayı göndermek bu yetkiyi gerektirir.
         com.apple.security.automation.apple-events: true
@@ -58,7 +64,7 @@ targets:
         com.apple.SystemExtensions: {enabled: 1}
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.adalmon
+        PRODUCT_BUNDLE_IDENTIFIER: $(ADALMON_BUNDLE_PREFIX).adalmon
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         OTHER_LDFLAGS: -lsqlite3
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -106,6 +112,7 @@ targets:
     sources:
       - Sources/Filter
       - Sources/Shared
+      - Sources/Identity
     info:
       path: Sources/Filter/Info.plist
       properties:
@@ -115,7 +122,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSSystemExtensionUsageDescription: Ağ akışlarını sayar.
         NetworkExtension:
-          NEMachServiceName: YOUR_TEAM_ID.com.example.adalmon.filter
+          NEMachServiceName: $(ADALMON_TEAM_ID).$(ADALMON_BUNDLE_PREFIX).adalmon.filter
           NEProviderClasses:
             com.apple.networkextension.filter-data: $(PRODUCT_MODULE_NAME).FilterDataProvider
             com.apple.networkextension.app-proxy: $(PRODUCT_MODULE_NAME).TransparentProxyProvider
@@ -124,7 +131,7 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
-        com.apple.security.application-groups: [YOUR_TEAM_ID.com.example.adalmon]
+        com.apple.security.application-groups: [$(ADALMON_TEAM_ID).$(ADALMON_BUNDLE_PREFIX).adalmon]
         com.apple.developer.networking.networkextension: [content-filter-provider, app-proxy-provider]
     attributes:
       SystemCapabilities:
@@ -132,8 +139,8 @@ targets:
         com.apple.Sandbox: {enabled: 1}
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.adalmon.filter
-        PRODUCT_NAME: com.example.adalmon.filter
+        PRODUCT_BUNDLE_IDENTIFIER: $(ADALMON_BUNDLE_PREFIX).adalmon.filter
+        PRODUCT_NAME: $(ADALMON_BUNDLE_PREFIX).adalmon.filter
         PRODUCT_MODULE_NAME: AdalmonFilter
   AdalmonWidgets:
     type: app-extension
@@ -141,6 +148,7 @@ targets:
     sources:
       - Sources/Widgets
       - Sources/WidgetShared
+      - Sources/Identity
     info:
       path: Sources/Widgets/Info.plist
       properties:
@@ -154,10 +162,10 @@ targets:
       path: Sources/Widgets/AdalmonWidgets.entitlements
       properties:
         com.apple.security.app-sandbox: true
-        com.apple.security.application-groups: [YOUR_TEAM_ID.com.example.adalmon]
+        com.apple.security.application-groups: [$(ADALMON_TEAM_ID).$(ADALMON_BUNDLE_PREFIX).adalmon]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.adalmon.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: $(ADALMON_BUNDLE_PREFIX).adalmon.widgets
         PRODUCT_NAME: AdalmonWidgets
         SKIP_INSTALL: YES
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
@@ -168,6 +176,7 @@ targets:
     sources:
       - Sources/Saver
       - Sources/SaverShared
+      - Sources/Identity
     info:
       path: Sources/Saver/Info.plist
       properties:
@@ -184,7 +193,7 @@ targets:
       - sdk: AVFoundation.framework
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.adalmon.saver
+        PRODUCT_BUNDLE_IDENTIFIER: $(ADALMON_BUNDLE_PREFIX).adalmon.saver
         PRODUCT_NAME: AdalmonSaver
         WRAPPER_EXTENSION: saver
         MACH_O_TYPE: mh_bundle

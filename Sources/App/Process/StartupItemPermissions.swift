@@ -14,7 +14,7 @@ struct StartupItemPermissions: Equatable, Sendable {
     static let invalidLabelReason = "Geçersiz etiket"
 
     /// Dokunulmaz etiket önekleri: Apple ve Adalmon'un kendisi.
-    static let protectedPrefixes = ["com.apple.", "com.example.adalmon"]
+    static let protectedPrefixes = ["com.apple.", AdalmonIdentity.appBundleID]
 
     static func evaluate(label: String, scope: StartupItem.Scope) -> StartupItemPermissions {
         if protectedPrefixes.contains(where: { label.hasPrefix($0) }) {

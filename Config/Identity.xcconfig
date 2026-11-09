@@ -1,0 +1,13 @@
+// Adalmon kimliği: Apple Developer takım kimliği ve paket (bundle) öneki.
+// Bu dosya herkese açık; kendi değerlerini YEREL dosyaya yaz (gitignored):
+//
+//   Config/Identity.local.xcconfig
+//     ADALMON_TEAM_ID = ABCDE12345        // developer.apple.com > Membership > Team ID
+//     ADALMON_BUNDLE_PREFIX = com.sirketin // ters alan adı; sonuna ".adalmon" eklenir
+//
+// Sonra: xcodegen generate  (tools/gen-identity.sh Swift sabitlerini üretir)
+// Ağ filtresi (system extension), widget ve ekran koruyucu için takım kimliği ZORUNLUDUR.
+ADALMON_TEAM_ID =
+ADALMON_BUNDLE_PREFIX = com.example
+
+#include? "Identity.local.xcconfig"

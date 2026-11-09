@@ -28,3 +28,7 @@ spike/AdalmonSpike.xcodeproj/
 
 # Gömülü libimobiledevice dylib'leri: tools/vendor-libimobiledevice.sh üretir (lisanslar repoda)
 Vendor/libimobiledevice/*.dylib
+
+# Kişisel kimlik (takım kimliği / paket öneki) ve ondan üretilen dosya
+Config/Identity.local.xcconfig
+Sources/Identity/Identity.generated.swift

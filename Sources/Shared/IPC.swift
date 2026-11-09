@@ -2,10 +2,10 @@ import Foundation
 
 /// Filtre ve uygulama arasında paylaşılan sabitler.
 enum IPC {
-    static let teamID = "YOUR_TEAM_ID"
-    static let appBundleID = "com.example.adalmon"
-    static let filterBundleID = "com.example.adalmon.filter"
-    static let machServiceName = "YOUR_TEAM_ID.com.example.adalmon.filter"
+    static let teamID = AdalmonIdentity.teamID
+    static let appBundleID = AdalmonIdentity.appBundleID
+    static let filterBundleID = AdalmonIdentity.filterBundleID
+    static let machServiceName = AdalmonIdentity.machServiceName
     /// Filtreye yalnızca bizim imzalı uygulamamız bağlanabilir.
     static let appCodeRequirement =
         "anchor apple generic and certificate leaf[subject.OU] = \"\(teamID)\" and identifier \"\(appBundleID)\""

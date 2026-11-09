@@ -3,7 +3,7 @@ import Network
 @preconcurrency import NetworkExtension
 import os
 
-private let log = Logger(subsystem: "com.example.adalmon", category: "throttle")
+private let log = Logger(subsystem: AdalmonIdentity.appBundleID, category: "throttle")
 
 /// Uygulama bazlı hız sınırı için saydam proxy. Aynı system extension'da filtre ile birlikte çalışır.
 ///

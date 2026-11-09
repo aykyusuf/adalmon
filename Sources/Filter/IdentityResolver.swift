@@ -2,7 +2,7 @@ import Foundation
 import Security
 import os
 
-private let log = Logger(subsystem: "com.example.adalmon", category: "identity")
+private let log = Logger(subsystem: AdalmonIdentity.appBundleID, category: "identity")
 
 /// Audit token → uygulama kimliği. (pid, pidversion) ile önbelleklenir; PID yeniden kullanımı yanlış eşleşme üretmez.
 final class IdentityResolver: @unchecked Sendable {
