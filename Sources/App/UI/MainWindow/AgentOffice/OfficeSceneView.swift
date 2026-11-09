@@ -131,7 +131,23 @@ struct OfficeSceneView: NSViewRepresentable {
             }
         }
 
+        /// Kamera animasyonu süresince 60 kare/sn (akıcı yakınlaşma), sonra pil için 12'ye döner.
+        private var boostTask: Task<Void, Never>?
+        static let idleFramesPerSecond = 12
+        static let boostedFramesPerSecond = 60
+
+        func boostFrameRate(for duration: TimeInterval) {
+            view?.preferredFramesPerSecond = Self.boostedFramesPerSecond
+            boostTask?.cancel()
+            boostTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(duration + 0.2))
+                guard !Task.isCancelled else { return }
+                self?.view?.preferredFramesPerSecond = Self.idleFramesPerSecond
+            }
+        }
+
         func tearDown() {
+            boostTask?.cancel()
             pauseTask?.cancel()
             wanderTimer?.invalidate()
             wanderTimer = nil
@@ -139,6 +155,7 @@ struct OfficeSceneView: NSViewRepresentable {
             view?.presentScene(nil)
             scene?.onAnimationStateChange = nil
             scene?.onActivity = nil
+            scene?.onCameraAnimation = nil
             scene?.onSelectionChange = nil
             scene?.onCardChange = nil
             scene?.onHoverChange = nil
@@ -162,6 +179,7 @@ struct OfficeSceneView: NSViewRepresentable {
         let selection = $selectedRoom
         scene.onAnimationStateChange = { [weak coordinator] _ in coordinator?.refreshRunState() }
         scene.onActivity = { [weak coordinator] in coordinator?.refreshRunState() }
+        scene.onCameraAnimation = { [weak coordinator] d in coordinator?.boostFrameRate(for: d) }
         scene.onSelectionChange = { [weak coordinator] id in coordinator?.knownSelection = id; coordinator?.setSelection(id) }
         coordinator.setSelection = { id in DispatchQueue.main.async { selection.wrappedValue = id } }
         let cardBinding = $card

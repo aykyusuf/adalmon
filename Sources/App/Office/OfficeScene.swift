@@ -80,6 +80,8 @@ final class OfficeScene: SKScene {
     var onAnimationStateChange: ((Bool) -> Void)?
     /// Kullanıcı kaydırdı: ev sahibi görünümü kısa süre canlandırıp yeniden duraklatır.
     var onActivity: (() -> Void)?
+    /// Kamera (yakınlaşma/uzaklaşma) animasyonu başlayınca süresiyle çağrılır: ev sahibi görünüm kare hızını geçici yükseltir.
+    var onCameraAnimation: ((TimeInterval) -> Void)?
     var onSelectionChange: ((String?) -> Void)?
     /// Fare bir karakterin/tahtanın üstünde mi (imleç el işareti).
     var onHoverChange: ((Bool) -> Void)?
@@ -326,7 +328,12 @@ final class OfficeScene: SKScene {
         let pos = CGPoint(x: center.x, y: arrangement.contentHeight - center.y)
         let scale = 1 / z
         if animated {
-            track(cameraNode, key: "camera", .group([.move(to: pos, duration: Self.transitionDuration), .scale(to: scale, duration: Self.transitionDuration)]))
+            onCameraAnimation?(Self.transitionDuration)
+            let move = SKAction.move(to: pos, duration: Self.transitionDuration)
+            let zoomAction = SKAction.scale(to: scale, duration: Self.transitionDuration)
+            move.timingMode = .easeInEaseOut
+            zoomAction.timingMode = .easeInEaseOut
+            track(cameraNode, key: "camera", .group([move, zoomAction]))
         } else {
             cameraNode.removeAction(forKey: "camera")
             clearPending(prefix: "camera")

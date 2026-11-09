@@ -21,7 +21,9 @@ struct OfficeWindowRoot: View {
                 let night = OfficeLighting.isNight(mode: OfficeLightingMode(rawValue: lightingRaw) ?? .auto, date: state.clock.now)
                 OfficePanoCorners(members: members, now: state.clock.now, night: night, showsClock: state.settings.showsClockSummary)
                     .opacity(state.settings.showsClockSummary ? 1 : 0)
-                    .padding(.top, state.isFullScreen ? 0 : stripHeight)
+                    // Tam ekranda şerit sahnenin üstüne biner: görünürken köşe pill'leri onun altına iner (yapışık durmasın).
+                    .padding(.top, state.isFullScreen ? (state.stripShown ? stripHeight : 0) : stripHeight)
+                    .animation(.easeOut(duration: OfficeChromeVisibility.fadeDuration), value: state.stripShown)
             }
             strip(sessions: sessions)
                 .opacity(state.stripShown ? 1 : 0)
