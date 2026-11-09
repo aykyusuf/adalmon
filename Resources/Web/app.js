@@ -22,7 +22,8 @@
   const canvas = $('scene');
   const ctx = canvas.getContext('2d');
   const els = { dot: $('dot'), conn: $('conn'), counts: $('counts'), empty: $('empty'), error: $('error'), back: $('back'),
-                light: $('light'), loading: $('loading'), loadingText: $('loadingText'), tip: $('tip'), card: $('card') };
+                light: $('light'), loading: $('loading'), loadingText: $('loadingText'), tip: $('tip'), card: $('card'),
+                fs: $('fs'), pills: $('pills'), pillL: $('pillL'), pillR: $('pillR'), pillTime: $('pillTime'), pillDay: $('pillDay') };
 
   let layout = null;
   let assets = null;             // çözülmüş görseller (ImageBitmap) ve dizinler
@@ -37,6 +38,7 @@
   let hitBoards = [];
   let hitRacks = [];
   let dpr = 1;
+  let U = 1;                     // arayüz ölçeği (piksel): dpr * ekran yüksekliğine göre 1x (900 px) .. 2x
   let S = 1;
   let needsRedraw = true;
   let selected = null;           // açık kart: {a}
@@ -568,9 +570,10 @@
 
   function updateBar() {
     const n = state ? state.rooms.length : 0;
-    els.counts.textContent = state ? `${state.sessions} oturum · ${state.agents} ajan · ${state.working} çalışıyor` : '';
+    els.counts.textContent = summaryText(state);
     els.empty.hidden = n > 0;
     els.back.hidden = !focusId;
+    renderPillSummary();
   }
 
   // ---------- Yürüme ızgarası (temizlikçi / taşıyıcı) ----------
@@ -739,8 +742,43 @@
   }
 
   // ---------- Yerleşim ve kamera ----------
-  const PLAQUE_H = () => Math.round(30 * dpr);
-  const GAP = () => Math.round(14 * dpr);
+  const PLAQUE_H = () => Math.round(30 * U);
+  const GAP = () => Math.round(14 * U);
+  // Pano yerleşimi (OfficePanoLayout.swift portu): kenar boşluğu yatay %2, dikey %3 (başlık levhası hücreye dahil).
+  const PANO = { insetX: 0.02, insetY: 0.03 };
+  const uiScaleOf = (cssHeight) => clamp((cssHeight || 0) / 900, 1, 2);   // OfficePanoLayout.uiScale
+
+  // Saf hesap: n adet cw x ch oda, W x H piksel. Sütun sayısı en büyük ölçeği verir; sonra odalar eşit aralıkla dağıtılır
+  // (çok geniş ekranda aralık büyür, kenar boşluğundan küçük olamaz), satırlar dikeyde ortalanır; tek oda sığdırılıp ortalanır.
+  function panoArrange(W, H, n, cw, ch, gap, ph, maxScale) {
+    const mx = Math.round(W * PANO.insetX), my = Math.round(H * PANO.insetY);
+    let best = null;
+    for (let cols = 1; cols <= n; cols++) {
+      const rowsN = Math.ceil(n / cols);
+      const sx = (W - 2 * mx - gap * (cols - 1)) / (cols * cw);
+      const sy = (H - 2 * my - gap * (rowsN - 1) - ph * rowsN) / (rowsN * ch);
+      const sc = clamp(Math.min(sx, sy), 0.25, maxScale);
+      if (!best || sc > best.sc + 1e-6 || (Math.abs(sc - best.sc) <= 1e-6 && cols * rowsN < best.cols * best.rows)) best = { cols, rows: rowsN, sc };
+    }
+    const sc = best.sc, cellW = cw * sc, cellH = ch * sc + ph;
+    let gapX = gap;
+    if (best.cols > 1) {
+      gapX = (W - best.cols * cellW) / (best.cols + 1);
+      if (gapX < mx) gapX = (W - 2 * mx - best.cols * cellW) / (best.cols - 1);
+      gapX = Math.max(gap, gapX);
+    }
+    const gapY = best.rows > 1 ? Math.max(gap, (H - 2 * my - best.rows * cellH) / (best.rows + 1)) : 0;
+    const usedY = best.rows * cellH + gapY * (best.rows - 1);
+    const y0 = my + Math.max(0, (H - 2 * my - usedY) / 2);
+    const cells = [];
+    for (let i = 0; i < n; i++) {
+      const col = i % best.cols, row = Math.floor(i / best.cols);
+      const inRow = Math.min(best.cols, n - row * best.cols);
+      const rowW = inRow * cellW + gapX * (inRow - 1);
+      cells.push({ x: Math.round(Math.max(mx, (W - rowW) / 2) + col * (cellW + gapX)), y: Math.round(y0 + row * (cellH + gapY)) });
+    }
+    return { cols: best.cols, rows: best.rows, sc, cellW, cellH, mx, my, gapX, gapY, cells };
+  }
 
   // Kesirli ölçek: pencereye sığdır ve ortala (en çok 8x CSS pikseli); oda ızgarası en büyük ölçeği veren sütun sayısıyla seçilir.
   function layoutRooms() {
@@ -750,22 +788,11 @@
     const W = canvas.width, H = canvas.height;
     const shown = focusId && rooms.has(focusId) ? [rooms.get(focusId)] : list;
     const cw = Math.max(...shown.map((r) => r.td.w)), ch = Math.max(...shown.map((r) => r.td.h));
-    const gap = GAP(), ph = PLAQUE_H();
-    let best = null;
-    for (let cols = 1; cols <= shown.length; cols++) {
-      const rowsN = Math.ceil(shown.length / cols);
-      const sx = (W - gap * (cols + 1)) / (cols * cw);
-      const sy = (H - gap * (rowsN + 1) - ph * rowsN) / (rowsN * ch);
-      const sc = clamp(Math.min(sx, sy), 0.25, 8 * dpr);
-      if (!best || sc > best.sc + 1e-6 || (Math.abs(sc - best.sc) <= 1e-6 && cols * rowsN < best.cols * best.rows)) best = { cols, rows: rowsN, sc };
-    }
-    S = best.sc;
-    const cellW = cw * S + gap, cellH = ch * S + ph + gap;
-    const totalW = best.cols * cellW - gap, totalH = best.rows * cellH - gap;
-    const x0 = Math.round((W - totalW) / 2), y0 = Math.max(0, Math.round((H - totalH) / 2));
+    const ph = PLAQUE_H();
+    const arr = panoArrange(W, H, shown.length, cw, ch, GAP(), ph, 8 * dpr);
+    S = arr.sc;
     shown.forEach((room, i) => {
-      const col = i % best.cols, row = Math.floor(i / best.cols);
-      const cellX = x0 + col * cellW, cellY = y0 + row * cellH;
+      const cellX = arr.cells[i].x, cellY = arr.cells[i].y;
       const w = Math.round(room.td.w * S), h = Math.round(room.td.h * S);
       const x = Math.round(cellX + (cw * S - w) / 2), y = Math.round(cellY + ph + (ch * S - h) / 2);
       room.rect = { x, y, w, h, px: cellX, py: cellY, pw: cw * S, ph: ch * S + ph };
@@ -783,11 +810,11 @@
 
   function pill(x, y, w, h, fill, stroke, shadow) {
     ctx.save();
-    if (shadow) { ctx.shadowColor = 'rgba(8,10,18,0.28)'; ctx.shadowBlur = 5 * dpr; ctx.shadowOffsetY = 1.2 * dpr; }
+    if (shadow) { ctx.shadowColor = 'rgba(8,10,18,0.28)'; ctx.shadowBlur = 5 * U; ctx.shadowOffsetY = 1.2 * U; }
     ctx.fillStyle = fill;
     roundRect(x, y, w, h, h / 2); ctx.fill();
     ctx.restore();
-    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = Math.max(1, 0.5 * dpr); roundRect(x + 0.5, y + 0.5, w - 1, h - 1, h / 2); ctx.stroke(); }
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = Math.max(1, 0.5 * U); roundRect(x + 0.5, y + 0.5, w - 1, h - 1, h / 2); ctx.stroke(); }
   }
 
   const dropOf = (a) => (a.atSeat && !moving(a) ? layout.v3.vector.characters.sitDrop : 0);
@@ -1086,24 +1113,24 @@
     return { placements: result, overlaps };
   }
 
-  const labelMetrics = () => ({ step: Math.round(16 * dpr), height: Math.round(15 * dpr), margin: Math.round(2 * dpr) });
+  const labelMetrics = () => ({ step: Math.round(16 * U), height: Math.round(15 * U), margin: Math.round(2 * U) });
 
-  function labelFont() { return `600 ${Math.round(10 * dpr)}px -apple-system, system-ui, sans-serif`; }
+  function labelFont() { return `600 ${Math.round(10 * U)}px -apple-system, system-ui, sans-serif`; }
 
   // Pil genişliği: yazı + dolgular (drawLabel ile aynı hesap).
   function labelWidth(text) {
     ctx.font = labelFont();
-    return Math.ceil(ctx.measureText(text).width) + Math.round(6 * dpr) * 2 + Math.round(3 * dpr) * 2 + Math.round(3 * dpr);
+    return Math.ceil(ctx.measureText(text).width) + Math.round(6 * U) * 2 + Math.round(3 * U) * 2 + Math.round(3 * U);
   }
 
-  // Yalnızca üye/metin/konum/ölçek (ve dpr) değişince yeniden hesaplanır; kararsız (yürüyen/ayrılan) oyuncular dışarıda kalır.
+  // Yalnızca üye/metin/konum/ölçek (ve U) değişince yeniden hesaplanır; kararsız (yürüyen/ayrılan) oyuncular dışarıda kalır.
   function resolveRoomLabels(room, shown) {
     const cands = shown.filter((sh) => !moving(sh.o.a) && !sh.o.a.leaving);
-    const key = cands.map((sh) => `${sh.o.a.member.id}|${labelText(sh.o.a.member)}|${Math.round(sh.sx)}|${Math.round(sh.sy)}`).join(';') + `@${S}/${dpr}`;
+    const key = cands.map((sh) => `${sh.o.a.member.id}|${labelText(sh.o.a.member)}|${Math.round(sh.sx)}|${Math.round(sh.sy)}`).join(';') + `@${S}/${U}`;
     if (room.labelCache && room.labelCache.key === key) return room.labelCache.map;
     const items = cands.map((sh) => {
       const variants = labelVariants(labelText(sh.o.a.member));
-      return { id: sh.o.a.member.id, x: Math.round(sh.sx), y: Math.round(sh.sy + 2 * dpr), variants, widths: variants.map(labelWidth) };
+      return { id: sh.o.a.member.id, x: Math.round(sh.sx), y: Math.round(sh.sy + 2 * U), variants, widths: variants.map(labelWidth) };
     });
     const res = resolveLabels(items, labelMetrics());
     const map = new Map();
@@ -1115,16 +1142,16 @@
   function drawLabel(a, lk, sx, sy, place) {
     const m = a.member, text = place ? place.text : labelText(m), night = uiNight();
     ctx.font = labelFont();
-    const tw = Math.ceil(ctx.measureText(text).width), h = Math.round(15 * dpr), pad = Math.round(6 * dpr), dot = Math.round(3 * dpr);
-    const w = tw + pad * 2 + dot * 2 + Math.round(3 * dpr);
-    const x = Math.round(sx - w / 2), y = Math.round(sy + 2 * dpr) + (place ? place.level * Math.round(16 * dpr) : 0);
+    const tw = Math.ceil(ctx.measureText(text).width), h = Math.round(15 * U), pad = Math.round(6 * U), dot = Math.round(3 * U);
+    const w = tw + pad * 2 + dot * 2 + Math.round(3 * U);
+    const x = Math.round(sx - w / 2), y = Math.round(sy + 2 * U) + (place ? place.level * Math.round(16 * U) : 0);
     pill(x, y, w, h, night ? 'rgba(27,33,50,0.9)' : 'rgba(255,255,255,0.92)', night ? 'rgba(255,255,255,0.2)' : 'rgba(17,20,28,0.16)', true);
     const dotColor = m.kind === 'subagent' && m.role ? (m.role.tint || lk.shirt) : (m.appearance && m.appearance.tint) || lk.shirt;
     ctx.fillStyle = dotColor;
     ctx.beginPath(); ctx.arc(x + pad + dot, y + h / 2, dot, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = night ? '#E8ECF5' : '#1B2030';
     ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    ctx.fillText(text, x + pad + dot * 2 + Math.round(3 * dpr), y + h / 2 + 0.5);
+    ctx.fillText(text, x + pad + dot * 2 + Math.round(3 * U), y + h / 2 + 0.5);
     return { x, y, w, h };
   }
 
@@ -1132,8 +1159,8 @@
   function drawBubbles(list, room, t, obstacles) {
     const placed = (obstacles || []).slice();
     list.sort((p, q) => p.sx - q.sx || p.hy - q.hy);
-    const fs = Math.round(10.5 * dpr);
-    const tail = Math.round(4 * dpr), bh = Math.round(16 * dpr), pad = Math.round(7 * dpr), tip = Math.round(4 * dpr);
+    const fs = Math.round(10.5 * U);
+    const tail = Math.round(4 * U), bh = Math.round(16 * U), pad = Math.round(7 * U), tip = Math.round(4 * U);
     ctx.font = `500 ${fs}px -apple-system, system-ui, sans-serif`;
     for (const b of list) {
       const isText = b.bub.kind === 'text';
@@ -1147,17 +1174,17 @@
       if (x + w > room.x + room.w) x = room.x + room.w - w;
       if (x < room.x) x = room.x;
       const bob = b.bub.kind === 'alert' ? Math.sin(t / 190) * S : b.bub.kind === 'zzz' ? Math.sin(t / 400) * S : 0;
-      let y = Math.round(b.hy - h - (isText ? tail : 0) - 2 * dpr + bob);
+      let y = Math.round(b.hy - h - (isText ? tail : 0) - 2 * U + bob);
       for (let i = 0; i < 8; i++) {
         const hit = placed.some((p) => x < p.x + p.w + 1 && x + w + 1 > p.x && y < p.y + p.h + 1 && y + h + (isText ? tail : 0) + 1 > p.y);
-        if (hit) y -= h + (isText ? tail : 0) + Math.round(1 * dpr); else break;
+        if (hit) y -= h + (isText ? tail : 0) + Math.round(1 * U); else break;
       }
       placed.push({ x, y, w, h: h + (isText ? tail : 0) });
       if (!isText) { ctx.drawImage(b.img, x, y, w, h); continue; }
       ctx.save();
-      ctx.shadowColor = 'rgba(8,10,18,0.3)'; ctx.shadowBlur = 5 * dpr; ctx.shadowOffsetY = 1.5 * dpr;
+      ctx.shadowColor = 'rgba(8,10,18,0.3)'; ctx.shadowBlur = 5 * U; ctx.shadowOffsetY = 1.5 * U;
       ctx.fillStyle = 'rgba(255,255,255,0.98)';
-      roundRect(x, y, w, h, Math.round(7 * dpr)); ctx.fill();
+      roundRect(x, y, w, h, Math.round(7 * U)); ctx.fill();
       const tx = clamp(b.sx, x + pad, x + w - pad);
       ctx.beginPath(); ctx.moveTo(tx - tail, y + h - 1); ctx.lineTo(tx, y + h + tail); ctx.lineTo(tx + tail, y + h - 1); ctx.closePath(); ctx.fill();
       ctx.restore();
@@ -1174,39 +1201,39 @@
     const ap = layout.appearance[room.badge] || layout.appearance.unknown || { badgeText: '', tintHex: '#888888' };
     ctx.save();
     ctx.globalAlpha = room.alpha;
-    const fs = Math.round(12 * dpr), bfs = Math.round(9 * dpr), h = Math.round(22 * dpr), y = r.y - Math.round(28 * dpr), padX = Math.round(10 * dpr);
+    const fs = Math.round(12 * U), bfs = Math.round(9 * U), h = Math.round(22 * U), y = r.y - Math.round(28 * U), padX = Math.round(10 * U);
     ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
     const badge = ap.badgeText || '';
     ctx.font = `700 ${bfs}px -apple-system, system-ui, sans-serif`;
-    const bw = badge ? Math.ceil(ctx.measureText(badge).width) + Math.round(10 * dpr) : 0;
+    const bw = badge ? Math.ceil(ctx.measureText(badge).width) + Math.round(10 * U) : 0;
     ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
-    const maxName = Math.max(40, r.w - bw - padX * 3 - Math.round(44 * dpr));
+    const maxName = Math.max(40, r.w - bw - padX * 3 - Math.round(44 * U));
     let shown = room.title || '';
     while (shown.length > 1 && ctx.measureText(shown).width > maxName) shown = shown.slice(0, -1);
     if (shown !== (room.title || '')) shown = shown.slice(0, -1) + '…';
     const nameW = Math.ceil(ctx.measureText(shown).width);
-    const w = Math.min(r.w, nameW + bw + padX * 2 + (bw ? Math.round(8 * dpr) : 0));
+    const w = Math.min(r.w, nameW + bw + padX * 2 + (bw ? Math.round(8 * U) : 0));
     ctx.save();
-    ctx.shadowColor = 'rgba(8,10,18,0.35)'; ctx.shadowBlur = 6 * dpr; ctx.shadowOffsetY = 1.5 * dpr;
+    ctx.shadowColor = 'rgba(8,10,18,0.35)'; ctx.shadowBlur = 6 * U; ctx.shadowOffsetY = 1.5 * U;
     ctx.fillStyle = night ? 'rgba(42,49,68,0.96)' : 'rgba(247,248,250,0.97)';
-    roundRect(r.x, y, w, h, Math.round(8 * dpr)); ctx.fill();
+    roundRect(r.x, y, w, h, Math.round(8 * U)); ctx.fill();
     ctx.restore();
     ctx.fillStyle = rgbCss(g);
-    ctx.fillRect(r.x + Math.round(8 * dpr), y + h - Math.round(2.5 * dpr), w - Math.round(16 * dpr), Math.max(1, Math.round(1.6 * dpr)));
+    ctx.fillRect(r.x + Math.round(8 * U), y + h - Math.round(2.5 * U), w - Math.round(16 * U), Math.max(1, Math.round(1.6 * U)));
     ctx.fillStyle = night ? '#F1F3F8' : '#1B2030'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    ctx.fillText(shown, r.x + padX, y + h / 2 - 0.5 * dpr);
+    ctx.fillText(shown, r.x + padX, y + h / 2 - 0.5 * U);
     if (badge) {
-      const bx = r.x + padX + nameW + Math.round(8 * dpr), bh = Math.round(14 * dpr);
+      const bx = r.x + padX + nameW + Math.round(8 * U), bh = Math.round(14 * U);
       ctx.fillStyle = ap.tintHex || '#888';
-      roundRect(bx, y + (h - bh) / 2 - 1 * dpr, bw, bh, bh / 2); ctx.fill();
+      roundRect(bx, y + (h - bh) / 2 - 1 * U, bw, bh, bh / 2); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
       ctx.font = `700 ${bfs}px -apple-system, system-ui, sans-serif`;
-      ctx.fillText(badge, bx + bw / 2, y + h / 2 - 1 * dpr + 0.5);
+      ctx.fillText(badge, bx + bw / 2, y + h / 2 - 1 * U + 0.5);
     }
     if (room.overflow > 0) {
       const txt = `+${room.overflow}`;
       ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
-      const tw = Math.ceil(ctx.measureText(txt).width) + Math.round(14 * dpr);
+      const tw = Math.ceil(ctx.measureText(txt).width) + Math.round(14 * U);
       pill(r.x + r.w - tw, y, tw, h, '#FF8A00', null, true);
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
       ctx.fillText(txt, r.x + r.w - tw / 2, y + h / 2);
@@ -1214,12 +1241,124 @@
     ctx.restore();
   }
 
+  // ---------- Arka plan (pano): önbellekli ofscreen görseller ----------
+  // OfficeBackdrop.swift paleti/çizimi: gündüz krem->bej + tahta deseni + vinyet; gece lacivert->mor-lacivert + yıldız + bokeh.
+  // Görsel boyut/tema değişince BİR KEZ çizilir; her karede yalnızca drawImage (gündüz/gece geçişi light.level ile 1 sn crossfade).
+  const BACKDROP = {
+    day: { top: [0.984, 0.957, 0.902], bottom: [0.902, 0.835, 0.722], glow: [1.0, 0.953, 0.855], glowAlpha: 0.55, vignette: [0.66, 0.54, 0.36], vignetteAlpha: 0.20, plankAlpha: 0.08, stars: 0, bokeh: 0 },
+    night: { top: [0.039, 0.063, 0.188], bottom: [0.145, 0.106, 0.290], glow: [1.0, 0.69, 0.40], glowAlpha: 0.13, vignette: [0.012, 0.016, 0.06], vignetteAlpha: 0.50, plankAlpha: 0, stars: 170, bokeh: 16 },
+    maxEdge: 1280,
+  };
+  const backdropCache = new Map();
+  const shadowCache = new Map();
+  const cacheStats = { backdrops: 0, shadows: 0 };
+
+  // En-boy oranı 0.05'lik kovalara yuvarlanır; en uzun kenar 1280 (canvas'a gerilerek çizilir).
+  function backdropSize(W, H) {
+    const aspect = Math.min(4, Math.max(0.4, W / Math.max(H, 1)));
+    const bucket = Math.round(aspect * 20), a = bucket / 20, M = BACKDROP.maxEdge;
+    if (a >= 1) return { w: M, h: Math.max(1, Math.round(M / a)), bucket };
+    return { w: Math.max(1, Math.round(M * a)), h: M, bucket };
+  }
+  const backdropKey = (night, W, H) => { const s = backdropSize(W, H); return (night ? 'n' : 'd') + s.w + 'x' + s.h; };
+
+  function renderBackdrop(night, w, h) {
+    const p = night ? BACKDROP.night : BACKDROP.day, c = newCanvas(w, h), g = c.getContext('2d');
+    const s = h / 720, rnd = rng(7);
+    const range = (lo, hi) => lo + (hi - lo) * rnd();
+    let grad = g.createLinearGradient(w * 0.15, 0, w * 0.85, h);
+    grad.addColorStop(0, rgbCss(p.top)); grad.addColorStop(1, rgbCss(p.bottom));
+    g.fillStyle = grad; g.fillRect(0, 0, w, h);
+    if (p.plankAlpha > 0) {
+      const rowsN = 9, ph = h / rowsN, pw = w / 4.2;
+      for (let r = 0; r < rowsN; r++) {
+        if (r % 2 === 0) { g.fillStyle = rgbCss([0.45, 0.32, 0.16], p.plankAlpha * 0.45); g.fillRect(0, r * ph, w, ph); }
+        g.fillStyle = rgbCss([0.45, 0.32, 0.16], p.plankAlpha);
+        g.fillRect(0, r * ph, w, Math.max(1, s));
+        for (let x = -range(0, pw); x < w; x += pw * range(0.85, 1.15)) g.fillRect(x, r * ph, Math.max(1, s), ph);
+      }
+    }
+    const radial = (cx, cy, r, stops) => {
+      const rg = g.createRadialGradient(cx, cy, 0, cx, cy, r);
+      for (const [at, col] of stops) rg.addColorStop(at, col);
+      g.fillStyle = rg; g.fillRect(cx - r, cy - r, r * 2, r * 2);
+    };
+    radial(w / 2, h * 0.52, Math.max(w, h) * 0.62, [[0, rgbCss(p.glow, p.glowAlpha)], [1, rgbCss(p.glow, 0)]]);
+    for (let i = 0; i < p.stars; i++) {
+      const x = range(0, w), y = h * Math.pow(rnd(), 1.6), r = range(0.6, 1.7) * s;
+      g.fillStyle = rgbCss([0.86, 0.9, 1], range(0.10, 0.42));
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    }
+    const tones = [[1, 0.72, 0.42], [0.45, 0.8, 0.95], [0.72, 0.55, 1]];
+    for (let i = 0; i < p.bokeh; i++) {
+      const low = i % 3 !== 0, x = range(0, w), y = low ? range(h * 0.7, h) : range(0, h * 0.7), r = range(9, 28) * s, tone = tones[i % tones.length];
+      radial(x, y, r, [[0.55, rgbCss(tone, range(0.05, 0.10))], [1, rgbCss(tone, 0)]]);
+    }
+    const vr = Math.hypot(w, h) / 2;
+    const vg = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, vr);
+    vg.addColorStop(0, rgbCss(p.vignette, 0)); vg.addColorStop(0.55, rgbCss(p.vignette, 0)); vg.addColorStop(1, rgbCss(p.vignette, p.vignetteAlpha));
+    g.fillStyle = vg; g.fillRect(0, 0, w, h);
+    return c;
+  }
+
+  function getBackdrop(night, W, H) {
+    const key = backdropKey(night, W, H), hit = backdropCache.get(key);
+    if (hit) return hit;
+    const s = backdropSize(W, H), img = renderBackdrop(night, s.w, s.h);
+    if (backdropCache.size >= 6) backdropCache.delete(backdropCache.keys().next().value);
+    backdropCache.set(key, img);
+    cacheStats.backdrops += 1;
+    return img;
+  }
+
+  function drawBackdrop() {
+    const W = canvas.width, H = canvas.height, lv = light.level;
+    ctx.globalAlpha = 1;
+    if (lv < 0.999) ctx.drawImage(getBackdrop(false, W, H), 0, 0, W, H);
+    if (lv > 0.001) { ctx.globalAlpha = lv < 0.999 ? lv : 1; ctx.drawImage(getBackdrop(true, W, H), 0, 0, W, H); ctx.globalAlpha = 1; }
+  }
+
+  // Oda çevresi: gündüz yumuşak gölge, gece sıcak amber parıltı (OfficeRoomShadow). Boyut/tema başına bir kez çizilir.
+  const shadowPad = (r) => Math.round(clamp(Math.min(r.w, r.h) * 0.1, 10 * dpr, 56 * dpr));
+  function getRoomShadow(w, h, pad, night) {
+    const key = w + 'x' + h + 'p' + pad + (night ? 'n' : 'd'), hit = shadowCache.get(key);
+    if (hit) return hit;
+    const c = newCanvas(w + pad * 2, h + pad * 2), g = c.getContext('2d');
+    g.shadowColor = night ? 'rgba(255,178,97,0.40)' : 'rgba(77,51,20,0.38)';
+    g.shadowBlur = pad * 0.9;
+    g.shadowOffsetX = 0; g.shadowOffsetY = night ? 0 : pad * 0.28;
+    g.fillStyle = '#000'; g.fillRect(pad, pad, w, h);
+    g.shadowColor = 'rgba(0,0,0,0)'; g.shadowBlur = 0; g.shadowOffsetY = 0;
+    g.globalCompositeOperation = 'destination-out';
+    g.fillRect(pad, pad, w, h);
+    if (shadowCache.size >= 16) shadowCache.delete(shadowCache.keys().next().value);
+    shadowCache.set(key, c);
+    cacheStats.shadows += 1;
+    return c;
+  }
+
+  function drawRoomShadow(room) {
+    const r = room.rect;
+    if (!r || room.alpha <= 0.001) return;
+    const lv = light.level, pad = shadowPad(r);
+    for (const night of [false, true]) {
+      const a = room.alpha * (night ? lv : 1 - lv);
+      if (a <= 0.001) continue;
+      ctx.globalAlpha = a;
+      ctx.drawImage(getRoomShadow(r.w, r.h, pad, night), r.x - pad, r.y - pad);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function draw(t) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawBackdrop();
+    syncPanoTheme();
     hitActors = []; hitBoards = []; hitRacks = [];
+    for (const room of rooms.values()) drawRoomShadow(room);
+    ctx.globalAlpha = 1;
     for (const room of rooms.values()) drawRoom(room, t);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
@@ -1429,8 +1568,10 @@
     if (document.hidden) {
       hiddenAt = nowMs();
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      stopClock();
       return;
     }
+    if (pillsOn()) { renderClock(); startClock(); }
     const away = nowMs() - hiddenAt;
     if (away > 2000) {
       // Gizliyken çizim durdu: hareketleri hemen tamamla, temizlikçi/taşıyıcı sahnesini bırak (zamanlayıcılar öteleniyor).
@@ -1449,17 +1590,21 @@
   function resize() {
     dpr = Math.min(2, window.devicePixelRatio || 1);
     const rect = canvas.getBoundingClientRect();
+    uiK = uiScaleOf(rect.height);
+    U = dpr * uiK;
     canvas.width = Math.max(1, Math.round(rect.width * dpr));
     canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    for (const p of [els.pillL, els.pillR]) if (p) p.style.fontSize = (12.5 * uiK) + 'px';
     layoutRooms();
     kick();
   }
-  let resizeQueued = false;
-  window.addEventListener('resize', () => {
+  let resizeQueued = false, uiK = 1;
+  function queueResize() {
     if (resizeQueued) return;
     resizeQueued = true;
     requestAnimationFrame(() => { resizeQueued = false; resize(); });
-  });
+  }
+  window.addEventListener('resize', queueResize);
 
   function toCanvas(e) {
     const rect = canvas.getBoundingClientRect();
@@ -1517,6 +1662,8 @@
   });
   canvas.addEventListener('pointerleave', () => { hover = null; if (els.tip) els.tip.hidden = true; });
   window.addEventListener('keydown', (e) => {
+    wakeBar();
+    if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey && !isFormTarget(e.target)) { toggleFullscreen(); return; }
     if (e.key === 'Escape') { escape(); return; }
     if ((e.key === ' ' || e.code === 'Space') && (!e.target || e.target === document.body || e.target === canvas)) {
       if (escape()) e.preventDefault();
@@ -1530,6 +1677,136 @@
       kick();
     });
   }
+
+  // ---------- Tam ekran, otomatik gizlenen çubuk, köşe pill'leri (DOM; çizim döngüsünü uyandırmaz) ----------
+  const IDLE_MS = 3000, BAR_ZONE = 44;
+  const pano = { fs: false, idle: false, lastAct: 0, pointerY: Infinity, idleTimer: 0, clockTimer: 0, night: null };
+  const PILLS_KEY = 'adalmon-pano-pills';
+  const DAYS_TR = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+  const MONTHS_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+  const SHIFT = { stepMs: 300000, max: 8, cycle: [[0, 0], [1, 0], [1, 1], [0, 1]] };   // OfficePanoBurnIn: 5 dk, 4 konum
+
+  function setClass(el, name, on) {
+    if (!el) return;
+    const parts = String(el.className || '').split(/\s+/).filter(Boolean), i = parts.indexOf(name);
+    if (on && i < 0) parts.push(name); else if (!on && i >= 0) parts.splice(i, 1); else return;
+    el.className = parts.join(' ');
+  }
+  const isFormTarget = (t) => !!t && (t.tagName === 'SELECT' || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
+
+  const summaryText = (s) => (s ? `${s.sessions} oturum · ${s.agents} ajan · ${s.working} çalışıyor` : '');
+  const timeText = (d) => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const dayText = (d) => `${DAYS_TR[d.getDay()]} ${d.getDate()} ${MONTHS_TR[d.getMonth()]}`;
+  function burnInOffset(ms) {
+    const step = Math.floor(ms / SHIFT.stepMs), p = SHIFT.cycle[((step % SHIFT.cycle.length) + SHIFT.cycle.length) % SHIFT.cycle.length];
+    return { dx: p[0] * SHIFT.max, dy: p[1] * SHIFT.max };
+  }
+
+  const isFullscreen = () => !!document.fullscreenElement;
+  function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) {
+        const p = document.exitFullscreen && document.exitFullscreen();
+        if (p && p.catch) p.catch(() => {});
+        return;
+      }
+      const root = document.documentElement || document.body;
+      const p = root && root.requestFullscreen && root.requestFullscreen();
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) { /* tam ekran reddedildi */ }
+  }
+
+  function applyIdleClass() {
+    setClass(document.body, 'idle', pano.fs && pano.idle);     // çubuk solar, imleç gizlenir
+  }
+  function scheduleIdle(ms) {
+    if (pano.idleTimer) return;
+    pano.idleTimer = setTimeout(idleCheck, ms);
+  }
+  // Tek zamanlayıcı: etkinlik oldukça yeniden kurulmaz, süre dolunca kalan süreye bakılır; imleç üst kenardaysa çubuk kalır.
+  function idleCheck() {
+    pano.idleTimer = 0;
+    if (!pano.fs) return;
+    const rest = pano.lastAct + IDLE_MS - nowMs();
+    if (rest > 0) { scheduleIdle(rest); return; }
+    if (pano.pointerY <= BAR_ZONE) { scheduleIdle(IDLE_MS); return; }
+    pano.idle = true;
+    applyIdleClass();
+  }
+  function wakeBar() {
+    pano.lastAct = nowMs();
+    if (pano.idle) { pano.idle = false; applyIdleClass(); }
+    if (pano.fs) scheduleIdle(IDLE_MS);
+  }
+  function onFullscreenChange() {
+    pano.fs = isFullscreen();
+    setClass(document.body, 'fs', pano.fs);
+    if (els.fs) els.fs.textContent = pano.fs ? 'Tam ekrandan çık' : 'Tam ekran';
+    pano.idle = false;
+    if (!pano.fs && pano.idleTimer) { clearTimeout(pano.idleTimer); pano.idleTimer = 0; }
+    applyIdleClass();
+    wakeBar();
+    applyPills();
+    queueResize();
+  }
+
+  function pillsOn() {
+    const v = store.get(PILLS_KEY);
+    return v === 'on' ? true : v === 'off' ? false : pano.fs;     // varsayılan: yalnızca tam ekranda açık
+  }
+  function renderPillSummary() {
+    if (!els.pillL) return;
+    els.pillL.textContent = summaryText(state);
+    els.pillL.hidden = !pillsOn() || !els.pillL.textContent;
+  }
+  function renderClock() {
+    const d = new Date(), o = burnInOffset(d.getTime());
+    if (els.pillTime) els.pillTime.textContent = timeText(d);
+    if (els.pillDay) els.pillDay.textContent = dayText(d);
+    if (els.pillL) els.pillL.style.transform = `translate(${o.dx}px, ${o.dy}px)`;
+    if (els.pillR) els.pillR.style.transform = `translate(${-o.dx}px, ${o.dy}px)`;
+  }
+  function startClock() {
+    if (pano.clockTimer || document.hidden) return;
+    pano.clockTimer = setTimeout(clockTick, 60000 - (nowMs() % 60000) + 20);   // bir sonraki dakika sınırı
+  }
+  function stopClock() {
+    if (pano.clockTimer) { clearTimeout(pano.clockTimer); pano.clockTimer = 0; }
+  }
+  function clockTick() {
+    pano.clockTimer = 0;
+    if (document.hidden || !pillsOn()) return;
+    renderClock();
+    startClock();
+  }
+  function applyPills() {
+    const on = pillsOn();
+    setClass(document.body, 'pills', on);
+    if (els.pills) els.pills.checked = on;
+    if (els.pillR) els.pillR.hidden = !on;
+    renderPillSummary();
+    if (on) { renderClock(); startClock(); } else stopClock();
+  }
+  // Gündüz/gece görünümü (yalnızca eşik geçilince DOM'a dokunur).
+  function syncPanoTheme() {
+    const n = uiNight();
+    if (pano.night === n) return;
+    pano.night = n;
+    setClass(els.pillL, 'night', n); setClass(els.pillR, 'night', n);
+  }
+
+  document.addEventListener('fullscreenchange', onFullscreenChange);
+  for (const type of ['pointermove', 'pointerdown', 'wheel']) {
+    document.addEventListener(type, (e) => { if (type === 'pointermove' && e && typeof e.clientY === 'number') pano.pointerY = e.clientY; wakeBar(); });
+  }
+  if (els.fs) {
+    if (document.fullscreenEnabled === false) els.fs.hidden = true;
+    els.fs.addEventListener('click', toggleFullscreen);
+  }
+  if (els.pills) {
+    els.pills.addEventListener('change', () => { store.set(PILLS_KEY, els.pills.checked ? 'on' : 'off'); applyPills(); });
+  }
+  applyPills();
 
   // ---------- SSE ----------
   let source = null, retry = 1000, failures = 0;
@@ -1580,7 +1857,9 @@
   if (TEST) {
     TEST.api = { apply, layoutRooms, frame, advance, draw, animating, prepare, buildCard, openCard, closeCard, escape, setFocus, bakeSheet, heartbeat, scheduleActors,
                  rooms, tierData, light, labelVariants, resolveLabels, labelMetrics, wantNight, localNight, applyServerLighting, stepLight, poseOf, bubbleOf, lookOf, startCleaner, bfs, boardTile,
-                 get S() { return S; }, get assets() { return assets; }, get layout() { return layout; }, get selected() { return selected; },
+                 panoArrange, uiScaleOf, backdropSize, backdropKey, getBackdrop, getRoomShadow, cacheStats, backdropCache, summaryText, timeText, dayText, burnInOffset,
+                 toggleFullscreen, onFullscreenChange, wakeBar, idleCheck, pillsOn, applyPills, renderClock, clockTick, isFormTarget, pano, resize,
+                 get U() { return U; }, get S() { return S; }, get assets() { return assets; }, get layout() { return layout; }, get selected() { return selected; },
                  get focusId() { return focusId; }, get hitActors() { return hitActors; }, get hitBoards() { return hitBoards; }, get hitRacks() { return hitRacks; }, get raf() { return raf; }, get needsRedraw() { return needsRedraw; },
                  set needsRedraw(v) { needsRedraw = v; } };
   }

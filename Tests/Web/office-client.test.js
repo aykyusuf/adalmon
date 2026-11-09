@@ -36,6 +36,7 @@ function makeCtx(cv) {
       if (p in state) return state[p];
       return (...args) => {
         calls[p] = (calls[p] || 0) + 1;
+        if (p === 'createLinearGradient' || p === 'createRadialGradient') return { addColorStop() {} };
         if (p === 'drawImage') ops.push(['drawImage', state.globalCompositeOperation, args[0] && args[0].__name]);
         if (p === 'putImageData') ops.push(['putImageData', args[0]]);
         if (p === 'fillRect') ops.push(['fillRect', state.globalCompositeOperation, state.fillStyle]);
@@ -62,6 +63,7 @@ function makeEl(tag, doc) {
       return walk(this);
     },
     getBoundingClientRect() { return { left: 0, top: 0, width: 1000, height: 700 }; },
+    requestFullscreen() { this.fsRequested = (this.fsRequested || 0) + 1; return Promise.resolve(); },
     fire(type, ev) { (this.listeners[type] || []).forEach((fn) => fn(ev || {})); },
   };
   if (tag === 'canvas') {
@@ -79,15 +81,20 @@ function makeEnv(opts = {}) {
   }
   const byId = {};
   const doc = {
-    hidden: false, body: null, listeners: {},
+    hidden: false, body: null, listeners: {}, fullscreenElement: null, documentElement: null, exits: 0,
+    exitFullscreen() { this.exits += 1; return Promise.resolve(); },
+    fire(type, ev) { (this.listeners[type] || []).forEach((fn) => fn(ev || {})); },
     createElement: (t) => makeEl(t),
     getElementById: (id) => byId[id] || null,
     addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); },
   };
-  for (const id of ['scene', 'dot', 'conn', 'counts', 'empty', 'error', 'back', 'light', 'loading', 'loadingText', 'tip', 'card']) byId[id] = makeEl(id === 'scene' ? 'canvas' : 'div', doc);
+  for (const id of ['scene', 'dot', 'conn', 'counts', 'empty', 'error', 'back', 'light', 'loading', 'loadingText', 'tip', 'card', 'fs', 'pills', 'pillL', 'pillR', 'pillTime', 'pillDay']) byId[id] = makeEl(id === 'scene' ? 'canvas' : 'div', doc);
   byId.scene.width = 1000; byId.scene.height = 700;
   byId.card.hidden = true; byId.tip.hidden = true; byId.error.hidden = true; byId.empty.hidden = true; byId.back.hidden = true;
   doc.body = makeEl('body');
+  doc.documentElement = makeEl('html');
+  byId.pillL.hidden = true; byId.pillR.hidden = true; byId.pills.checked = false; byId.fs.textContent = 'Tam ekran';
+  const timers = [];
   const rafQueue = [];
   const intervals = [];
   const sources = [];
@@ -114,7 +121,9 @@ function makeEnv(opts = {}) {
     requestAnimationFrame: (cb) => { rafQueue.push(cb); return rafQueue.length; },
     cancelAnimationFrame: () => { rafQueue.length = 0; },
     setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
-    clearInterval: () => {}, setTimeout: () => 1, clearTimeout: () => {},
+    clearInterval: () => {},
+    setTimeout: (fn, ms) => { const t = { fn, at: clock.t + ms, live: true }; timers.push(t); return t; },
+    clearTimeout: (t) => { if (t) t.live = false; },
     console, __ADALMON_TEST__: {}, Uint8Array, Uint8ClampedArray, Promise, Math, JSON, Map, Set, Object, Array, String, Number, Error, Symbol, Proxy,
   };
   sandbox.globalThis = sandbox;
@@ -124,7 +133,18 @@ function makeEnv(opts = {}) {
   const T = sandbox.__ADALMON_TEST__;
   let ts = 1000;
   return {
-    T, byId, doc, sources, store, fetches, clock, sandbox, intervals,
+    T, byId, doc, sources, store, fetches, clock, sandbox, intervals, timers,
+    // sahte zaman: ms ilerlet, vadesi gelen (canlı) zamanlayıcıları sırayla çalıştır
+    tick(ms) {
+      const end = clock.t + ms;
+      for (;;) {
+        const due = timers.filter((t) => t.live && t.at <= end).sort((a, b) => a.at - b.at)[0];
+        if (!due) break;
+        due.live = false; clock.t = Math.max(clock.t, due.at); due.fn();
+      }
+      clock.t = end;
+    },
+    pending() { return timers.filter((t) => t.live).length; },
     get api() { return T.api; },
     async ready() { await T.ready; return T.api; },
     // n kare: rAF kuyruğundaki sıradaki çağrıyı, 100 ms ilerleterek çalıştırır
@@ -613,6 +633,303 @@ test('etiket çözümü: odada 5 "general-purpose" alt ajanı çizimde çakışm
   const cache = r.labelCache;
   api.draw(e.clock.t + 16);
   assert.strictEqual(r.labelCache, cache, 'değişiklik yokken yeniden hesaplanmaz');
+});
+
+// ---------- Pano modu (arka plan, yerleşim, tam ekran, köşe pill'leri) ----------
+const hasClass = (el, c) => String(el.className).split(/\s+/).includes(c);
+const enterFs = (e) => { e.doc.fullscreenElement = e.doc.documentElement; e.doc.fire('fullscreenchange'); };
+const leaveFs = (e) => { e.doc.fullscreenElement = null; e.doc.fire('fullscreenchange'); };
+
+test('arka plan: boyut kovası ve önbellek anahtarı (tema + boyut); aynı anahtar yeniden çizilmez', async () => {
+  const e = makeEnv();
+  const api = await e.ready();
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(api.backdropSize(1920, 1080))), { w: 1280, h: 711, bucket: 36 });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(api.backdropSize(3440, 1440))), { w: 1280, h: 533, bucket: 48 });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(api.backdropSize(500, 1000))), { w: 640, h: 1280, bucket: 10 });
+  assert.notStrictEqual(api.backdropKey(false, 1920, 1080), api.backdropKey(true, 1920, 1080));
+  assert.strictEqual(api.backdropKey(false, 1920, 1080), api.backdropKey(false, 1930, 1086), 'aynı en-boy kovası -> aynı anahtar');
+  const before = api.cacheStats.backdrops;
+  const d1 = api.getBackdrop(false, 1000, 700), d2 = api.getBackdrop(false, 1000, 700);
+  assert.strictEqual(d1, d2);
+  assert.strictEqual(api.cacheStats.backdrops, before + 1);
+  const n1 = api.getBackdrop(true, 1000, 700);
+  assert.notStrictEqual(n1, d1);
+  assert.strictEqual(api.cacheStats.backdrops, before + 2);
+  api.getBackdrop(false, 2000, 700);                     // farklı en-boy oranı -> yeni görsel
+  assert.strictEqual(api.cacheStats.backdrops, before + 3);
+  assert.ok(api.backdropCache.size <= 6);
+});
+
+test('arka plan: gece ~170 statik yıldız çizer, gündüz çizmez; çizim döngüsü yeniden üretmez', async () => {
+  const e = makeEnv();
+  const api = await e.ready();
+  const day = api.getBackdrop(false, 1000, 700), night = api.getBackdrop(true, 1000, 700);
+  assert.strictEqual(night.getContext('2d').__calls.arc, 170);
+  assert.strictEqual(day.getContext('2d').__calls.arc || 0, 0);
+  assert.ok(day.getContext('2d').__calls.fillRect > 9, 'tahta deseni');
+  e.sources[0].onmessage({ data: JSON.stringify(snapshot(e.clock, [room({ members: [execM({}), member({})] })])) });
+  e.frames(6);
+  const built = api.cacheStats.backdrops, shadows = api.cacheStats.shadows;
+  assert.ok(shadows >= 1, 'oda gölgesi bir kez üretildi');
+  e.frames(10);
+  api.draw(e.clock.t); api.draw(e.clock.t + 16);
+  assert.strictEqual(api.cacheStats.backdrops, built, 'her karede yeniden hesaplanmaz');
+  assert.strictEqual(api.cacheStats.shadows, shadows);
+  const r = api.rooms.get('sess1').rect, pad = Math.round(Math.min(Math.max(Math.min(r.w, r.h) * 0.1, 10), 56));
+  assert.strictEqual(api.getRoomShadow(r.w, r.h, pad, false), api.getRoomShadow(r.w, r.h, pad, false));
+});
+
+test('ışık geçişi: gündüz->gece 1 sn crossfade iki arka planı birlikte çizer; sunucu resolvedNight esas; pill teması izler', async () => {
+  const e = makeEnv();
+  const api = await e.ready();
+  e.sources[0].onmessage({ data: JSON.stringify(snapshot(e.clock, [room({ members: [execM({}), member({})] })])) });
+  e.frames(3);
+  const dayBd = api.getBackdrop(false, 1000, 700), nightBd = api.getBackdrop(true, 1000, 700);
+  dayBd.__name = 'bd:day'; nightBd.__name = 'bd:night';
+  assert.strictEqual(api.light.level, 0);
+  const ops = e.ctx.__ops;
+  let from = ops.length;
+  api.draw(e.clock.t);
+  let names = ops.slice(from).map((o) => o[2]);
+  assert.ok(names.includes('bd:day') && !names.includes('bd:night'), 'gündüz: yalnızca gündüz arka planı');
+  assert.ok(!hasClass(e.byId.pillL, 'night'));
+  // sunucu geceyi bildirir (yerel saat gündüz) -> crossfade başlar
+  e.sources[0].onmessage({ data: JSON.stringify(snapshot(e.clock, [room({ members: [execM({}), member({})] })], { lighting: { mode: 'auto', nightStartHour: 19, nightStartMinute: 30, nightEndHour: 6, nightEndMinute: 30, resolvedNight: true } })) });
+  assert.strictEqual(api.wantNight(), true);
+  e.frames(4);
+  assert.ok(api.light.level > 0.05 && api.light.level < 0.95, 'geçiş ortasında: ' + api.light.level);
+  from = ops.length;
+  api.draw(e.clock.t);
+  names = ops.slice(from).map((o) => o[2]);
+  assert.ok(names.includes('bd:day') && names.includes('bd:night'), 'geçişte iki arka plan');
+  e.frames(15);
+  assert.strictEqual(api.light.level, 1);
+  from = ops.length;
+  api.draw(e.clock.t);
+  names = ops.slice(from).map((o) => o[2]);
+  assert.ok(names.includes('bd:night') && !names.includes('bd:day'), 'gece: yalnızca gece arka planı');
+  assert.ok(hasClass(e.byId.pillL, 'night') && hasClass(e.byId.pillR, 'night'));
+  // geceyi elle gündüze al
+  e.byId.light.value = 'day'; e.byId.light.fire('change');
+  e.frames(15);
+  assert.strictEqual(api.light.level, 0);
+  assert.ok(!hasClass(e.byId.pillL, 'night'));
+});
+
+test('yerleşim: yatay %2 / dikey %3 kenar boşluğu, tek oda sığdırılıp ortalanır', async () => {
+  const api = await makeEnv().ready();
+  const W = 1920, H = 1080, cw = 160, ch = 192, gap = 14, ph = 30;
+  const one = api.panoArrange(W, H, 1, cw, ch, gap, ph, 8);
+  assert.strictEqual(one.mx, 38); assert.strictEqual(one.my, 32);
+  const h = ch * one.sc + ph, w = cw * one.sc;
+  assert.ok(Math.abs(h - (H - 2 * one.my)) < 0.5, 'yükseklik (levha dahil) kenar boşluklarına sığar: ' + h);
+  assert.ok(Math.abs(one.cells[0].x - (W - w) / 2) <= 1, 'yatay ortalı');
+  assert.ok(Math.abs(one.cells[0].y - one.my) <= 1);
+  const four = api.panoArrange(W, H, 4, cw, ch, gap, ph, 8);
+  for (const c of four.cells) {
+    assert.ok(c.x >= four.mx - 1 && c.x + cw * four.sc <= W - four.mx + 1, 'yatay kenar boşluğu');
+    assert.ok(c.y >= four.my - 1 && c.y + four.cellH <= H - four.my + 1, 'dikey kenar boşluğu');
+  }
+  const two = api.panoArrange(500, 1000, 3, cw, ch, gap, ph, 8);   // dar/portre: kenar boşluğu korunur
+  for (const c of two.cells) assert.ok(c.x >= two.mx - 1 && c.x + cw * two.sc <= 500 - two.mx + 1);
+  assert.ok(two.sc >= 0.25);
+});
+
+test('yerleşim: 21:9 ve üstü geniş ekranda odalar eşit aralıklı (kenar boşluğu = oda arası)', async () => {
+  const api = await makeEnv().ready();
+  for (const [W, H, n] of [[3440, 1440, 2], [5120, 1440, 3]]) {
+    const a = api.panoArrange(W, H, n, 160, 192, 14, 30, 8);
+    assert.strictEqual(a.cols, n);
+    const xs = a.cells.map((c) => c.x), w = 160 * a.sc;
+    const g1 = xs[1] - xs[0] - w, g2 = xs[n - 1] - xs[n - 2] - w, left = xs[0], right = W - (xs[n - 1] + w);
+    assert.ok(Math.abs(g1 - g2) <= 1.5, 'oda arası eşit');
+    assert.ok(Math.abs(left - g1) <= 1.5 && Math.abs(right - g1) <= 1.5, `kenar = aralık (${left}, ${g1}, ${right})`);
+    assert.ok(g1 > 14, 'aralık geniş ekranda büyür');
+  }
+  // layoutRooms entegrasyonu: tek oda levha dahil kenar boşlukları içinde
+  const e = makeEnv();
+  const api2 = await e.ready();
+  e.sources[0].onmessage({ data: JSON.stringify(snapshot(e.clock, [room({ members: [execM({}), member({})] })])) });
+  const r = api2.rooms.get('sess1').rect, cv = e.byId.scene;
+  assert.ok(r.x >= cv.width * 0.02 - 1 && r.x + r.w <= cv.width * 0.98 + 1);
+  assert.ok(r.py >= cv.height * 0.03 - 1 && r.py + r.ph <= cv.height * 0.97 + 1);
+});
+
+test('arayüz ölçeği: 900 px ve altı 1x, 1800 px ve üstü 2x; etiket/levha ölçüleri izler', async () => {
+  const e = makeEnv();
+  const api = await e.ready();
+  assert.strictEqual(api.uiScaleOf(700), 1); assert.strictEqual(api.uiScaleOf(900), 1);
+  assert.strictEqual(api.uiScaleOf(1350), 1.5); assert.strictEqual(api.uiScaleOf(1800), 2); assert.strictEqual(api.uiScaleOf(4000), 2);
+  assert.strictEqual(api.U, 1);
+  const step1 = api.labelMetrics().step;
+  e.byId.scene.getBoundingClientRect = () => ({ left: 0, top: 0, width: 3200, height: 1800 });
+  api.resize();
+  assert.strictEqual(api.U, 2);
+  assert.strictEqual(api.labelMetrics().step, step1 * 2);
+  assert.strictEqual(e.byId.pillL.style.fontSize, '25px');
+});
+
+test('tam ekran: durum makinesi (düğme, fullscreenchange, etiket, gövde sınıfı), F tuşu', async () => {
+  const e = makeEnv();
+  await e.ready();
+  const api = e.api;
+  assert.ok(!hasClass(e.doc.body, 'fs'));
+  assert.strictEqual(e.byId.fs.textContent, 'Tam ekran');
+  e.byId.fs.fire('click');
+  assert.strictEqual(e.doc.documentElement.fsRequested, 1, 'requestFullscreen çağrıldı');
+  enterFs(e);
+  assert.strictEqual(api.pano.fs, true);
+  assert.ok(hasClass(e.doc.body, 'fs'));
+  assert.strictEqual(e.byId.fs.textContent, 'Tam ekrandan çık');
+  e.byId.fs.fire('click');
+  assert.strictEqual(e.doc.exits, 1, 'exitFullscreen çağrıldı');
+  leaveFs(e);
+  assert.strictEqual(api.pano.fs, false);
+  assert.ok(!hasClass(e.doc.body, 'fs') && !hasClass(e.doc.body, 'idle'));
+  assert.strictEqual(e.byId.fs.textContent, 'Tam ekran');
+  const win = e.sandbox.window;
+  win.fire('keydown', { key: 'f', target: e.doc.body });
+  assert.strictEqual(e.doc.documentElement.fsRequested, 2, 'F tuşu');
+  win.fire('keydown', { key: 'F', ctrlKey: true, target: e.doc.body });
+  win.fire('keydown', { key: 'f', target: { tagName: 'SELECT' } });
+  assert.strictEqual(e.doc.documentElement.fsRequested, 2, 'Ctrl+F ve form alanı yok sayılır');
+  enterFs(e);
+  win.fire('keydown', { key: 'f', target: e.doc.body });
+  assert.strictEqual(e.doc.exits, 2, 'tam ekranda F çıkar');
+});
+
+test('çubuk gizleme: tam ekranda 3 sn hareketsizlikte solar, harekette geri gelir; pencerede hep görünür', async () => {
+  const e = makeEnv();
+  await e.ready();
+  const b = e.doc.body;
+  // pencere modu: hareketsizlik hiçbir şey gizlemez
+  e.doc.fire('pointermove', { clientY: 300 });
+  e.tick(10000);
+  assert.ok(!hasClass(b, 'idle'));
+  enterFs(e);
+  e.tick(2900);
+  assert.ok(!hasClass(b, 'idle'), '3 sn dolmadan gizlenmez');
+  e.tick(200);
+  assert.ok(hasClass(b, 'idle'), '3 sn sonra gizlenir');
+  e.doc.fire('pointermove', { clientY: 300 });
+  assert.ok(!hasClass(b, 'idle'), 'fare hareketi geri getirir');
+  e.tick(3100);
+  assert.ok(hasClass(b, 'idle'));
+  e.doc.fire('pointerdown', { clientY: 300 });
+  assert.ok(!hasClass(b, 'idle'));
+  // etkinlik süreyi öteler
+  e.tick(2000);
+  e.doc.fire('pointermove', { clientY: 300 });
+  e.tick(2000);
+  assert.ok(!hasClass(b, 'idle'), 'son etkinlikten 2 sn');
+  e.tick(1100);
+  assert.ok(hasClass(b, 'idle'));
+  // imleç üst kenardayken çubuk kalır
+  e.doc.fire('pointermove', { clientY: 10 });
+  e.tick(10000);
+  assert.ok(!hasClass(b, 'idle'), 'üst kenarda gizlenmez');
+  e.doc.fire('pointermove', { clientY: 400 });
+  e.tick(3100);
+  assert.ok(hasClass(b, 'idle'));
+  // tam ekrandan çıkış: görünür, bekleyen zamanlayıcı iptal
+  leaveFs(e);
+  assert.ok(!hasClass(b, 'idle'));
+  assert.strictEqual(e.api.pano.idleTimer, 0);
+  e.tick(10000);
+  assert.ok(!hasClass(b, 'idle'));
+  // klavye de uyandırır
+  enterFs(e);
+  e.tick(3100);
+  assert.ok(hasClass(b, 'idle'));
+  e.sandbox.window.fire('keydown', { key: 'a', target: b });
+  assert.ok(!hasClass(b, 'idle'));
+});
+
+test('köşe pill metinleri: özet, HH:mm, gün/ay (Türkçe) ve 5 dk / 8 px kaydırma', async () => {
+  const e = makeEnv();
+  const api = await e.ready();
+  assert.strictEqual(api.summaryText({ sessions: 2, agents: 5, working: 1 }), '2 oturum · 5 ajan · 1 çalışıyor');
+  assert.strictEqual(api.summaryText(null), '');
+  assert.strictEqual(api.timeText(new Date(Date.UTC(2026, 10, 9, 9, 5))), '09:05');
+  assert.strictEqual(api.timeText(new Date(Date.UTC(2026, 10, 9, 23, 59))), '23:59');
+  assert.strictEqual(api.dayText(new Date(Date.UTC(2026, 10, 9, 12))), 'Pzt 9 Kas');
+  assert.strictEqual(api.dayText(new Date(Date.UTC(2026, 0, 4, 12))), 'Paz 4 Oca');
+  const off = (ms) => JSON.parse(JSON.stringify(api.burnInOffset(ms)));
+  assert.deepStrictEqual(off(0), { dx: 0, dy: 0 });
+  assert.deepStrictEqual(off(300000), { dx: 8, dy: 0 });
+  assert.deepStrictEqual(off(600000), { dx: 8, dy: 8 });
+  assert.deepStrictEqual(off(900000), { dx: 0, dy: 8 });
+  assert.deepStrictEqual(off(1200000), { dx: 0, dy: 0 });
+  assert.deepStrictEqual(off(299999), { dx: 0, dy: 0 });
+  for (let k = 0; k < 40; k++) { const o = off(k * 300000 + 123); assert.ok(o.dx >= 0 && o.dx <= 8 && o.dy >= 0 && o.dy <= 8); }
+});
+
+test('köşe pill davranışı: varsayılan yalnızca tam ekranda açık; anahtar localStorage; dakika sınırında güncellenir; gizliyken durur; çizimi uyandırmaz', async () => {
+  const e = makeEnv();
+  const api = await e.ready();
+  assert.strictEqual(e.byId.pillR.hidden, true, 'pencerede varsayılan kapalı');
+  assert.strictEqual(api.pillsOn(), false);
+  e.sources[0].onmessage({ data: JSON.stringify(snapshot(e.clock, [room({ members: [execM({}), member({})] })], { sessions: 1, agents: 3, working: 1 })) });
+  enterFs(e);
+  assert.strictEqual(api.pillsOn(), true, 'tam ekranda varsayılan açık');
+  assert.strictEqual(e.byId.pillR.hidden, false);
+  assert.strictEqual(e.byId.pills.checked, true);
+  assert.strictEqual(e.byId.pillL.hidden, false);
+  assert.strictEqual(e.byId.pillL.textContent, '1 oturum · 3 ajan · 1 çalışıyor');
+  assert.strictEqual(e.byId.pillTime.textContent, '12:00');
+  assert.strictEqual(e.byId.pillDay.textContent, 'Pzt 9 Kas');
+  const o0 = api.burnInOffset(e.clock.t);
+  assert.strictEqual(e.byId.pillL.style.transform, `translate(${o0.dx}px, ${o0.dy}px)`);
+  assert.strictEqual(e.byId.pillR.style.transform, `translate(${-o0.dx}px, ${o0.dy}px)`);
+  // çizim döngüsünü uyandırmaz
+  e.frames(30);
+  const rafBefore = e.rafLength, redrawBefore = api.needsRedraw;
+  // dakika sınırı: 12:00:00.000 -> sonraki tik 12:01:00.020
+  e.tick(59000);
+  assert.strictEqual(e.byId.pillTime.textContent, '12:00');
+  e.tick(1100);
+  assert.strictEqual(e.byId.pillTime.textContent, '12:01');
+  e.tick(60000);
+  assert.strictEqual(e.byId.pillTime.textContent, '12:02');
+  assert.strictEqual(e.rafLength, rafBefore, 'rAF kuyruğu değişmedi');
+  assert.strictEqual(api.needsRedraw, redrawBefore, 'yeniden çizim istenmedi');
+  // 5 dk sonra konum kayar
+  e.tick(5 * 60000);
+  const o1 = api.burnInOffset(e.clock.t);
+  assert.notDeepStrictEqual([o1.dx, o1.dy], [o0.dx, o0.dy], '5 dk sonra konum değişti');
+  assert.strictEqual(e.byId.pillL.style.transform, `translate(${o1.dx}px, ${o1.dy}px)`);
+  // sekme gizliyken çalışmaz
+  e.doc.hidden = true; e.doc.fire('visibilitychange');
+  assert.strictEqual(api.pano.clockTimer, 0, 'gizliyken saat zamanlayıcısı yok');
+  const shown = e.byId.pillTime.textContent;
+  e.tick(3 * 60000);
+  assert.strictEqual(e.byId.pillTime.textContent, shown);
+  e.doc.hidden = false; e.doc.fire('visibilitychange');
+  assert.notStrictEqual(e.byId.pillTime.textContent, shown, 'görününce hemen güncellenir');
+  assert.ok(api.pano.clockTimer, 'zamanlayıcı yeniden kuruldu');
+  // anahtar: kapat -> localStorage "off", pill'ler gizlenir, zamanlayıcı yok
+  e.byId.pills.checked = false; e.byId.pills.fire('change');
+  assert.strictEqual(e.store['l:adalmon-pano-pills'], 'off');
+  assert.strictEqual(e.byId.pillR.hidden, true); assert.strictEqual(e.byId.pillL.hidden, true);
+  assert.strictEqual(api.pano.clockTimer, 0);
+  leaveFs(e); enterFs(e);
+  assert.strictEqual(api.pillsOn(), false, 'açık tercih tam ekranda da korunur');
+  // pencerede açık tutma
+  e.byId.pills.checked = true; e.byId.pills.fire('change');
+  assert.strictEqual(e.store['l:adalmon-pano-pills'], 'on');
+  leaveFs(e);
+  assert.strictEqual(api.pillsOn(), true);
+  assert.strictEqual(e.byId.pillR.hidden, false);
+  assert.ok(hasClass(e.doc.body, 'pills'));
+});
+
+test('arayüz dosyaları: düğme, anahtar, pill öğeleri ve pano CSS kuralları var', () => {
+  const dir = path.dirname(APP);
+  const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), css = fs.readFileSync(path.join(dir, 'style.css'), 'utf8');
+  for (const id of ['id="fs"', 'id="pills"', 'id="pillL"', 'id="pillR"', 'id="pillTime"', 'id="pillDay"']) assert.ok(html.includes(id), id);
+  assert.ok(html.includes('Tam ekran') && html.includes('Saat ve özet'));
+  assert.ok(css.includes('body.fs.idle') && css.includes('cursor: none') && css.includes('body.fs #bar'));
+  assert.ok(/\.pano\b/.test(css) && css.includes('backdrop-filter'));
 });
 
 (async () => {

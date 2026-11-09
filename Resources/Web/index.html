@@ -18,17 +18,23 @@
     <option value="day">Işık: Gün</option>
     <option value="night">Işık: Gece</option>
   </select>
+  <label class="chk" id="pillsLabel"><input id="pills" type="checkbox"> Saat ve özet</label>
+  <button id="fs" type="button">Tam ekran</button>
   <button id="back" type="button" hidden>Esc &middot; Tüm odalar</button>
 </header>
 <main id="stage">
   <canvas id="scene" aria-label="Ajan ofisi"></canvas>
   <div id="empty" hidden>
-    <h1>Henüz Claude Code oturumu yok</h1>
-    <p>Bir Claude Code oturumu başlattığınızda odası burada belirir. Adalmon'daki Claude eklentisi kurulu olmalı.</p>
+    <div class="emptyBox">
+      <h1>Henüz Claude Code oturumu yok</h1>
+      <p>Bir Claude Code oturumu başlattığınızda odası burada belirir. Adalmon'daki Claude eklentisi kurulu olmalı.</p>
+    </div>
   </div>
   <div id="error" hidden></div>
   <div id="loading"><span class="spinner"></span><span id="loadingText">Ofis yükleniyor…</span></div>
   <div id="tip" hidden></div>
+  <div id="pillL" class="pano pillL" hidden></div>
+  <div id="pillR" class="pano pillR" hidden><span id="pillTime"></span><span id="pillDay"></span></div>
   <aside id="card" hidden></aside>
 </main>
 <script src="/app.js?t=__ADALMON_TOKEN__"></script>
