@@ -78,6 +78,7 @@ final class WallpaperController {
     @ObservationIgnored private(set) var config = Config()
     @ObservationIgnored private var slots: [String: Slot] = [:]
     @ObservationIgnored private var officeSlots: [String: OfficeSlot] = [:]
+    @ObservationIgnored private var shellObserving = false
     @ObservationIgnored private var officeSnapshot = OfficeFeedSnapshot()
     @ObservationIgnored private var officeTrackingGeneration = 0
     @ObservationIgnored private var defaultsToken: NSObjectProtocol?
@@ -355,6 +356,7 @@ final class WallpaperController {
         guard !officeSlots.isEmpty else { return }
         for slot in officeSlots.values { slot.teardown() }
         officeSlots = [:]
+        syncShellObserver()
         appliedTheme = nil
     }
 
@@ -430,6 +432,15 @@ final class WallpaperController {
         screenStatuses = statuses
         updateOfficeSummary()
         updateTimers()
+        syncShellObserver()
+    }
+
+    /// Ofis sahnesi en az bir ekranda OYNARKEN arka plan işlemleri örneklemesi için gözlemci olur; duraklayınca/kapanınca bırakır.
+    private func syncShellObserver() {
+        let want = officeSlots.values.contains { $0.lastDecision == .play }
+        guard want != shellObserving else { return }
+        shellObserving = want
+        officeFeed?.setShellObserved(want)
     }
 
     private func updateOfficeSummary() {

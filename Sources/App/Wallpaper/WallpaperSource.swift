@@ -172,4 +172,6 @@ struct OfficeFeedSnapshot: Equatable, Sendable {
 /// Denetleyiciye ajan verisini veren köprü (uygulama açılışında bağlanır; okunan @Observable alanlar izlenir).
 struct OfficeWallpaperFeed {
     var snapshot: @MainActor () -> OfficeFeedSnapshot
+    /// Duvar kâğıdı sahnesi oynarken true: arka plan işlemleri örneklemesi için gözlemci (UI görünürken talep-temelli yoklama).
+    var setShellObserved: @MainActor (Bool) -> Void = { _ in }
 }
