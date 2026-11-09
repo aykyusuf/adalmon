@@ -12,6 +12,9 @@
 - Disk ~%96 dolu: ajan DerivedData'larını (`/private/tmp/claude-501/adalmon-dd-*`, `adalmon-dd-main` hariç) fazdan sonra sil.
 - Kullanıcı ekran başındayken UI'yi sürme / başka uygulamaya tuş gönderme; TCC pencerelerini kullanıcı tıklamaz.
 - Ajan modeli (YALNIZCA o oturum için söylendi, kalıcı değil): "ajanları opus açma ben sdiyene kadar en fazla sonnet high ajan açabilirsin"; basit işte sonnet medium.
+- "git geçmiinde de kalmasın bu arada sildiklerin" — takım kimliği/bundle id git geçmişinden de silindi (yeni kimlik/kişisel veri repoya ve geçmişe girmemeli).
+- "iyice test etsene bak kesin çalışıp çalışmadıpnı anlayalım" / "çok garanti çalışması lazım" — ajan hattı ve ofis için gerçek zincirle (uçtan uca) test; edge durumlar ara ara kontrol edilmeli.
+- "over engineering e gerek yok abarmtmaya çalış kendi sunucumuz var" ve "Sadece analiz et gel" — Windows/çok-PC sunucu işi: abartma, şimdilik yalnızca analiz (docs/WINDOWS-VE-SUNUCU-ARASTIRMA.md); kod yazma kararlar gelince.
 - Silme komutlarında crew-chief guard: 5 satır SAFE/RISKY gerekçesi yaz, sonra aynı komutu tekrar çalıştır.
 
 ## Dersler (doğrulanmış nedenler)
