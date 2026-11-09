@@ -41,6 +41,14 @@
       "done_when": "Durum metni daha acik yaziyor ve 10x10 kalabalik sahnede etiketler okunur; ilgili testler geciyor",
       "status": "todo",
       "evidence": ""
+    },
+    {
+      "id": "DORM-01",
+      "title": "Uykuda sekmesi (30 dk bosta oturumlar) canli dogrula",
+      "priority": 2,
+      "done_when": "Gercek bir oturum 30 dk bosta kalinca ofis dock'unda sekme oluyor, tiklaninca oda aciliyor, Kucult dugmesi calisiyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "66fbc81 kuruldu; birim testleri gecti (SessionDormancyTests), canli gorsel dogrulama yok"
     }
   ]
 }
