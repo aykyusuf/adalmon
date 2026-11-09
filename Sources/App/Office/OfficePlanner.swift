@@ -22,6 +22,9 @@ struct OfficeMember: Equatable, Identifiable, Sendable {
     var activityAt: Date? = nil
     /// Oturumun başlangıç zamanı (alt ajanlarda nil: ofis ilk gördüğü anı kullanır).
     var startedAt: Date? = nil
+    /// Oturumun arka plan işlemleri ve pid'inin bilinip bilinmediği (ofis rafı + kart; alt ajanlarda hep boş).
+    var shells: SessionShells = .empty
+    var shellsKnown = false
 
     static let groupPaletteSize = 6
 
@@ -32,7 +35,8 @@ struct OfficeMember: Equatable, Identifiable, Sendable {
         for (i, s) in sessions.enumerated().reversed() where s.status != .ended {  // eskiden yeniye: önce gelen önce masa seçer
             let group = Self.stableGroup(for: s.id, fallback: i)
             out.append(OfficeMember(id: s.id, parentID: nil, kind: .session, label: s.displayName, badge: s.badge, status: s.status, groupIndex: group,
-                                 activity: s.activity, target: s.target, activityAt: s.activityAt, startedAt: s.startedAt))
+                                 activity: s.activity, target: s.target, activityAt: s.activityAt, startedAt: s.startedAt,
+                                 shells: s.shells, shellsKnown: s.pid != nil))
             for sub in s.subagents where sub.status != .done && sub.status != .ended {
                 out.append(OfficeMember(id: "\(s.id)#\(sub.agentID)", parentID: s.id, kind: .subagent, label: sub.agentType,
                                         badge: sub.model.map { AgentModelBadge(modelID: $0) } ?? s.badge, status: sub.status, groupIndex: group,

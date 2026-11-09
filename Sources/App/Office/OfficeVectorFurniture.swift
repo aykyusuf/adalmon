@@ -11,7 +11,7 @@ extension OfficeVectorArt {
         "CUSHIONED_CHAIR_SIDE", "DESK_FRONT", "DESK_SIDE", "DOUBLE_BOOKSHELF", "HANGING_PLANT", "LARGE_PAINTING", "LARGE_PLANT",
         "PC_FRONT_ON_1", "PC_FRONT_ON_2", "PC_FRONT_ON_3", "PC_FRONT_OFF", "PC_BACK", "PC_SIDE", "PLANT", "PLANT_2", "POT", "SMALL_PAINTING",
         "SMALL_PAINTING_2", "SMALL_TABLE_FRONT", "SMALL_TABLE_SIDE", "SOFA_FRONT", "SOFA_BACK", "SOFA_SIDE", "TABLE_FRONT", "WHITEBOARD",
-        "WOODEN_BENCH", "WOODEN_CHAIR_FRONT", "WOODEN_CHAIR_BACK", "WOODEN_CHAIR_SIDE",
+        "WOODEN_BENCH", "WOODEN_CHAIR_FRONT", "WOODEN_CHAIR_BACK", "WOODEN_CHAIR_SIDE", "SERVER_RACK",
     ]
 
     /// Katalog varlığının vektör dokusu (boyut = varlık boyutu × 4).
@@ -45,6 +45,7 @@ extension OfficeVectorArt {
         case "SMALL_PAINTING_2": painting(c, x: 2.6, y: 6, w: 10.8, h: 15, variant: 1)
         case "LARGE_PAINTING": painting(c, x: 2.4, y: 4, w: 27.2, h: 19, variant: 2)
         case "WHITEBOARD": whiteboard(c)
+        case "SERVER_RACK": serverRack(c, w, h)
         case "PLANT": monstera(c, w, h, pot: 0xF3F0EA, scale: 1)
         case "PLANT_2": snakePlant(c, w, h)
         case "LARGE_PLANT": monstera(c, w, h, pot: 0xE9B79B, scale: 1.9)

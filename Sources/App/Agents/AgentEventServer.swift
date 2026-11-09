@@ -29,6 +29,15 @@ final class AgentEventServer: @unchecked Sendable {
     private var port: UInt16 = 0
     private var sseClients: [ObjectIdentifier: NWConnection] = [:]
     private var keepAlive: DispatchSourceTimer?
+    /// SSE istemci sayısı değişince (queue üzerinden) çağrılır: arka plan işlemi gözlemci sayacını sürer. Başlatmadan önce atanır.
+    var onStreamCount: (@Sendable (Int) -> Void)?
+    private var reportedStreams = 0
+
+    private func reportStreams() {
+        guard sseClients.count != reportedStreams else { return }
+        reportedStreams = sseClients.count
+        onStreamCount?(reportedStreams)
+    }
 
     init(token: String, web: AgentWebStore? = nil, keepAliveInterval: TimeInterval = 15,
          onEvent: @escaping @Sendable (AgentEvent) -> Void, onState: @escaping @Sendable (State) -> Void) {
@@ -64,6 +73,7 @@ final class AgentEventServer: @unchecked Sendable {
         for connection in connections.values { connection.cancel() }
         connections = [:]
         sseClients = [:]
+        reportStreams()
         keepAlive?.cancel()
         keepAlive = nil
     }
@@ -82,6 +92,7 @@ final class AgentEventServer: @unchecked Sendable {
         queue.async { [self] in
             for connection in sseClients.values { connection.cancel() }
             sseClients = [:]
+            reportStreams()
             updateKeepAlive()
         }
     }
@@ -158,7 +169,7 @@ final class AgentEventServer: @unchecked Sendable {
             case .failed, .cancelled:
                 self?.queue.async {
                     self?.connections[id] = nil
-                    if self?.sseClients.removeValue(forKey: id) != nil { self?.updateKeepAlive() }
+                    if self?.sseClients.removeValue(forKey: id) != nil { self?.updateKeepAlive(); self?.reportStreams() }
                 }
             default: break
             }
@@ -215,6 +226,7 @@ final class AgentEventServer: @unchecked Sendable {
 
     private func startStream(_ connection: NWConnection, snapshot: Data) {
         sseClients[ObjectIdentifier(connection)] = connection
+        reportStreams()
         updateKeepAlive()
         send(AgentWebRouter.sseOpening(snapshot), on: connection)
         drain(connection)

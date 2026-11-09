@@ -14,6 +14,8 @@ struct OfficeWindowRoot: View {
                 .overlay { if sessions.isEmpty { emptyHint } }
                 .accessibilityLabel("Ajan ofisi: \(sessions.count) oturum")
         }
+        .onAppear { model.agents.monitor.addShellObserver() }
+        .onDisappear { model.agents.monitor.removeShellObserver() }
     }
 
     private func strip(sessions: [AgentSession]) -> some View {

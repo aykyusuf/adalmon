@@ -25,6 +25,9 @@ enum OfficeRoomTemplates {
     static func blockOrigin(_ i: Int) -> (col: Int, row: Int) { (1 + 4 * (i % blocksPerRow), deskRow + 4 * (i / blocksPerRow)) }
     /// Kahve masasının sol-üst karosu (alt koridor: sütun 3-4; bank arası cepler ve en alt koridor satırı açık kalır; makineye soldan yaklaşılır).
     static func coffeeTable(stations: Int) -> (col: Int, row: Int) { (3, 4 * blockRows(stations: stations) + 5) }
+    /// Arka plan işlemleri sunucu rafı (1×2 karo, engel): yönetici şeridinin sol ucu (sütun 1, satır 3-4); satır 2 (tahta önü), volta
+    /// satırı ve alt koridorlar açık kalır, koltuk/yol sayısı değişmez.
+    static let rack = (col: 1, row: 3)
     /// Temizlikçi rotasının koridor satırları (koltuk sıraları arası + alt koridor).
     static func laneRows(stations: Int) -> [Int] {
         let r = blockRows(stations: stations)
@@ -78,6 +81,7 @@ enum OfficeRoomTemplates {
         let ct = coffeeTable(stations: n)
         b.add("COFFEE_TABLE", ct.col, ct.row); b.add("COFFEE", ct.col, ct.row)
         b.add("PLANT", 1, 4 * blockRows(stations: n) + 5)
+        b.add("SERVER_RACK", rack.col, rack.row)
         if w == 8 {
             b.add("PLANT_2", 8, 4)
             b.add("DOUBLE_BOOKSHELF", 1, 0); b.add("CLOCK", 7, 0); b.add("SMALL_PAINTING", 8, 0)

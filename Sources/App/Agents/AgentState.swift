@@ -82,6 +82,8 @@ struct AgentSession: Equatable, Identifiable, Sendable {
     var activity: String?
     var target: String?
     var activityAt: Date?
+    /// Oturumun başlattığı ve hâlâ çalışan komutlar (süreç ağacından; yalnızca gözlemci varken örneklenir).
+    var shells: SessionShells = .empty
 
     /// Panelde ana başlık: oturum adı, yoksa proje klasörü adı.
     var displayName: String { title ?? project }
@@ -152,6 +154,7 @@ struct AgentState: Equatable, Sendable {
         case .sessionStart: break
         case .sessionEnd:
             s.status = .ended
+            s.shells = .empty
             for i in s.subagents.indices { s.subagents[i].status = .ended }
         case .userPromptSubmit:
             s.subagents.removeAll { $0.status == .done || $0.status == .ended }
@@ -253,6 +256,19 @@ struct AgentState: Equatable, Sendable {
         return true
     }
 
+    /// Örneklenen arka plan işlemlerini yazar (anahtar = oturum kimliği). Yalnızca değişen oturumlar yazılır; kapalı/pid'siz
+    /// oturumlar ve sonuçta olmayanlar temizlenir. Değişiklik olduysa true.
+    @discardableResult
+    mutating func setShells(_ bySession: [String: SessionShells]) -> Bool {
+        var changed = false
+        for id in sessions.keys {
+            guard var s = sessions[id] else { continue }
+            let next = (s.status != .ended && s.pid != nil) ? (bySession[id] ?? .empty) : .empty
+            if s.shells != next { s.shells = next; sessions[id] = s; changed = true }
+        }
+        return changed
+    }
+
     /// Tüm ajanların hedefini siler (etkinlik/araç bilgisi kalır).
     mutating func clearTargets() {
         for id in sessions.keys {
@@ -291,6 +307,7 @@ struct AgentState: Equatable, Sendable {
             }
             if dead {
                 s.status = .ended
+                s.shells = .empty
                 for i in s.subagents.indices { s.subagents[i].status = .ended }
                 s.exitedAt = now
                 closed.append(s.id)

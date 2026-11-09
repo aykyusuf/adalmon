@@ -28,6 +28,8 @@ final class AgentService {
     /// Tarayıcı görünümü: dinleyici iş parçacığı ile ana aktör arasındaki köprü ve durum → JSON üreticisi (özellik açılınca kurulur).
     @ObservationIgnored private let web = AgentWebStore()
     @ObservationIgnored private var webBuilder: AgentWebSnapshotBuilder?
+    /// Açık SSE akışı varken izleyici sayacına +1 yazılmış mı (arka plan işlemleri yalnızca tarayıcı görünümü açıkken örneklenir).
+    @ObservationIgnored private var webObserving = false
 
     init(prefs: Preferences, installer: AgentPluginInstaller = AgentPluginInstaller()) {
         self.prefs = prefs
@@ -110,6 +112,7 @@ final class AgentService {
                 }
             },
             onState: { [weak self] state in Task { @MainActor in self?.handle(state) } })
+        server.onStreamCount = { [weak self] count in Task { @MainActor in self?.setWebObserving(count > 0) } }
         self.server = server
         let saved = prefs.agentsPort
         server.start(preferredPort: UInt16(exactly: saved).flatMap { AgentEventServer.portRange.contains($0) ? $0 : nil })
@@ -117,7 +120,14 @@ final class AgentService {
         prepareWeb()
     }
 
+    private func setWebObserving(_ on: Bool) {
+        guard on != webObserving else { return }
+        webObserving = on
+        if on { monitor.addShellObserver() } else { monitor.removeShellObserver() }
+    }
+
     private func stopListening() {
+        setWebObserving(false)
         web.setEnabled(false)
         server?.stop()
         server = nil

@@ -29,7 +29,9 @@ enum OfficeWebLayout {
             let grid = OfficeGrid(layout: layout, assets: catalog)
             guard let spots = OfficeSpots.derive(layout: layout, assets: catalog, grid: grid) else { return nil }
             seatsByTier[tier] = spots.seats
-            tiers[tierKeys[tier]!] = tierJSON(tier, layout: layout, grid: grid, spots: spots, catalog: catalog, used: &usedAssets)
+            var tierJ = tierJSON(tier, layout: layout, grid: grid, spots: spots, catalog: catalog, used: &usedAssets)
+            if let f = layout.furniture.first(where: { $0.assetID == "SERVER_RACK" }) { tierJ["rack"] = ["col": f.col, "row": f.row, "w": 16, "h": 32] }
+            tiers[tierKeys[tier]!] = tierJ
             if let baked = OfficeVectorArt.bakeRoom(layout: layout, catalog: catalog, bounds: layout.visibleBounds), let png = OfficeArt.pngData(baked.image) {
                 vectorBackgrounds[tier.key] = ["image": "data:image/png;base64," + png.base64EncodedString(), "w": baked.image.width, "h": baked.image.height,
                                                "windows": baked.windows.map { [$0.minX, $0.minY, $0.width, $0.height] }]
@@ -133,6 +135,7 @@ enum OfficeWebLayout {
         let lp = OfficeLightParams.vector
         return [
             "theme": "vector", "scale": OfficeTheme.vectorScale, "filter": "linear", "generated": generated, "furniture": furniture,
+            "rack": OfficeVectorArt.rackWebJSON(),
             "door": uri(OfficeVectorArt.door()) ?? "", "boardWrite": OfficeVectorArt.boardFrames().compactMap { uri($0) },
             "boardWriteOrigin": [OfficeVectorArt.boardWriteOrigin.x, OfficeVectorArt.boardWriteOrigin.y],
             "windowDay": uri(OfficeVectorArt.windowImage(night: false)) ?? "", "windowNight": uri(OfficeVectorArt.windowImage(night: true)) ?? "",

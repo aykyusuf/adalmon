@@ -35,6 +35,7 @@
   let hitRooms = [];
   let hitActors = [];
   let hitBoards = [];
+  let hitRacks = [];
   let dpr = 1;
   let S = 1;
   let needsRedraw = true;
@@ -138,6 +139,7 @@
     const job = (name, uri, assign, opts) => jobs.push({ name, uri, assign, opts });
     for (const [tier, b] of Object.entries(v.backgrounds)) job('backgrounds.' + tier, b.image, (bmp) => { assets.bg[tier] = { bmp, windows: b.windows || [] }; });
     for (const [id, uri] of Object.entries(v.furniture || {})) job('furniture.' + id, uri, (bmp) => { assets.furn[id] = bmp; });
+    for (const [led, uri] of Object.entries((v.rack && v.rack.dots) || {})) job('rack.' + led, uri, (bmp) => { assets.rackDots = assets.rackDots || {}; assets.rackDots[led] = bmp; });
     for (const [id, uri] of Object.entries(v.generated || {})) job('generated.' + id, uri, (bmp) => { assets.gen[id] = bmp; });
     job('door', v.door, (bmp) => { assets.door = bmp; });
     (v.boardWrite || []).forEach((uri, i) => job('boardWrite[' + i + ']', uri, (bmp) => { assets.boardWrite[i] = bmp; }));
@@ -180,7 +182,7 @@
     const b = t.bounds;
     const td = { key, t, bg: a.bmp, w: a.bmp.width / assets.scale, h: a.bmp.height / assets.scale, ox: b.minCol * T, oy: b.minRow * T,
                  windows: a.windows, dynamic: [], seatById: new Map(t.seats.map((s) => [s.id, s])), placementByIndex: new Map(),
-                 blocked: null, doorTile: t.door, board: t.board || null };
+                 blocked: null, doorTile: t.door, board: t.board || null, rack: t.rack || null };
     const sorted = t.furniture.slice().sort((p, q) => p.z - q.z);
     for (const p of sorted) {
       td.placementByIndex.set(p.i, p);
@@ -341,7 +343,7 @@
   function newRoom(r) {
     return { id: r.id, tierKey: r.tier, td: tierData.get(r.tier), actors: new Map(), title: r.title, badge: r.badge, badgeLabel: r.badgeLabel,
              group: r.group, overflow: 0, leaving: false, alpha: 1, rect: null, computers: r.computers || {}, fade: null, fresh: null,
-             cleaner: newCleaner(r), carrier: null, extras: [], trail: [] };
+             cleaner: newCleaner(r), carrier: null, extras: [], trail: [], rack: r.rack || null, shells: r.shells || null };
   }
 
   function newCleaner(r) {
@@ -504,6 +506,7 @@
   function updateRoom(room, r, instant) {
     room.title = r.title; room.badge = r.badge; room.badgeLabel = r.badgeLabel; room.group = r.group; room.overflow = r.overflow;
     room.computers = r.computers || room.computers;
+    room.rack = r.rack || null; room.shells = r.shells || null;
     const seen = new Set();
     for (const m of r.members) {
       if (m.seat === undefined || m.overflow) continue;
@@ -833,6 +836,17 @@
     return 'imac_silver';
   }
 
+  // Sunucu rafı LED'leri: statik (yanıp sönme yok). Raf gövdesi arka plana pişirilmiştir; yalnızca LED'ler çizilir.
+  function drawRack(room, td) {
+    const R = layout.v3.vector.rack, dots = assets.rackDots;
+    if (!td.rack || !R || !dots) return;
+    const leds = (room.rack && room.rack.leds) || [];
+    for (let i = 0; i < R.ledCount; i++) {
+      const img = dots[leds[i] || 'off'];
+      if (img) ctx.drawImage(img, td.rack.col * T - td.ox + R.dotX, td.rack.row * T - td.oy + R.dotY + R.dotDy * i, R.dotW, R.dotH);
+    }
+  }
+
   function drawRoom(room, t) {
     const r = room.rect, td = room.td;
     if (!r) return;
@@ -849,6 +863,7 @@
     }
     ctx.drawImage(td.bg, 0, 0, td.w, td.h);                                // zemin + duvar + sabit mobilya: tek çizim
     ctx.globalAlpha = room.alpha;
+    drawRack(room, td);
     if (lv > 0.001 && assets.winNight) {
       ctx.globalAlpha = room.alpha * lv;
       for (const w of td.windows) ctx.drawImage(assets.winNight, w[0], w[1], w[2], w[3]);
@@ -955,6 +970,7 @@
       if (bub && a.alpha >= 0.9) bubbles.push({ a, bub, sx: sh.sx, hy: sh.sy - 29 * S * sh.o.k });
     }
     drawBubbles(bubbles, r, t, obstacles);
+    if (td.rack) hitRacks.push({ room, x: r.x + (td.rack.col * T - ox) * S, y: r.y + (td.rack.row * T - oy) * S, w: td.rack.w * S, h: td.rack.h * S });
     if (td.boardPlacement) {
       const p = td.boardPlacement, def = layout.furniture[p.asset] || { w: 32, h: 32 };
       hitBoards.push({ room, x: r.x + (p.col * T - ox) * S, y: r.y + (p.row * T - oy) * S, w: def.w * S, h: def.h * S });
@@ -1203,7 +1219,7 @@
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    hitActors = []; hitBoards = [];
+    hitActors = []; hitBoards = []; hitRacks = [];
     for (const room of rooms.values()) drawRoom(room, t);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
@@ -1262,8 +1278,27 @@
         subs.slice(0, 12).forEach((s) => list.appendChild(el('li', '', `${labelText(s)} · ${s.statusLabel || s.status}`)));
         root.appendChild(list);
       }
+      appendShells(root, room);
     }
     return root;
+  }
+
+  // Kartta "Arka plan işlemleri": yalnızca ad, süre, CPU, RAM (komut satırı yok); N>12 ise "+K daha".
+  function appendShells(root, room) {
+    const sh = room.shells;
+    if (!sh) return;
+    root.appendChild(el('div', 'cardKey', sh.known ? `Arka plan işlemleri (${sh.count})` : 'İşlem bilgisi yok (eski oturum)'));
+    if (!sh.known) return;
+    const list = el('ul', 'cardList');
+    (sh.items || []).slice(0, 12).forEach((i) => list.appendChild(el('li', '', `${i.name} · ${fmtShellAge(i.ageSec)} · %${i.cpu < 10 ? Number(i.cpu).toFixed(1) : Math.round(i.cpu)} · ${i.rssMB} MB`)));
+    if (sh.hidden > 0) list.appendChild(el('li', '', `+${sh.hidden} daha`));
+    root.appendChild(list);
+    root.appendChild(el('div', 'cardKey', 'Yalnızca işlem adı gösterilir'));
+  }
+  function fmtShellAge(sec) {
+    if (sec < 60) return sec + ' sn';
+    const m = Math.floor(sec / 60);
+    return m < 60 ? m + ' dk' : (m % 60 ? Math.floor(m / 60) + ' sa ' + (m % 60) + ' dk' : Math.floor(m / 60) + ' sa');
   }
 
   function cardTimerText(m) {
@@ -1433,6 +1468,8 @@
   const inside = (p, r) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
   const pickActor = (p) => { for (let i = hitActors.length - 1; i >= 0; i--) if (inside(p, hitActors[i])) return hitActors[i].a; return null; };
   const pickBoard = (p) => hitBoards.find((b) => inside(p, b)) || null;
+  const pickRack = (p) => hitRacks.find((b) => inside(p, b)) || null;
+  const rackTip = (room) => (room.rack && room.rack.tooltip) || '';
   const pickRoom = (p) => hitRooms.find((r) => r.rect && inside(p, { x: r.rect.px, y: r.rect.py, w: r.rect.pw, h: r.rect.ph })) || null;
 
   function setFocus(id) {
@@ -1450,7 +1487,7 @@
     const p = toCanvas(e);
     const a = pickActor(p);
     if (a) { openCard(a); return; }
-    const b = pickBoard(p);
+    const b = pickBoard(p) || pickRack(p);
     if (b) {
       const ex = [...b.room.actors.values()].find((x) => x.exec);
       if (ex) { openCard(ex); return; }
@@ -1471,10 +1508,11 @@
     const p = toCanvas(e);
     const a = pickActor(p);
     hover = a;
-    const over = a || pickBoard(p) || (!focusId && pickRoom(p));
+    const rk = a ? null : pickRack(p);
+    const over = a || rk || pickBoard(p) || (!focusId && pickRoom(p));
     canvas.style.cursor = over ? 'pointer' : 'default';
     if (els.tip) {
-      if (a) { els.tip.textContent = tipText(a); els.tip.style.left = Math.round(e.clientX + 12) + 'px'; els.tip.style.top = Math.round(e.clientY + 14) + 'px'; els.tip.hidden = false; } else els.tip.hidden = true;
+      if (rk) { els.tip.textContent = rackTip(rk.room); els.tip.style.left = Math.round(e.clientX + 12) + 'px'; els.tip.style.top = Math.round(e.clientY + 14) + 'px'; els.tip.hidden = false; } else if (a) { els.tip.textContent = tipText(a); els.tip.style.left = Math.round(e.clientX + 12) + 'px'; els.tip.style.top = Math.round(e.clientY + 14) + 'px'; els.tip.hidden = false; } else els.tip.hidden = true;
     }
   });
   canvas.addEventListener('pointerleave', () => { hover = null; if (els.tip) els.tip.hidden = true; });
@@ -1543,7 +1581,7 @@
     TEST.api = { apply, layoutRooms, frame, advance, draw, animating, prepare, buildCard, openCard, closeCard, escape, setFocus, bakeSheet, heartbeat, scheduleActors,
                  rooms, tierData, light, labelVariants, resolveLabels, labelMetrics, wantNight, localNight, applyServerLighting, stepLight, poseOf, bubbleOf, lookOf, startCleaner, bfs, boardTile,
                  get S() { return S; }, get assets() { return assets; }, get layout() { return layout; }, get selected() { return selected; },
-                 get focusId() { return focusId; }, get hitActors() { return hitActors; }, get hitBoards() { return hitBoards; }, get raf() { return raf; }, get needsRedraw() { return needsRedraw; },
+                 get focusId() { return focusId; }, get hitActors() { return hitActors; }, get hitBoards() { return hitBoards; }, get hitRacks() { return hitRacks; }, get raf() { return raf; }, get needsRedraw() { return needsRedraw; },
                  set needsRedraw(v) { needsRedraw = v; } };
   }
   const started = boot();

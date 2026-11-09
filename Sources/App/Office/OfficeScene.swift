@@ -460,7 +460,17 @@ final class OfficeScene: SKScene {
         let local = CGPoint(x: pt.x - cell.x, y: cell.y + cell.height - pt.y)
         if let a = room.actor(atLocal: local) { return (room, a.member.id) }
         if room.boardContains(local), let id = room.executiveMemberID { return (room, id) }
+        // Sunucu rafı: oturumun kartını (arka plan işlemleri listesiyle) açar.
+        if room.rackContains(local), let id = room.rackOwnerID { return (room, id) }
         return nil
+    }
+
+    /// Görünüm noktasında (karakter yokken) sunucu rafı varsa odası.
+    func rackHit(atView p: CGPoint) -> OfficeRoomNode? {
+        let pt = OfficeCamera.contentPoint(fromView: p, view: size, center: cameraCenter, zoom: zoom)
+        guard let cell = arrangement.cell(at: pt), let room = rooms[cell.id], !room.isPlaceholder, room.isVisible else { return nil }
+        let local = CGPoint(x: pt.x - cell.x, y: cell.y + cell.height - pt.y)
+        return room.actor(atLocal: local) == nil && room.rackContains(local) ? room : nil
     }
 
     func card(for id: String) -> OfficeDetailCard? {
@@ -482,6 +492,17 @@ final class OfficeScene: SKScene {
 
     /// Fare hareketi (görünüm koordinatı). Karakterin üstünde ad · rol · model · durum satırı; imleç değişimi için `onHoverChange`.
     func hover(at p: CGPoint?) {
+        if dragStart == nil, let p, let room = rackHit(atView: p), let top = room.rackTop {
+            if hoverID != room.id + "#rack" { hoverID = room.id + "#rack"; onHoverChange?(true) }
+            let node = tooltipNode ?? makeTooltip()
+            tooltipLabel?.text = room.rackState.tooltip
+            tooltipBG?.size = CGSize(width: (tooltipLabel?.frame.width ?? 40) + 10, height: 14)
+            node.setScale(1 / zoom)
+            node.position = CGPoint(x: room.root.position.x + top.x, y: room.root.position.y + top.y + 10 / zoom)
+            node.isHidden = false
+            onActivity?()
+            return
+        }
         guard dragStart == nil, let p, let h = hit(atView: p), let card = card(for: h.memberID), let top = h.room.actorTop(id: h.memberID) ?? h.room.actorTop(id: h.memberID) else {
             hideTooltip()
             return

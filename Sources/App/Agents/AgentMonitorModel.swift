@@ -27,12 +27,70 @@ final class AgentMonitorModel {
     /// Modeli bilinmeyen oturumlar için konuşma dosyası araması; nil = kapalı (testlerde gerçek dosyaya dokunulmaz).
     @ObservationIgnored private let modelResolver: (any SessionModelResolving)?
     @ObservationIgnored private var lookups = ModelLookupTracker()
+    /// Arka plan işlemleri örnekleyicisi (süreç ağacı). Yalnızca gözlemci varken ve pid'li açık oturum varken çalışır.
+    @ObservationIgnored private let shellSampler: SessionProcessSampler
+    @ObservationIgnored private let shellInterval: TimeInterval
+    @ObservationIgnored private var shellTask: Task<Void, Never>?
+    /// Arka plan işlemlerini gösteren açık arayüz sayısı (panel, ofis sayfası/pencere/duvar kâğıdı, web SSE istemcisi).
+    private(set) var shellObservers = 0
 
     init(probe: ProcessLivenessProbing = SystemProcessProbe(), livenessInterval: TimeInterval = 5,
-         modelResolver: (any SessionModelResolving)? = nil) {
+         modelResolver: (any SessionModelResolving)? = nil, shellSampler: SessionProcessSampler = SessionProcessSampler(),
+         shellInterval: TimeInterval = 5) {
         self.probe = probe
         self.livenessInterval = livenessInterval
         self.modelResolver = modelResolver
+        self.shellSampler = shellSampler
+        self.shellInterval = shellInterval
+    }
+
+    /// Arka plan işlemi örnekleme görevi çalışıyor mu (testler yaşam döngüsünü buradan doğrular).
+    var isPollingShells: Bool { shellTask != nil }
+
+    /// Bir arayüz görünür oldu (+1). Görünürken eşleştirilmiş `removeShellObserver` çağrılmalıdır.
+    func addShellObserver() {
+        shellObservers += 1
+        updateShellPolling()
+    }
+
+    func removeShellObserver() {
+        shellObservers = max(0, shellObservers - 1)
+        updateShellPolling()
+    }
+
+    /// Gözlemci > 0 ve pid'li açık oturum varsa tek bir arka plan görevi; aksi halde hiçbir iş yok (zamanlayıcı yok).
+    /// Durunca eski örnekler atılır (bayat veri gösterilmez).
+    private func updateShellPolling() {
+        if shellObservers > 0, !state.livenessTargets.isEmpty {
+            guard shellTask == nil else { return }
+            let interval = shellInterval
+            shellTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    await self.sampleShells()
+                    try? await Task.sleep(for: .seconds(interval), tolerance: .seconds(interval * 0.3))
+                }
+            }
+        } else {
+            shellTask?.cancel()
+            shellTask = nil
+            var next = state
+            if next.setShells([:]) { commit(next) }
+        }
+    }
+
+    /// Tek örnekleme: süreç tablosu `.utility` önceliğinde ana thread dışında okunur; sonuç değiştiyse yazılır.
+    func sampleShells() async {
+        let roots = state.livenessTargets
+        guard !roots.isEmpty else { return }
+        let sampler = shellSampler
+        let pids = roots.map(\.pid)
+        let bySession = await Task.detached(priority: .utility) { sampler.sample(roots: pids) }.value
+        guard shellObservers > 0 else { return }
+        var mapped: [String: SessionShells] = [:]
+        for t in roots { mapped[t.sessionID] = bySession[t.pid] ?? .empty }
+        var next = state
+        if next.setShells(mapped) { commit(next) }
     }
 
     /// Canlılık döngüsü çalışıyor mu (testler yaşam döngüsünü buradan doğrular).
@@ -46,6 +104,7 @@ final class AgentMonitorModel {
         refreshSummary()
         schedulePrune()
         updateLivenessPolling()
+        updateShellPolling()
         lookUpUnknownModels(now: now, event: event)
     }
 
@@ -101,6 +160,7 @@ final class AgentMonitorModel {
         lookups.retain(Set(state.sessions.keys))
         refreshSummary()
         updateLivenessPolling()
+        updateShellPolling()
     }
 
     /// Pid'li oturumların süreçlerini bir kez yoklar; ölü bulunanlar kapanır (kısa süre sonra düşer). Zamanlayıcı bunu çağırır.
@@ -110,6 +170,7 @@ final class AgentMonitorModel {
         else if next != state { commit(next) } // yalnızca süreç başlangıcı kaydedildi
         schedulePrune()
         updateLivenessPolling()
+        updateShellPolling()
     }
 
     /// "Hedefi de göster" kapanınca mevcut hedefleri atar (yeni olay beklemeden balonlar güncellenir).
@@ -125,6 +186,8 @@ final class AgentMonitorModel {
         pruneTask = nil
         livenessTask?.cancel()
         livenessTask = nil
+        shellTask?.cancel()
+        shellTask = nil
         commit(AgentState())
         lookups.removeAll()
         lastEventAt = nil

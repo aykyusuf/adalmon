@@ -165,3 +165,28 @@ Kareler tembel üretilir ve `spec.key|yön|kare[|n]` anahtarıyla bellekte tutul
 * `tiers[..].lamps` son öğesi (yönetici masası) artık `dx: 0` (sahnedeki x = col·16 + 16 ile uyumlu); masa bloklarında `dx: 8`.
 * CSP `connect-src 'self'` data: adreslerinde `fetch`'i engeller: istemci base64'ü `atob` ile çözüp `Blob` → `createImageBitmap` kullanır.
 * Tarayıcı testi: `node Tests/Web/office-client.test.js` (sahte DOM/canvas; gerçek tarayıcı değil).
+
+## Arka plan işlemleri (sunucu rafı)
+
+Oturumun (Claude süreci, hook'tan gelen `pid`) başlattığı ve hâlâ çalışan komutlar. Ajan DEĞİLDİR; ofiste her odada küçük bir sunucu rafı eşyası + kartta liste olarak görünür. Veri kaynağı süreç ağacıdır (hook'a bağlı değil).
+
+**Örnekleme (`SessionProcessSampler`, `ProcessTableProviding`):** libproc (`proc_listallpids`, `PROC_PIDTBSDINFO`, `PROC_PIDTASKINFO`). CPU % = iki örnek arası CPU süresi farkı / duvar zamanı. `KERN_PROCARGS2` (argv) YALNIZCA Claude'un doğrudan çocuğu olan kabuklar için, sarmalayıcı mı kararı için okunur; hiçbir yerde saklanmaz/gösterilmez/loglanmaz, ortam değişkenleri ayrıştırılmaz.
+- Claude'un doğrudan çocuğu `zsh|bash|sh|dash` + argv'de `-c` bayrağı ve (`shell-snapshots` ya da `claude`) = "komut kökü": sarmalayıcı gizlenir, altındaki ilk gerçek işlem katmanı listelenir (çocuklu alt kabuklar atlanır; torunlar ayrıca sayılmaz, `hasChildren` işaretlenir).
+- Sarmalayıcı `exec` ile komuta dönüşürse (aynı pid + başlangıç, daha önce sarmalayıcı görülmüş) süreç kendisi görünür.
+- Doğrudan çocuk olup kabuk olmayanlar (MCP, hook, eklenti) ve sarmalayıcı olmayan kabuklar GÖSTERİLMEZ. 2 sn'den genç süreçler ve zombiler sayılmaz.
+- Çıktı: `SessionShell {pid, name (yalnızca basename, ≤24 karakter, kontrol karakteri yok), ageSeconds, cpuPercent, rssBytes, hasChildren}`; en çok 12 öğe (CPU, sonra yaş), `total` ayrıca. Değerler görünür duyarlığa yuvarlanır (yaş 5 sn/1 dk, CPU 0,1/1, RSS 1 MB) ki değişmeyen durum eşit çıksın.
+
+**Talep-temelli yoklama (pil):** `AgentMonitorModel.shellObservers` (panel, ofis sayfası/pencere görünürken, web SSE istemcisi >0 iken +1). Gözlemci > 0 VE pid'li açık oturum varken tek Task, 5 sn aralık (tolerance), `Task.detached(.utility)`; aksi halde hiç iş yok. Durunca `AgentSession.shells` temizlenir. Değişmeyen örnekleme state yazmaz.
+
+**Raf:** `SERVER_RACK` (16×32 px, ayak izi 1×2, engel), şablonda sütun 1 / satır 3-4 (yönetici şeridinin sol ucu). 4 LED: N=0 hepsi gri; 1…4 → N yeşil; N>4 → 4 LED, sonuncusu turuncu. Statik (yanıp sönme yok). pid yoksa gri, ipucu "İşlem bilgisi yok (eski oturum)"; aksi halde "Arka plan işlemleri: N". Rafa tıklama oturum (yönetici) kartını açar.
+
+**`/v1/state` (`rooms[]`):**
+```json
+"shells": {"count": 15, "known": true, "hidden": 3, "items": [{"name": "xcodebuild", "ageSec": 120, "cpu": 42, "rssMB": 300}]},
+"rack":   {"leds": ["green","green","green","orange"], "lit": 4, "count": 15, "known": true, "tooltip": "Arka plan işlemleri: 15"}
+```
+`items` en çok 12; isim yalnızca basename; komut satırı/argüman/pid alanı YOKTUR.
+
+**`/v1/layout`:** `tiers[*].rack = {col, row, w, h}` (raf gövdesi `furniture.SERVER_RACK` ve vektör arka plana pişirilmiştir); `v3.vector.rack = {w, h, ledCount, dotX, dotY, dotDy, dotW, dotH, dots: {off, green, orange}}` (LED dokuları data URI; i. LED: `x = rack.col*16 - ox + dotX`, `y = rack.row*16 - oy + dotY + dotDy*i`).
+
+**İstemci:** `drawRack` LED'leri çizer (statik); raf tıklaması/hover'ı oturum kartına "Arka plan işlemleri (N)" listesi (ad · süre · CPU · RAM, "+K daha", "Yalnızca işlem adı gösterilir") ekler. SSE istemcisi bağlıyken sunucu gözlemci sayacını artırır.

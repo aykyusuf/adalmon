@@ -195,6 +195,11 @@ final class OfficeRoomNode {
     private var pcOccupied: [Int: String] = [:]
     private var pcComputer: [Int: OfficeComputer] = [:]
     private var furnitureNodes: [Int: SKNode] = [:]
+    /// Sunucu rafı LED katmanı (statik; N değişince doku değişir) ve sahibi (oturum üyesi) / durumu.
+    private var rackLEDNode: SKSpriteNode?
+    private(set) var rackFrame: CGRect?
+    private(set) var rackState = OfficeRackState.idle
+    private(set) var rackOwnerID: String?
     /// Gece ışığı katmanı (yalnızca gece + görünür odada kurulur) ve ekran parıltıları.
     private(set) var nightWanted = false
     private var nightRoot: SKNode?
@@ -310,6 +315,18 @@ final class OfficeRoomNode {
             content.addChild(node)
             furnitureNodes[i] = node
             if a.id == "PC_FRONT_OFF" { configureComputer(node, pc: i) } else if a.id.hasSuffix("_OFF") { pcNodes[i] = node }
+        }
+
+        if let f = kit.layout.furniture.first(where: { $0.assetID == "SERVER_RACK" }) {
+            let x = CGFloat((f.col - b.minCol) * 16), y = CGFloat(kit.worldHeight - ((f.row - b.minRow) * 16 + 32))
+            rackFrame = CGRect(x: x, y: y, width: 16, height: 32)
+            let node = SKSpriteNode(color: .clear, size: CGSize(width: 16, height: 32))
+            node.anchorPoint = .zero
+            node.position = CGPoint(x: x, y: y)
+            node.zPosition = CGFloat((f.row + 2) * 16) + 0.1
+            content.addChild(node)
+            rackLEDNode = node
+            refreshRackTexture()
         }
 
         if let door = assets.doorTexture(theme: theme) {
@@ -648,6 +665,7 @@ final class OfficeRoomNode {
     /// Plan çıktısını odaya uygular. `animated == false`: herkes doğrudan son konumunda belirir.
     func apply(plan: OfficeRoomPlan, members: [OfficeMember], animated: Bool, now: Date, newcomers: Set<String> = []) {
         memberCount = plan.memberCount
+        updateRack(from: members)
         setTitle(title: plan.title, badge: plan.badge, group: plan.groupIndex)
         for id in plan.departed { depart(id, animated: animated) }
         assignedSeats = Set(plan.placements.values.compactMap { if case .seat(let s) = $0 { s } else { nil } })
@@ -1717,6 +1735,27 @@ final class OfficeRoomNode {
         }
         return best
     }
+
+    private func refreshRackTexture() {
+        guard let node = rackLEDNode, let img = OfficeVectorArt.rackLEDs(rackState, pixel: theme == .pixel) else { return }
+        node.texture = theme == .pixel ? OfficeAssets.nearest(SKTexture(cgImage: img)) : OfficeAssets.smooth(img)
+    }
+
+    /// Oturumun arka plan işlemleri değişince çağrılır (yalnızca değişimde doku yenilenir).
+    func updateRack(from members: [OfficeMember]) {
+        guard rackLEDNode != nil else { return }
+        let owner = members.first { $0.kind == .session }
+        let next = owner.map { OfficeRackState.make(total: $0.shells.total, known: $0.shellsKnown) } ?? .idle
+        rackOwnerID = owner?.id
+        guard next != rackState else { return }
+        rackState = next
+        refreshRackTexture()
+        notify()
+    }
+
+    /// Rafa isabet mi (oda yerel koordinatı).
+    func rackContains(_ p: CGPoint) -> Bool { rackFrame?.insetBy(dx: -1, dy: -1).contains(p) ?? false }
+    var rackTop: CGPoint? { rackFrame.map { CGPoint(x: $0.midX, y: $0.maxY) } }
 
     /// Beyaz tahtaya (yönetici kartı) isabet mi.
     func boardContains(_ p: CGPoint) -> Bool {

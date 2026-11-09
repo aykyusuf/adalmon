@@ -276,6 +276,49 @@ final class AgentWebTests: XCTestCase {
     }
 
     @MainActor
+    func testShellsAndRackInStateAndLayoutJSON() throws {
+        let built = try XCTUnwrap(OfficeWebLayout.build(officeRoot: officeRoot))
+        let layout = try XCTUnwrap(JSONSerialization.jsonObject(with: built.json) as? [String: Any])
+        let tiers = try XCTUnwrap(layout["tiers"] as? [String: [String: Any]])
+        for (key, t) in tiers {
+            let rack = try XCTUnwrap(t["rack"] as? [String: Any], key)
+            XCTAssertEqual(rack["col"] as? Int, OfficeRoomTemplates.rack.col)
+            XCTAssertEqual(rack["row"] as? Int, OfficeRoomTemplates.rack.row)
+        }
+        let vector = try XCTUnwrap(((layout["v3"] as? [String: Any])?["vector"] as? [String: Any])?["rack"] as? [String: Any])
+        let dots = try XCTUnwrap(vector["dots"] as? [String: String])
+        XCTAssertEqual(Set(dots.keys), ["off", "green", "orange"])
+        XCTAssertTrue(dots.values.allSatisfy { $0.hasPrefix("data:image/png;base64,") })
+
+        let builder = AgentWebSnapshotBuilder(seats: built.seats)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let shell = SessionShell(pid: 9, name: "xcodebuild", ageSeconds: 120, cpuPercent: 42, rssBytes: 300 * 1_048_576 + 5, hasChildren: true)
+        var s1 = AgentSession(id: "s1", project: "adalmon", model: "claude-opus-4-8", status: .idle, startedAt: now, lastEventAt: now, pid: 10)
+        s1.shells = SessionShells(items: [shell], total: 6)
+        let s2 = AgentSession(id: "s2", project: "old", model: nil, status: .idle, startedAt: now, lastEventAt: now)
+        let data = builder.snapshot(sessions: [s1, s2], now: now)
+        let text = String(decoding: data, as: UTF8.self)
+        XCTAssertFalse(text.contains("hasChildren"), "yalnızca izinli alanlar")
+        XCTAssertFalse(text.contains("\"pid\""), "pid dışarı çıkmaz")
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let rooms = try XCTUnwrap(root["rooms"] as? [[String: Any]])
+        let r1 = try XCTUnwrap(rooms.first { $0["id"] as? String == "s1" })
+        let sh = try XCTUnwrap(r1["shells"] as? [String: Any])
+        XCTAssertEqual(sh["count"] as? Int, 6)
+        XCTAssertEqual(sh["known"] as? Bool, true)
+        let item = try XCTUnwrap((sh["items"] as? [[String: Any]])?.first)
+        XCTAssertEqual(Set(item.keys), ["name", "ageSec", "cpu", "rssMB"])
+        XCTAssertEqual(item["name"] as? String, "xcodebuild")
+        XCTAssertEqual(item["rssMB"] as? Int, 300)
+        let rack = try XCTUnwrap(r1["rack"] as? [String: Any])
+        XCTAssertEqual(rack["leds"] as? [String], ["green", "green", "green", "orange"])
+        XCTAssertEqual(rack["tooltip"] as? String, "Arka plan işlemleri: 6")
+        let r2 = try XCTUnwrap(rooms.first { $0["id"] as? String == "s2" })
+        XCTAssertEqual((r2["rack"] as? [String: Any])?["known"] as? Bool, false)
+        XCTAssertEqual((r2["rack"] as? [String: Any])?["leds"] as? [String], ["off", "off", "off", "off"])
+    }
+
+    @MainActor
     func testStateJSONSchemaAndBubbles() throws {
         let built = try XCTUnwrap(OfficeWebLayout.build(officeRoot: officeRoot))
         let builder = AgentWebSnapshotBuilder(seats: built.seats)

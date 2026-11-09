@@ -149,7 +149,7 @@ function makeTier(key, stations, extraSeats) {
     key, stations, capacity: stations + 1, floorWidth: 8, floorHeight: 10, cols, rows, blocks, laneRows: [5, 10],
     lamps: blocks.map((b) => ({ col: b.col + 1, row: b.row, dx: 8, dy: 14 })).concat([{ col: 4, row: 2, dx: 0, dy: 14 }]),
     coffeeTable: { col: 3, row: 9 }, coffee: { tile: [8, 9], facing: 'right' }, bounds: { minCol: 0, minRow: 0, maxCol: cols - 1, maxRow: rows - 1 },
-    tiles, colors: [], seats, entrance: [8, 10], door: [8, 11], board: [4, 2], boardIndex: 0, zone: { minCol: 2, minRow: 2, maxCol: 8, maxRow: 3 },
+    tiles, colors: [], seats, entrance: [8, 10], door: [8, 11], board: [4, 2], boardIndex: 0, rack: { col: 1, row: 3, w: 16, h: 32 }, zone: { minCol: 2, minRow: 2, maxCol: 8, maxRow: 3 },
     zoneTiles: [2, 3, 4, 5, 6, 7, 8].map((c) => [c, 2]), coffeeMachine: true,
     furniture: [
       { i: 0, asset: 'WHITEBOARD', col: 4, row: 0, mirrored: false, z: -1960 },
@@ -184,7 +184,7 @@ function makeLayout(o = {}) {
     v3: {
       lighting: { nightStartHour: 19, nightStartMinute: 30, nightEndHour: 6, nightEndMinute: 30 },
       vector: {
-        theme: 'vector', scale: 4, generated: gen, furniture, door: png(64, 128), boardWrite: [png(88, 36), png(88, 36), png(88, 36)], boardWriteOrigin: [5, 12],
+        theme: 'vector', scale: 4, generated: gen, furniture, rack: { w: 16, h: 32, ledCount: 4, dotX: 8.6, dotY: 5.8, dotDy: 6, dotW: 5, dotH: 4, dots: { off: png(20, 16), green: png(20, 16), orange: png(20, 16) } }, door: png(64, 128), boardWrite: [png(88, 36), png(88, 36), png(88, 36)], boardWriteOrigin: [5, 12],
         windowDay: png(56, 80), windowNight: png(56, 80), backgrounds: { s2: bg(160, 192), s4: bg(160, 192) },
         lighting: { multiplyColor: [0.60, 0.66, 0.88], washColor: [0.05, 0.10, 0.34], washAlpha: 0.22, bulbAlpha: 0.38, poolAlpha: 0.4, boardAlpha: 0.3, screenAlpha: 0.9, windowAlpha: 0.22 },
         characters: {
@@ -458,6 +458,45 @@ test('kart: tıklama, rozet/durum/süre/alt ajan listesi, Esc ve boşluk kapatı
   e.byId.scene.fire('click', { clientX: bh.x + bh.w / 2, clientY: bh.y + bh.h / 2 });
   assert.ok(api.selected && api.selected.id === 'sess1' && api.selected.exec, 'tahta tıklaması yönetici kartı');
   assert.strictEqual(e.T.lastError, undefined);
+});
+
+const rackRoom = (rack, shells, o) => room(Object.assign({ rack, shells, members: [execM({}), member({ id: 'sess1#1' })] }, o));
+const items = (n) => Array.from({ length: n }, (_, i) => ({ name: 'job' + i, ageSec: 120 + i, cpu: i === 0 ? 42 : 0.4, rssMB: 100 + i }));
+
+test('sunucu rafı: LED dokuları çizilir, tıklama/hover oturum kartı + "Arka plan işlemleri" listesi (+K daha, yalnızca ad)', async () => {
+  const e = makeEnv();
+  const api = await e.ready();
+  const rack = { leds: ['green', 'green', 'green', 'orange'], lit: 4, count: 15, known: true, tooltip: 'Arka plan işlemleri: 15' };
+  const shells = { count: 15, known: true, hidden: 3, items: items(12) };
+  e.sources[0].onmessage({ data: JSON.stringify(snapshot(e.clock, [rackRoom(rack, shells)])) });
+  e.frames(2);
+  const before = e.ctx.__calls.drawImage;
+  api.draw(e.clock.t + 16);
+  assert.ok(e.ctx.__calls.drawImage - before >= 4 + 1, 'arka plan + 4 LED çizimi: ' + (e.ctx.__calls.drawImage - before));
+  const rh = api.hitRacks[0];
+  assert.ok(rh, 'raf isabet alanı');
+  e.byId.scene.fire('pointermove', { clientX: rh.x + 2, clientY: rh.y + 2, pointerType: 'mouse' });
+  assert.strictEqual(e.byId.tip.textContent, 'Arka plan işlemleri: 15');
+  e.byId.scene.fire('click', { clientX: rh.x + rh.w / 2, clientY: rh.y + rh.h / 2 });
+  assert.ok(api.selected && api.selected.exec, 'raf tıklaması oturum (yönetici) kartı');
+  const text = JSON.stringify(e.byId.card.children || e.byId.card);
+  assert.ok(/Arka plan işlemleri \(15\)/.test(text), 'başlık N içerir');
+  assert.ok(/job0 · 2 dk · %42 · 100 MB/.test(text), 'ad, süre, CPU, RAM');
+  assert.ok(/\+3 daha/.test(text), '+K daha');
+  assert.ok(/Yalnızca işlem adı gösterilir/.test(text));
+  assert.ok(!/cmd|argv|command/i.test(text), 'komut satırı yok');
+  assert.strictEqual(e.T.lastError, undefined);
+});
+
+test('sunucu rafı: pid yok → gri raf ve "İşlem bilgisi yok (eski oturum)"', async () => {
+  const e = makeEnv();
+  const api = await e.ready();
+  const rack = { leds: ['off', 'off', 'off', 'off'], lit: 0, count: 0, known: false, tooltip: 'İşlem bilgisi yok (eski oturum)' };
+  e.sources[0].onmessage({ data: JSON.stringify(snapshot(e.clock, [rackRoom(rack, { count: 0, known: false, hidden: 0, items: [] })])) });
+  e.frames(2);
+  const rh = api.hitRacks[0];
+  e.byId.scene.fire('click', { clientX: rh.x + 3, clientY: rh.y + 3 });
+  assert.ok(/İşlem bilgisi yok/.test(JSON.stringify(e.byId.card.children || e.byId.card)));
 });
 
 test('çoklu oda: ızgara + odaya tıklayınca yakınlaşma ve boş alana tıklayınca geri', async () => {

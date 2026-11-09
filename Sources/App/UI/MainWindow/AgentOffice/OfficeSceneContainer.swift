@@ -91,6 +91,13 @@ struct OfficeCardView: View {
                     }
                 }
             }
+            if card.isSession, card.shellsKnown {
+                Divider()
+                OfficeCardShells(shells: card.shells)
+            } else if card.isSession {
+                Divider()
+                Text("İşlem bilgisi yok (eski oturum)").font(.caption2).foregroundStyle(.tertiary)
+            }
             if !card.children.isEmpty {
                 Divider()
                 VStack(alignment: .leading, spacing: 2) {
@@ -110,5 +117,33 @@ struct OfficeCardView: View {
         .background(.regularMaterial, in: .rect(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.12)))
         .accessibilityElement(children: .contain)
+    }
+}
+
+/// Kartta "Arka plan işlemleri" listesi: ad, süre, CPU, RAM (N>12 ise "+K daha"); komut satırı yok.
+struct OfficeCardShells: View {
+    let shells: SessionShells
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Label(SessionShellFormat.title(total: shells.total), systemImage: "server.rack")
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            if shells.total == 0 {
+                Text("Çalışan arka plan işlemi yok").font(.caption2).foregroundStyle(.tertiary)
+            }
+            ForEach(shells.items.map(SessionShellRowModel.init)) { row in
+                HStack(spacing: 6) {
+                    Text(row.name).lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Text(row.age).lineLimit(1).frame(width: 62, alignment: .trailing)
+                    Text(row.cpu).frame(width: 36, alignment: .trailing)
+                    Text(row.ram).frame(width: 50, alignment: .trailing)
+                }
+                .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                .accessibilityElement(children: .combine)
+            }
+            if let more = SessionShellFormat.more(shells.hidden) { Text(more).font(.caption2).foregroundStyle(.tertiary) }
+            Text(SessionShellFormat.footnote).font(.caption2).foregroundStyle(.tertiary)
+        }
     }
 }

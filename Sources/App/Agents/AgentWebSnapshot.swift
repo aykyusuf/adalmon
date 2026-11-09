@@ -50,6 +50,16 @@ final class AgentWebSnapshotBuilder {
          "resolvedNight": OfficeLighting.isNight(mode: mode, date: now, timeZone: timeZone), "timeZone": timeZone.identifier]
     }
 
+    /// Oturumun arka plan işlemleri: yalnızca işlem adı (basename), süre, CPU %, RSS MB (komut satırı yok).
+    static func shellsJSON(_ shells: SessionShells, known: Bool) -> [String: Any] {
+        ["count": shells.total, "known": known, "hidden": shells.hidden,
+         "items": shells.items.map { ["name": $0.name, "ageSec": $0.ageSeconds, "cpu": $0.cpuPercent, "rssMB": Int($0.rssBytes / 1_048_576)] as [String: Any] }]
+    }
+
+    static func rackJSON(_ state: OfficeRackState) -> [String: Any] {
+        ["leds": state.leds.map(\.rawValue), "lit": state.litCount, "count": state.count, "known": state.known, "tooltip": state.tooltip]
+    }
+
     /// Sıkıştırılmış tek satır JSON (SSE `data:` satırı olarak güvenli).
     func snapshot(sessions: [AgentSession], now: Date = .now) -> Data {
         let members = OfficeMember.members(from: sessions)
@@ -121,6 +131,8 @@ final class AgentWebSnapshotBuilder {
                             "laneRows": OfficeRoomTemplates.laneRows(stations: room.tier.stations), "seed": room.id] as [String: Any], "title": room.title ?? "", "badge": room.badge?.rawValue ?? "unknown",
                 "badgeLabel": room.badge?.label ?? "", "group": room.groupIndex, "reseated": room.reseated, "memberCount": room.memberCount,
                 "overflow": room.overflowCount, "members": list, "computers": computers,
+                "shells": Self.shellsJSON(byID[room.id]?.shells ?? .empty, known: byID[room.id]?.pid != nil),
+                "rack": Self.rackJSON(.make(total: byID[room.id]?.shells.total ?? 0, known: byID[room.id]?.pid != nil)),
             ])
         }
         let root: [String: Any] = [

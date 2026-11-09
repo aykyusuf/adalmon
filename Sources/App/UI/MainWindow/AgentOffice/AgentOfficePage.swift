@@ -42,7 +42,8 @@ struct AgentOfficePage: View {
             if sessions.isEmpty { emptyState }
         }
         .padding(24)
-        .onDisappear { stopDemo() }
+        .onAppear { model.agents.monitor.addShellObserver() }
+        .onDisappear { stopDemo(); model.agents.monitor.removeShellObserver() }
     }
 
     private var demoMenu: some View {

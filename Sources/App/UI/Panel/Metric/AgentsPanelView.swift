@@ -57,6 +57,9 @@ struct AgentsPanelView: View {
                 }
             }
         } footer: { EmptyView() }
+        // Arka plan işlemleri yalnızca panel görünürken örneklenir (gözlemci sayacı).
+        .onAppear { monitor.addShellObserver() }
+        .onDisappear { monitor.removeShellObserver() }
     }
 }
 
@@ -105,6 +108,60 @@ struct AgentSessionRow: View, Equatable {
                 .padding(.leading, 16)
                 .accessibilityElement(children: .combine)
             }
+            if session.shells.total > 0 {
+                AgentShellsSection(shells: session.shells).equatable()
+            }
         }
+    }
+}
+
+/// Oturum satırının altında katlanabilir "Arka plan işlemleri (N)" bölümü (N = toplam; 0 ise hiç çizilmez).
+/// Yalnızca işlem adı, süre, CPU ve RAM; komut satırı yoktur.
+struct AgentShellsSection: View, Equatable {
+    let shells: SessionShells
+    @State private var expanded = false
+
+    nonisolated static func == (a: Self, b: Self) -> Bool { a.shells == b.shells }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Button {
+                expanded.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .bold))
+                        .frame(width: 10).accessibilityHidden(true)
+                    Image(systemName: "server.rack").font(.caption2).accessibilityHidden(true)
+                    Text(SessionShellFormat.title(total: shells.total)).font(.caption)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(SessionShellFormat.title(total: shells.total))
+            .accessibilityValue(expanded ? "açık" : "kapalı")
+            if expanded {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(shells.items.map(SessionShellRowModel.init)) { row in
+                        HStack(spacing: 6) {
+                            Text(row.name).font(.caption).lineLimit(1).truncationMode(.tail)
+                            Spacer(minLength: 4)
+                            Text(row.age).lineLimit(1).frame(width: 62, alignment: .trailing)
+                            Text(row.cpu).frame(width: 40, alignment: .trailing)
+                            Text(row.ram).frame(width: 56, alignment: .trailing)
+                        }
+                        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                        .accessibilityElement(children: .combine)
+                    }
+                    if let more = SessionShellFormat.more(shells.hidden) {
+                        Text(more).font(.caption2).foregroundStyle(.tertiary)
+                    }
+                    Text(SessionShellFormat.footnote).font(.caption2).foregroundStyle(.tertiary)
+                }
+                .padding(.leading, 28)
+            }
+        }
+        .padding(.leading, 16)
     }
 }

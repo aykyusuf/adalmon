@@ -208,6 +208,9 @@ struct OfficeDetailCard: Equatable, Sendable {
     var parentTitle: String?
     var subagentCount: Int
     var children: [Child]
+    /// Oturum kartında: arka plan işlemleri (pid bilinmiyorsa `shellsKnown` false). Alt ajan kartında boş.
+    var shells: SessionShells = .empty
+    var shellsKnown = false
 
     /// Tek tıkla açılan kart: oturum adı/rol, model, durum, araç (+hedef), süre, üst oturum adı, alt ajan sayısı/listesi.
     static func make(member: OfficeMember, members: [OfficeMember], spawnedAt: Date?) -> OfficeDetailCard {
@@ -223,7 +226,8 @@ struct OfficeDetailCard: Equatable, Sendable {
             memberID: member.id, isSession: isSession, title: isSession ? member.label : OfficeRoles.style(forAgentType: member.label).name,
             roleName: isSession ? "ana ajan" : OfficeRoles.style(forAgentType: member.label).name, badge: member.badge, status: member.status.label,
             tool: tool, startedAt: member.startedAt ?? spawnedAt, parentTitle: isSession ? nil : parent?.label, subagentCount: subs.count,
-            children: isSession ? subs.map { Child(role: OfficeRoles.style(forAgentType: $0.label).name, status: $0.status.label) } : [])
+            children: isSession ? subs.map { Child(role: OfficeRoles.style(forAgentType: $0.label).name, status: $0.status.label) } : [],
+            shells: isSession ? member.shells : .empty, shellsKnown: isSession && member.shellsKnown)
     }
 
     /// "m:ss" ya da "h:mm:ss".
