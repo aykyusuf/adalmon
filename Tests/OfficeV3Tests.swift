@@ -490,3 +490,23 @@ final class OfficeV3Tests: XCTestCase {
         }
     }
 }
+
+final class OfficeCleanerPacingTests: XCTestCase {
+    func testCleanerWalksSlowerThanOthers() {
+        XCTAssertGreaterThan(OfficeCleaner.stepDuration, 0.5, "diğer karakterlerin 0,25 sn adımından belirgin yavaş")
+    }
+
+    func testSweepPausesEverySixthStepAndNotNearTheDoor() {
+        let count = 60
+        let pauses = (0..<count).compactMap { OfficeCleaner.sweepPause(afterStep: $0, routeCount: count) != nil ? $0 : nil }
+        XCTAssertFalse(pauses.isEmpty)
+        XCTAssertTrue(pauses.allSatisfy { ($0 + 1) % OfficeCleaner.sweepEvery == 0 })
+        XCTAssertTrue(pauses.allSatisfy { $0 < count - 4 }, "kapıya yaklaşırken durmaz")
+        XCTAssertNil(OfficeCleaner.sweepPause(afterStep: 2, routeCount: count), "girişte durmaz")
+        XCTAssertEqual(OfficeCleaner.sweepPause(afterStep: 5, routeCount: count), OfficeCleaner.sweepSeconds)
+    }
+
+    func testShortRouteHasNoPause() {
+        XCTAssertNil(OfficeCleaner.sweepPause(afterStep: 5, routeCount: 8))
+    }
+}

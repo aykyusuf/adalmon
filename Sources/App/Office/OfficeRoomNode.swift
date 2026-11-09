@@ -1235,7 +1235,9 @@ final class OfficeRoomNode {
     }
 
     /// `route[0]` karakterin bulunduğu karo; sonrakiler adım adım. Her adım: yön/dokular, z, kayma.
-    private func run(route: [OfficeTile], for a: OfficeActor, onStep: (@MainActor (OfficeTile) -> Void)? = nil, completion: @escaping @MainActor () -> Void) {
+    private func run(route: [OfficeTile], for a: OfficeActor, stepDuration: TimeInterval = OfficeRoomNode.stepDuration,
+                     pauseAfter: ((Int) -> TimeInterval?)? = nil,
+                     onStep: (@MainActor (OfficeTile) -> Void)? = nil, completion: @escaping @MainActor () -> Void) {
         stopIdle(a)
         a.root.removeAction(forKey: "move")
         a.body.removeAction(forKey: "pose")
@@ -1243,7 +1245,7 @@ final class OfficeRoomNode {
         a.textBubble?.node.isHidden = true
         a.body.position.y = 0
         var actions: [SKAction] = []
-        for (from, to) in zip(route, route.dropFirst()) {
+        for (index, (from, to)) in zip(route, route.dropFirst()).enumerated() {
             let dir = direction(from: from, to: to)
             let base = theme == .vector && a.carryingBox ? 15 : 0
             let walk = (0..<4).map { tex(a, dir, base + OfficeCharacterSheet.frameIndex(.walk($0))) }
@@ -1256,11 +1258,20 @@ final class OfficeRoomNode {
                 a.heading = to
                 a.body.xScale = (OfficeCharacterSheet.mirrorsHorizontally(dir) ? -1 : 1) * abs(a.body.xScale)
                 a.body.removeAction(forKey: "pose")
-                a.body.run(.repeatForever(.animate(with: walk, timePerFrame: Self.stepDuration / 4, resize: false, restore: false)), withKey: "pose")
+                a.body.run(.repeatForever(.animate(with: walk, timePerFrame: stepDuration / 4, resize: false, restore: false)), withKey: "pose")
                 a.root.zPosition = z
             })
-            actions.append(SKAction.move(to: point(to), duration: Self.stepDuration))
+            actions.append(SKAction.move(to: point(to), duration: stepDuration))
             actions.append(.run { [weak a] in a?.tile = to })
+            // Ara sıra durup (ör. temizlikçi süpürürken) yerinde bekler: yürüme animasyonu durur, ayakta kare kalır.
+            if let pause = pauseAfter?(index), pause > 0 {
+                actions.append(.run { [weak a, weak self] in
+                    guard let a, let self else { return }
+                    a.body.removeAction(forKey: "pose")
+                    a.body.texture = self.tex(a, dir, base + OfficeCharacterSheet.frameIndex(.walk(1)))
+                })
+                actions.append(.wait(forDuration: pause))
+            }
         }
         actions.append(.run { [weak a] in
             guard let a else { return }
@@ -1657,7 +1668,11 @@ final class OfficeRoomNode {
         }
         var steps = [spots.door] + route
         steps.append(spots.door)
-        run(route: steps, for: a, onStep: { [weak self] tile in self?.addTrail(at: tile) }) { [weak self] in
+        // Temizlikçi yavaş yürür ve aralarda durup süpürür (paspas sallanmaya devam eder).
+        let count = steps.count
+        run(route: steps, for: a, stepDuration: OfficeCleaner.stepDuration,
+            pauseAfter: { OfficeCleaner.sweepPause(afterStep: $0, routeCount: count) },
+            onStep: { [weak self] tile in self?.addTrail(at: tile) }) { [weak self] in
             self?.dismissProp(a) { self?.cleaning = false }
         }
         notify()

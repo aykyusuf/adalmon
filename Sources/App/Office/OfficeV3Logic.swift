@@ -129,6 +129,18 @@ enum OfficeCleaner {
         interval.lowerBound + OfficeStroll.roll(seed: OfficeStroll.seed(for: seed + "|clean"), n) * (interval.upperBound - interval.lowerBound)
     }
 
+    /// Temizlikçinin karo başına süresi (diğer karakterlerin yürüyüşünden ~2,2x yavaş: 0,25 sn).
+    static let stepDuration: TimeInterval = 0.55
+    /// Süpürme molasının süresi ve sıklığı (her `sweepEvery` karoda bir).
+    static let sweepSeconds: TimeInterval = 2.4
+    static let sweepEvery = 6
+
+    /// Rota adımından sonra durup süpürsün mü? Kapıdan girişte ve çıkışta (rotanın ilk/son 3 adımı) durmaz.
+    static func sweepPause(afterStep index: Int, routeCount: Int) -> TimeInterval? {
+        guard index >= sweepEvery - 1, index < routeCount - 4, (index + 1) % sweepEvery == 0 else { return nil }
+        return sweepSeconds
+    }
+
     static func shouldStart(now: Date, dueAt: Date?, roomVisible: Bool, scenePaused: Bool, busy: Bool) -> Bool {
         guard roomVisible, !scenePaused, !busy, let dueAt else { return false }
         return now >= dueAt
