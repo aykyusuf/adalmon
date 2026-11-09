@@ -403,7 +403,7 @@ final class OfficeRoomNode {
         NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: a)
     }
 
-    /// Vektör başlık kartı: yuvarlak köşeli açık/koyu kart, kalın ad, renkli model rozeti, oturum renginde ince alt çizgi.
+    /// Vektör başlık kartı: sıcak krem/kömür yuvarlak kart, serif oturum adı, ✦ + serif italik model adıyla tonlu hap, oturum renginde ince çizgi.
     private func layoutPlaqueVector() {
         let z = labelZoom
         plaque.setScale(1 / z)
@@ -416,30 +416,34 @@ final class OfficeRoomNode {
         let look = badge.map { OfficeAppearance.appearance(for: $0) }
         let g = OfficeAppearance.groupColors[group % OfficeAppearance.groupColors.count]
         let maxW = CGFloat(kit.worldWidth) * z - 6 - (overflowNode == nil ? 0 : overflowWidth + 6)
-        let ink = Self.ns(night ? 0xEEF1F8 : 0x1E222B)
+        let ink = Self.ns(night ? 0xF4EEE4 : 0x2A2118)
+        let nameSize: CGFloat = 13.5
 
         var badgeW: CGFloat = 0
-        if let look {
-            plaqueBadge.attributedText = OfficeVectorUI.text(look.badgeText, size: 8.5, weight: .bold, color: .white)
-            badgeW = plaqueBadge.frame.width + 11
+        if let look, let badge {
+            // Rozet metni: model rengi (gece açık, gündüz koyu ton) + kıvılcım tam renkte.
+            let tint = NSColor(srgbRed: look.tint.r, green: look.tint.g, blue: look.tint.b, alpha: 1)
+            let inkTint = night ? (tint.blended(withFraction: 0.45, of: .white) ?? tint) : (tint.blended(withFraction: 0.35, of: .black) ?? tint)
+            plaqueBadge.attributedText = OfficeVectorUI.modelBadgeText(badge.label, tint: tint, ink: inkTint)
+            badgeW = plaqueBadge.frame.width + 13
         }
-        let badgeSpace: CGFloat = look == nil ? 0 : badgeW + 6
-        let textMax = max(24, maxW - 18 - badgeSpace)
+        let badgeSpace: CGFloat = look == nil ? 0 : badgeW + 7
+        let textMax = max(24, maxW - 20 - badgeSpace)
         var shown = title ?? Self.placeholderTitle
-        plaqueName.attributedText = OfficeVectorUI.text(shown, size: 12, weight: .bold, color: ink)
+        plaqueName.attributedText = OfficeVectorUI.serifText(shown, size: nameSize, weight: .semibold, color: ink)
         if plaqueName.frame.width > textMax {
             var chars = Array(shown)
             while chars.count > 1 {
                 chars.removeLast()
                 let t = String(chars) + "…"
-                plaqueName.attributedText = OfficeVectorUI.text(t, size: 12, weight: .bold, color: ink)
+                plaqueName.attributedText = OfficeVectorUI.serifText(t, size: nameSize, weight: .semibold, color: ink)
                 shown = t
                 if plaqueName.frame.width <= textMax { break }
             }
         }
-        plaqueName.attributedText = OfficeVectorUI.text(shown, size: 12, weight: .bold, color: placeholder ? Self.ns(night ? 0xA7AEBF : 0x7A8190) : ink)
+        plaqueName.attributedText = OfficeVectorUI.serifText(shown, size: nameSize, weight: .semibold, color: placeholder ? Self.ns(night ? 0xB5AA9A : 0x8A7E6E) : ink)
         let nameW = plaqueName.frame.width
-        let width = 9 + nameW + 9 + badgeSpace
+        let width = 10 + nameW + 10 + badgeSpace
         let bodyW = Int(width.rounded(.up))
         if let tex = assets.panelTexture(panel, bodyWidth: bodyW) {
             plaquePill.texture = tex
@@ -449,23 +453,25 @@ final class OfficeRoomNode {
         plaquePill.position = CGPoint(x: -pad, y: -pad)
         plaquePill.alpha = placeholder ? 0.7 : 1
         plaqueName.horizontalAlignmentMode = .left
-        plaqueName.position = CGPoint(x: 9, y: height / 2 + 1.6)
+        plaqueName.position = CGPoint(x: 10, y: height / 2 + 1.8)
         let stripe = placeholder ? OfficeRGB(r: 0.5, g: 0.5, b: 0.55) : g
-        let stripeW = Int(max(8, width - 18).rounded(.up))
+        let stripeW = Int(max(8, width - 20).rounded(.up))
         plaqueStripe.texture = assets.solidTexture(width: stripeW, height: 2)
         plaqueStripe.colorBlendFactor = 1
         plaqueStripe.color = SKColor(red: stripe.r, green: stripe.g, blue: stripe.b, alpha: 1)
         plaqueStripe.size = CGSize(width: CGFloat(stripeW), height: 2)
-        plaqueStripe.position = CGPoint(x: 9, y: 1.4)
+        plaqueStripe.position = CGPoint(x: 10, y: 1.6)
         if let look {
             plaqueBadgeBG.isHidden = false; plaqueBadge.isHidden = false
-            plaqueBadgeBG.texture = assets.solidTexture(width: Int(badgeW.rounded(.up)), height: 13)
+            let bh: CGFloat = 15
+            plaqueBadgeBG.texture = assets.solidTexture(width: Int(badgeW.rounded(.up)), height: Int(bh))
             plaqueBadgeBG.colorBlendFactor = 1
-            plaqueBadgeBG.color = SKColor(red: look.tint.r * 0.82, green: look.tint.g * 0.82, blue: look.tint.b * 0.82, alpha: 1)
-            plaqueBadgeBG.size = CGSize(width: badgeW.rounded(.up), height: 13)
-            plaqueBadgeBG.position = CGPoint(x: 9 + nameW + 6, y: (height - 13) / 2 + 1.4)
+            // Yarı saydam model tonu: düz dolgu yerine hafif tonlu hap (kart zemini görünür).
+            plaqueBadgeBG.color = SKColor(red: look.tint.r, green: look.tint.g, blue: look.tint.b, alpha: night ? 0.26 : 0.18)
+            plaqueBadgeBG.size = CGSize(width: badgeW.rounded(.up), height: bh)
+            plaqueBadgeBG.position = CGPoint(x: 10 + nameW + 7, y: (height - bh) / 2 + 1.6)
             plaqueBadge.horizontalAlignmentMode = .center
-            plaqueBadge.position = CGPoint(x: 9 + nameW + 6 + badgeW / 2, y: height / 2 + 1.4)
+            plaqueBadge.position = CGPoint(x: 10 + nameW + 7 + badgeW / 2, y: height / 2 + 1.5)
         } else {
             plaqueBadgeBG.isHidden = true; plaqueBadge.isHidden = true
         }

@@ -1271,34 +1271,47 @@
     const ap = layout.appearance[room.badge] || layout.appearance.unknown || { badgeText: '', tintHex: '#888888' };
     ctx.save();
     ctx.globalAlpha = room.alpha;
-    const fs = Math.round(12 * U), bfs = Math.round(9 * U), h = Math.round(22 * U), y = r.y - Math.round(28 * U), padX = Math.round(10 * U);
-    ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
-    const badge = ap.badgeText || '';
-    ctx.font = `700 ${bfs}px -apple-system, system-ui, sans-serif`;
-    const bw = badge ? Math.ceil(ctx.measureText(badge).width) + Math.round(10 * U) : 0;
-    ctx.font = `700 ${fs}px -apple-system, system-ui, sans-serif`;
+    // Claude'a yakın editoryal serif (sistemin serif'i; Claude'un kendi yazı tipleri lisanslıdır, kullanılmaz).
+    const SERIF = 'ui-serif, "New York", "Iowan Old Style", "Palatino Linotype", Georgia, serif';
+    const fs = Math.round(13.5 * U), bfs = Math.round(10.5 * U), h = Math.round(24 * U), y = r.y - Math.round(30 * U), padX = Math.round(10 * U);
+    ctx.font = `600 ${fs}px ${SERIF}`;
+    const rawBadge = ap.badgeText || '';
+    const badge = rawBadge && rawBadge !== '?' ? rawBadge.charAt(0) + rawBadge.slice(1).toLowerCase() : rawBadge;
+    const spark = badge && badge !== '?' ? '\u2726 ' : '';
+    ctx.font = `italic 600 ${bfs}px ${SERIF}`;
+    const bw = badge ? Math.ceil(ctx.measureText(spark + badge).width) + Math.round(13 * U) : 0;
+    ctx.font = `600 ${fs}px ${SERIF}`;
     const maxName = Math.max(40, r.w - bw - padX * 3 - Math.round(44 * U));
     let shown = room.title || '';
     while (shown.length > 1 && ctx.measureText(shown).width > maxName) shown = shown.slice(0, -1);
-    if (shown !== (room.title || '')) shown = shown.slice(0, -1) + '…';
+    if (shown !== (room.title || '')) shown = shown.slice(0, -1) + '\u2026';
     const nameW = Math.ceil(ctx.measureText(shown).width);
     const w = Math.min(r.w, nameW + bw + padX * 2 + (bw ? Math.round(8 * U) : 0));
     ctx.save();
     ctx.shadowColor = 'rgba(8,10,18,0.35)'; ctx.shadowBlur = 6 * U; ctx.shadowOffsetY = 1.5 * U;
-    ctx.fillStyle = night ? 'rgba(42,49,68,0.96)' : 'rgba(247,248,250,0.97)';
-    roundRect(r.x, y, w, h, Math.round(8 * U)); ctx.fill();
+    ctx.fillStyle = night ? 'rgba(43,38,34,0.97)' : 'rgba(251,247,239,0.98)';
+    roundRect(r.x, y, w, h, Math.round(10 * U)); ctx.fill();
     ctx.restore();
+    ctx.lineWidth = 1; ctx.strokeStyle = night ? 'rgba(255,233,208,0.20)' : 'rgba(74,59,42,0.20)';
+    roundRect(r.x + 0.5, y + 0.5, w - 1, h - 1, Math.round(10 * U)); ctx.stroke();
     ctx.fillStyle = rgbCss(g);
-    ctx.fillRect(r.x + Math.round(8 * U), y + h - Math.round(2.5 * U), w - Math.round(16 * U), Math.max(1, Math.round(1.6 * U)));
-    ctx.fillStyle = night ? '#F1F3F8' : '#1B2030'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-    ctx.fillText(shown, r.x + padX, y + h / 2 - 0.5 * U);
+    ctx.fillRect(r.x + Math.round(10 * U), y + h - Math.round(3 * U), w - Math.round(20 * U), Math.max(1, Math.round(1.8 * U)));
+    ctx.fillStyle = night ? '#F4EEE4' : '#2A2118'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.font = `600 ${fs}px ${SERIF}`;
+    ctx.fillText(shown, r.x + padX, y + h / 2 - 1 * U);
     if (badge) {
-      const bx = r.x + padX + nameW + Math.round(8 * U), bh = Math.round(14 * U);
-      ctx.fillStyle = ap.tintHex || '#888';
-      roundRect(bx, y + (h - bh) / 2 - 1 * U, bw, bh, bh / 2); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-      ctx.font = `700 ${bfs}px -apple-system, system-ui, sans-serif`;
-      ctx.fillText(badge, bx + bw / 2, y + h / 2 - 1 * U + 0.5);
+      const bx = r.x + padX + nameW + Math.round(8 * U), bh = Math.round(16 * U), by = y + (h - bh) / 2 - 1 * U;
+      const tint = ap.tintHex || '#888';
+      ctx.save(); ctx.globalAlpha = room.alpha * (night ? 0.26 : 0.18); ctx.fillStyle = tint;
+      roundRect(bx, by, bw, bh, bh / 2); ctx.fill(); ctx.restore();
+      ctx.textAlign = 'left';
+      ctx.font = `italic 600 ${bfs}px ${SERIF}`;
+      const tx = bx + Math.round(6.5 * U), ty = by + bh / 2 + 0.5;
+      if (spark) { ctx.fillStyle = tint; ctx.font = `700 ${bfs}px ${SERIF}`; ctx.fillText('\u2726', tx, ty); }
+      const sw = spark ? Math.ceil(ctx.measureText('\u2726 ').width) : 0;
+      ctx.font = `italic 600 ${bfs}px ${SERIF}`;
+      ctx.fillStyle = night ? tint : tint; ctx.globalAlpha = room.alpha;
+      ctx.fillText(badge, tx + sw, ty);
     }
     if (room.overflow > 0) {
       const txt = `+${room.overflow}`;

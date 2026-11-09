@@ -32,7 +32,7 @@
       "priority": 3,
       "done_when": "Kullanici yaklasimi (type:http hook plugin + Mac'te LAN/Tailscale dinleme + makine adi alani) onayladi; Windows PC'deki bir oturum Adalmon ofisinde gorunuyor",
       "status": "todo",
-      "evidence": "Analiz verildi, uygulanmadi; PC agi ve Claude Code surumu sorusu cevapsiz"
+      "evidence": "2026-11-09: docs/WINDOWS-VE-SUNUCU-ARASTIRMA.md yazildi (analiz); uygulama SERVER-01 kararlarini bekliyor"
     },
     {
       "id": "POLISH-01",
@@ -104,7 +104,23 @@
       "priority": 1,
       "done_when": "Adalmon oturumdan sonra acilinca acik Claude oturumlari odada gorunuyor; bilinmeyen alt ajan kendi olayindan listeye aliniyor; takili kalan ajan 45 dk sonra dusuyor; ofis basliginda hat saglik cipi ve 'Hatti test et' calisiyor; kullanici onayladi",
       "status": "todo",
-      "evidence": "2026-11-09: gercek uygulamada 5 acik oturum gorundu; gercek claude -p ile arka plan+senkron alt ajan uctan uca goruldu; 1187 test (yalniz 7 Dusuk Guc testi dusuyor); saglik cipi gozle bakilmadi"
+      "evidence": "2026-11-09: gercek uygulamada 5 acik oturum + durdurulmus surec atlandi + Asyildiz 10,7 saat sessiz uykuya gecti; gercek claude -p ile arka plan+senkron alt ajan; saglik cipi gozle bakilmadi"
+    },
+    {
+      "id": "SERVER-01",
+      "title": "Cok-PC ajan paylasimi: sunucu + plugin uzak hedefi (Faz 0/1)",
+      "priority": 2,
+      "done_when": "Kullanici 4 karari verdi (sunucu dili, Windows gorunum, cloud kapsami, Windows hook kabugu); Windows'ta hook komutu elle denendi; sunucu olay alip durum tutuyor ve Mac Adalmon uzak oturumlari makine rozetiyle gosteriyor",
+      "status": "todo",
+      "evidence": "Sadece analiz: docs/WINDOWS-VE-SUNUCU-ARASTIRMA.md (bolum 8 kararlar, bolum 9 dogrulanmayanlar)"
+    },
+    {
+      "id": "PLAQUE-01",
+      "title": "Oda plaketi (serif ad + ✦ model hapi) gorunumunu dogrula",
+      "priority": 2,
+      "done_when": "macOS ofisinde (gunduz ve gece) ve web istemcisinde oturum adi serif, model sparkle'li tonlu hap olarak okunakli ve guzel gorunuyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Kodlandi (OfficeRoomNode.layoutPlaqueVector, app.js drawPlaque); gozle bakilmadi"
     }
   ]
 }

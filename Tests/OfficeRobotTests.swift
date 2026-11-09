@@ -91,4 +91,34 @@ final class OfficeRobotTests: XCTestCase {
             withExtendedLifetime(window) {}
         }
     }
+
+    /// Önizleme (ADALMON_PREVIEW_DIR verilirse): oda plaketi (serif ad + ✦ model hapı), gündüz ve gece, farklı modeller.
+    func testRenderPlaquePreview() throws {
+        guard let env = ProcessInfo.processInfo.environment["ADALMON_PREVIEW_DIR"], !env.isEmpty else { throw XCTSkip("ADALMON_PREVIEW_DIR yok") }
+        let dir = URL(filePath: env)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let items: [(String, AgentModelBadge)] = [("adalmon", .sonnet), ("Asyıldız Döviz Sitesi", .opus), ("Social", .haiku), ("Bitirme Projesi çok uzun bir ad", .fable)]
+        for night in [false, true] {
+            let size = CGSize(width: 1500, height: 560)
+            let view = SKView(frame: CGRect(origin: .zero, size: size))
+            let scene = OfficeScene(assets: try XCTUnwrap(OfficeAssets.shared), size: size, theme: .vector)
+            let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = view
+            view.presentScene(scene)
+            scene.setLightingMode(night ? .night : .day, animated: false)
+            var members: [OfficeMember] = []
+            for (i, it) in items.enumerated() {
+                members.append(OfficeMember(id: "p\(i)", parentID: nil, kind: .session, label: it.0, badge: it.1, status: .idle, groupIndex: i))
+            }
+            scene.apply(members: members, animated: false)
+            let until = Date().addingTimeInterval(0.6)
+            while Date() < until { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+            let tex = try XCTUnwrap(view.texture(from: scene))
+            let rep = NSBitmapImageRep(cgImage: tex.cgImage())
+            try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appending(path: "plaque-\(night ? "night" : "day").png"))
+            scene.shutdown()
+            withExtendedLifetime(window) {}
+        }
+    }
 }

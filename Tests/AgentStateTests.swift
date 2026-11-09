@@ -675,19 +675,43 @@ extension AgentStateTests {
         XCTAssertEqual(ClaudeProcessDiscovery.transcriptDirectoryName(forCWD: "/Users/x/adaltek-social/adaltek_social"), "-Users-x-adaltek-social-adaltek-social")
     }
 
-    func testTranscriptActivityComesFromTheNewestJSONL() throws {
+    func testTranscriptActivityComesFromRecordTimestampsNotFileModificationTime() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "proj-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
         let dir = root.appending(path: ClaudeProcessDiscovery.transcriptDirectoryName(forCWD: "/tmp/benim_proje"), directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let old = dir.appending(path: "a.jsonl"), new = dir.appending(path: "b.jsonl"), other = dir.appending(path: "notlar.txt")
-        for f in [old, new, other] { try Data("x".utf8).write(to: f) }
-        try FileManager.default.setAttributes([.modificationDate: t0.addingTimeInterval(-3600)], ofItemAtPath: old.path)
-        try FileManager.default.setAttributes([.modificationDate: t0], ofItemAtPath: new.path)
-        try FileManager.default.setAttributes([.modificationDate: t0.addingTimeInterval(500)], ofItemAtPath: other.path)   // jsonl değil: sayılmaz
-        XCTAssertEqual(ClaudeProcessDiscovery.lastTranscriptActivity(cwd: "/tmp/benim_proje", projectsRoot: root), t0)
+        // Gerçek oturum: son damgalı kayıt 10 saat önce; sonrasında yalnızca damgasız durum kayıtları (Claude Code bunları sürekli yazar).
+        let last = t0.addingTimeInterval(-36_000)
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let lines = [
+            #"{"type":"user","timestamp":"\#(iso.string(from: last.addingTimeInterval(-600)))","message":{"role":"user","content":"merhaba"}}"#,
+            #"{"type":"assistant","timestamp":"\#(iso.string(from: last))","message":{"role":"assistant","content":"selam \"timestamp\":\"2099-01-01T00:00:00.000Z\""}}"#,
+            #"{"type":"last-prompt"}"#, #"{"type":"custom-title"}"#, #"{"type":"bridge-session"}"#,
+        ]
+        let file = dir.appending(path: "a.jsonl")
+        try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: file)
+        // Dosya DEĞİŞİM zamanı "şimdi" (durum kayıtları yeni yazıldı): yine de etkinlik 10 saat öncesi olmalı.
+        try FileManager.default.setAttributes([.modificationDate: t0], ofItemAtPath: file.path)
+        let found = try XCTUnwrap(ClaudeProcessDiscovery.lastTranscriptActivity(cwd: "/tmp/benim_proje", projectsRoot: root))
+        XCTAssertEqual(found.timeIntervalSince1970, last.timeIntervalSince1970, accuracy: 0.01, "değişim zamanı değil, son damgalı kayıt")
         XCTAssertNil(ClaudeProcessDiscovery.lastTranscriptActivity(cwd: "/tmp/yok", projectsRoot: root))
         XCTAssertNil(ClaudeProcessDiscovery.lastTranscriptActivity(cwd: "", projectsRoot: root))
+    }
+
+    func testRecordTimestampReaderHandlesHugeFilesAndTruncatedLines() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "tail-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appending(path: "b.jsonl")
+        let filler = String(repeating: "x", count: 4000)
+        var text = #"{"type":"assistant","timestamp":"2026-01-01T00:00:00.000Z","message":"\#(filler)"}"# + "\n"
+        for _ in 0..<200 { text += #"{"type":"last-prompt","pad":"\#(filler)"}"# + "\n" }        // damgasız kayıtlar kuyruğu doldurur
+        try Data(text.utf8).write(to: file)
+        // Kuyruk penceresi damgalı kaydı kaçırıyorsa nil (yanlış zaman uydurmaz); yeterince büyükse bulur.
+        XCTAssertNil(ClaudeProcessDiscovery.lastRecordTimestamp(in: file, tailBytes: 64 * 1024))
+        let found = ClaudeProcessDiscovery.lastRecordTimestamp(in: file, tailBytes: 4 * 1024 * 1024)
+        XCTAssertEqual(found?.timeIntervalSince1970, ISO8601DateFormatter().date(from: "2026-01-01T00:00:00Z")?.timeIntervalSince1970)
     }
 
     func testPlaceholderUsesRealIdlenessSoOldIdleSessionsMinimizeAtOnce() {

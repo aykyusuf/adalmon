@@ -22,8 +22,9 @@ enum OfficeVectorUI {
 
     /// Oda başlık kartı (koyu zemin üstünde): açık kart gündüz, koyu slate gece.
     static func cardPanel(night: Bool) -> Panel {
-        night ? Panel(w: 32, h: 27, pad: 3, r: 9, fill: 0x2A3144, fillAlpha: 0.96, border: 0xFFFFFF, borderAlpha: 0.22, shadow: 0.35)
-              : Panel(w: 32, h: 27, pad: 3, r: 9, fill: 0xF7F8FA, fillAlpha: 0.97, border: 0x11141C, borderAlpha: 0.18, shadow: 0.3)
+        // Sıcak krem (gündüz) / sıcak kömür (gece): Claude'un krem-mercan paletine yakın.
+        night ? Panel(w: 32, h: 27, pad: 3, r: 10, fill: 0x2B2622, fillAlpha: 0.97, border: 0xFFE9D0, borderAlpha: 0.20, shadow: 0.38)
+              : Panel(w: 32, h: 27, pad: 3, r: 10, fill: 0xFBF7EF, fillAlpha: 0.98, border: 0x4A3B2A, borderAlpha: 0.20, shadow: 0.3)
     }
 
     /// Gövde genişliği `bodyWidth` (mantıksal birim, tamsayı) için panel dokusu: genişliğe göre üretilip önbelleklenir (SpriteKit 9-dilim
@@ -78,6 +79,26 @@ enum OfficeVectorUI {
 
     static func text(_ s: String, size: CGFloat, weight: NSFont.Weight = .semibold, color: NSColor) -> NSAttributedString {
         NSAttributedString(string: s, attributes: [.font: font(size, weight), .foregroundColor: color])
+    }
+
+    /// Claude'un editoryal havasına yakın serif yazı tipi (sistemin New York'u). Claude'un kendi yazı tipleri lisanslı olduğu için kullanılmaz.
+    static func serifFont(_ size: CGFloat, _ weight: NSFont.Weight = .semibold, italic: Bool = false) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: weight)
+        guard var descriptor = base.fontDescriptor.withDesign(.serif) else { return base }
+        if italic { descriptor = descriptor.withSymbolicTraits(.italic) }
+        return NSFont(descriptor: descriptor, size: size) ?? base
+    }
+
+    /// Oda levhasındaki oturum adı: serif, hafif harf aralığı.
+    static func serifText(_ s: String, size: CGFloat, weight: NSFont.Weight = .semibold, color: NSColor, kern: CGFloat = 0.15, italic: Bool = false) -> NSAttributedString {
+        NSAttributedString(string: s, attributes: [.font: serifFont(size, weight, italic: italic), .foregroundColor: color, .kern: kern])
+    }
+
+    /// Model rozeti: renkli ✦ (Claude'un kıvılcımı) + serif italik model adı ("✦ Sonnet").
+    static func modelBadgeText(_ name: String, tint: NSColor, ink: NSColor, size: CGFloat = 10.5) -> NSAttributedString {
+        let out = NSMutableAttributedString(string: "✦", attributes: [.font: NSFont.systemFont(ofSize: size * 0.95, weight: .bold), .foregroundColor: tint])
+        out.append(NSAttributedString(string: " " + name, attributes: [.font: serifFont(size, .semibold, italic: true), .foregroundColor: ink, .kern: 0.2]))
+        return out
     }
 
     // MARK: Karakter yardımcı dokuları

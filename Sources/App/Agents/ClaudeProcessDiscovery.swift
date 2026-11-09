@@ -52,13 +52,65 @@ enum ClaudeProcessDiscovery {
         String(String.UnicodeScalarView(cwd.unicodeScalars.map { ($0.isASCII && (CharacterSet.alphanumerics.contains($0))) ? $0 : "-" }))
     }
 
-    /// Projenin en yeni `*.jsonl` transkriptinin değişim zamanı (oturum son ne zaman çalıştı); yoksa nil.
+    /// Projenin son gerçek etkinliği: en yeni birkaç `*.jsonl` transkriptin İÇİNDEKİ son zaman damgalı kayıt (kullanıcı istemi, asistan çıktısı,
+    /// araç sonucu, tur sonu). Dosyanın değişim zamanı KULLANILMAZ: Claude Code dosyanın sonuna düzenli aralıkla zaman damgasız durum kayıtları
+    /// (`last-prompt`, `custom-title`, `session-owner`, `bridge-session`…) yazar; oturum saatlerdir boştayken bile dosya "değişir".
+    /// Hiç damgalı kayıt bulunamazsa nil.
     static func lastTranscriptActivity(cwd: String, projectsRoot: URL = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)) -> Date? {
         guard !cwd.isEmpty else { return nil }
         let dir = projectsRoot.appending(path: transcriptDirectoryName(forCWD: cwd), directoryHint: .isDirectory)
         guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return nil }
-        return files.filter { $0.pathExtension == "jsonl" }
-            .compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }.max()
+        let newest = files.filter { $0.pathExtension == "jsonl" }
+            .compactMap { url -> (URL, Date)? in
+                guard let m = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else { return nil }
+                return (url, m)
+            }
+            .sorted { $0.1 > $1.1 }
+            .prefix(3)
+        // Sonda yalnızca damgasız durum kayıtları birikmişse (çok uzun boşta) pencere büyütülerek bir kez daha denenir.
+        return newest.compactMap { lastRecordTimestamp(in: $0.0) ?? lastRecordTimestamp(in: $0.0, tailBytes: 8 * 1024 * 1024) }.max()
+    }
+
+    /// Dosyanın sonundan (`tailBytes`) geriye doğru ilk zaman damgalı kaydın zamanı. Satır başına `"timestamp":"…"` aranır (tam JSON çözümü
+    /// gerekmez); metin içindeki kaçışlı `\"timestamp\"` ifadeleri eşleşmez.
+    static func lastRecordTimestamp(in url: URL, tailBytes: Int = 512 * 1024) -> Date? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return nil }
+        let start = size > UInt64(tailBytes) ? size - UInt64(tailBytes) : 0
+        guard (try? handle.seek(toOffset: start)) != nil, let data = try? handle.readToEnd(), !data.isEmpty else { return nil }
+        var lines = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true)
+        if start > 0, !lines.isEmpty { lines.removeFirst() }          // kesilmiş ilk satır
+        let marker = Array("\"timestamp\":\"".utf8)
+        for line in lines.reversed() {
+            let bytes = Array(line)
+            guard let at = find(marker, in: bytes) else { continue }
+            let from = at + marker.count
+            guard let end = bytes[from...].firstIndex(of: UInt8(ascii: "\"")) else { continue }
+            let text = String(decoding: bytes[from..<end], as: UTF8.self)
+            if let date = parseISO(text) { return date }
+        }
+        return nil
+    }
+
+    private static func find(_ needle: [UInt8], in hay: [UInt8]) -> Int? {
+        guard needle.count <= hay.count, let first = needle.first else { return nil }
+        var i = 0
+        let last = hay.count - needle.count
+        while i <= last {
+            if hay[i] == first, hay[i..<(i + needle.count)].elementsEqual(needle) { return i }
+            i += 1
+        }
+        return nil
+    }
+
+    static func parseISO(_ text: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: text) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: text)
     }
 
     /// Süreç durmuş mu (`SSTOP`)?
