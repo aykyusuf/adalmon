@@ -25,23 +25,36 @@ enum OfficeLabelPolicy: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 enum OfficeWallpaperBackground: String, Codable, CaseIterable, Identifiable, Sendable {
-    case dark, light
+    case dark, light, office
 
     var id: String { rawValue }
-    var title: String { self == .dark ? "Koyu" : "Açık" }
-    /// Sahne zemini (odaların dışı): koyu #0E1014, açık #E7EAF0.
+    var title: String {
+        switch self {
+        case .dark: "Koyu"
+        case .light: "Açık"
+        case .office: "Ofis"
+        }
+    }
+    /// Sahne zemini (odaların dışı): koyu #0E1014, açık #E7EAF0. Ofis: temalı arka planın yedeği (piksel temada eski koyu zemin #12131A).
     var rgb: (r: Double, g: Double, b: Double) {
         switch self {
         case .dark: (r: 14.0 / 255.0, g: 16.0 / 255.0, b: 20.0 / 255.0)
         case .light: (r: 231.0 / 255.0, g: 234.0 / 255.0, b: 240.0 / 255.0)
+        case .office: (r: OfficeBackdropStyle.defaultSolid.r, g: OfficeBackdropStyle.defaultSolid.g, b: OfficeBackdropStyle.defaultSolid.b)
         }
+    }
+    /// Sahnenin arka plan stili: Ofis → temalı (vektör temada gradyan + doku), diğerleri düz renk.
+    var style: OfficeBackdropStyle {
+        if self == .office { return .themed }
+        let c = rgb
+        return .solid(OfficeRGB(r: c.r, g: c.g, b: c.b))
     }
 }
 
 /// Ofis duvar kâğıdı seçenekleri (tema ayrıca uygulamanın mevcut `officeTheme` ayarından gelir).
 struct OfficeWallpaperOptions: Codable, Equatable, Sendable {
     var lighting: OfficeLightingMode = .auto
-    var background: OfficeWallpaperBackground = .dark
+    var background: OfficeWallpaperBackground = .office
     var labels: OfficeLabelPolicy = .auto
 
     init() {}

@@ -74,6 +74,7 @@ struct OfficeSceneView: NSViewRepresentable {
     @Binding var selectedRoom: String?
     var lightingMode: OfficeLightingMode = .auto
     var theme: OfficeTheme = .default
+    var panoActive = false
     @Binding var card: OfficeDetailCard?
 
     @MainActor
@@ -88,6 +89,7 @@ struct OfficeSceneView: NSViewRepresentable {
         var knownSelection: String?
         var knownLighting: OfficeLightingMode?
         var knownTheme: OfficeTheme?
+        var knownPano: Bool?
         /// Bağlamaya son yazılan kart (kapat düğmesi bağlamayı nil yapınca sahneyi de kapatmak için).
         var pushedCard: OfficeDetailCard?
 
@@ -169,6 +171,9 @@ struct OfficeSceneView: NSViewRepresentable {
         scene.onHoverChange = { hand in (hand ? NSCursor.pointingHand : NSCursor.arrow).set() }
         scene.setLightingMode(lightingMode, animated: false)
         coordinator.knownLighting = lightingMode
+        scene.setBackdropStyle(.themed)
+        scene.panoMode = panoActive
+        coordinator.knownPano = panoActive
         coordinator.scene = scene
         view.onVisibilityChange = { [weak coordinator] in coordinator?.refreshRunState() }
         view.presentScene(scene)
@@ -186,6 +191,11 @@ struct OfficeSceneView: NSViewRepresentable {
         if c.knownTheme != theme {
             c.knownTheme = theme
             scene.setTheme(theme)
+            c.refreshRunState()
+        }
+        if c.knownPano != panoActive {
+            c.knownPano = panoActive
+            scene.panoMode = panoActive
             c.refreshRunState()
         }
         if c.knownLighting != lightingMode {

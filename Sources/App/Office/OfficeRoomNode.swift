@@ -217,6 +217,9 @@ final class OfficeRoomNode {
     /// Yönetici beyaz tahtasının üstündeki "yazıyor" katmanı (yalnızca yönetici yazarken kurulur/oynar).
     private var boardOverlay: SKSpriteNode?
     private(set) var zoom: CGFloat = 1
+    /// Pano modu: ad levhası, etiket ve balonlar ekran piksel boyutunun bu katı kadar büyür (1: normal).
+    private(set) var uiScale: CGFloat = 1
+    private var labelZoom: CGFloat { zoom / max(uiScale, 0.1) }
     private(set) var labelsOn = false
     private var lastLabelItems: [OfficeLabelItem] = []
     private var lastLabelZoom: CGFloat = 0
@@ -225,6 +228,8 @@ final class OfficeRoomNode {
     private(set) var overflow = 0
     private(set) var memberCount = 0
     var placed = false
+    /// Temalı arka plan: odanın çevresindeki gölge/parıltı (sahne ekler/kaldırır).
+    var backdropShadow: OfficeRoomShadow?
     var onAnimationChange: (() -> Void)?
 
     // Levha (ekran sabit boyutlu: ölçek 1/zoom).
@@ -365,6 +370,12 @@ final class OfficeRoomNode {
         layoutChrome()
     }
 
+    func setUIScale(_ s: CGFloat) {
+        guard abs(s - uiScale) > 0.001 else { return }
+        uiScale = s
+        setZoom(zoom)
+    }
+
     func setZoom(_ z: CGFloat) {
         zoom = z
         for a in actors.values { applyScale(a) }
@@ -392,7 +403,7 @@ final class OfficeRoomNode {
 
     /// Vektör başlık kartı: yuvarlak köşeli açık/koyu kart, kalın ad, renkli model rozeti, oturum renginde ince alt çizgi.
     private func layoutPlaqueVector() {
-        let z = zoom
+        let z = labelZoom
         plaque.setScale(1 / z)
         plaque.position = CGPoint(x: 2, y: CGFloat(kit.worldHeight) + 3)
         let night = nightWanted
@@ -464,7 +475,7 @@ final class OfficeRoomNode {
 
     private func layoutChrome() {
         if theme == .vector { layoutPlaqueVector(); return }
-        let z = zoom
+        let z = labelZoom
         plaque.setScale(1 / z)
         plaque.position = CGPoint(x: 2, y: CGFloat(kit.worldHeight) + 3)
         let height: CGFloat = 20
@@ -595,7 +606,7 @@ final class OfficeRoomNode {
             d.zPosition = 1
             a.label.addChild(d)
         }
-        a.label.setScale(1 / zoom)
+        a.label.setScale(1 / labelZoom)
         positionAccessoryAndBubble(a)
     }
 
@@ -624,7 +635,7 @@ final class OfficeRoomNode {
         a.labelDot = dot
         applyLabelVariant(a, 0)
         for n in [pill, dot, name] as [SKNode] { a.label.addChild(n) }
-        a.label.setScale(1 / zoom)
+        a.label.setScale(1 / labelZoom)
         positionAccessoryAndBubble(a)
     }
 
@@ -721,7 +732,7 @@ final class OfficeRoomNode {
     private func applyScale(_ a: OfficeActor) {
         let s = CGFloat(OfficeAppearance.spriteScale(small: a.appearance.small, zoom: Double(zoom)))
         a.body.setScale(s)
-        a.label.setScale(1 / zoom)
+        a.label.setScale(1 / labelZoom)
         a.accessory?.setScale(s)
         positionAccessoryAndBubble(a)
     }
@@ -1113,7 +1124,7 @@ final class OfficeRoomNode {
         placeRoleAccessory(a)
         a.label.position = CGPoint(x: 0, y: labelY(a))
         if let tb = a.textBubble, !tb.node.isHidden {
-            tb.node.setScale(1 / zoom)
+            tb.node.setScale(1 / labelZoom)
             tb.setFlipped(a.root.position.x > CGFloat(kit.worldWidth) / 2)
         }
         resolveOverlays()
@@ -1128,13 +1139,13 @@ final class OfficeRoomNode {
 
     /// Ad etiketinin (varsa) y konumu: baş + aksesuar üstü. Yan yana oturan salon koltuklarında (kanepe) tek sütundakini bir kademe yukarı al.
     private func labelY(_ a: OfficeActor) -> CGFloat {
-        labelBaseY(a) + CGFloat(a.labelLevel) * OfficeLabelLayout.step / zoom
+        labelBaseY(a) + CGFloat(a.labelLevel) * OfficeLabelLayout.step / labelZoom
     }
 
     private func labelBaseY(_ a: OfficeActor) -> CGFloat {
         let s = a.body.yScale
         let top = headTop(a) + (a.accessory?.size.height ?? 0) * s + 3
-        let stagger: CGFloat = a.seat.kind == .lounge && a.seat.tile.col % 2 != 0 ? 14 / zoom : 0
+        let stagger: CGFloat = a.seat.kind == .lounge && a.seat.tile.col % 2 != 0 ? 14 / labelZoom : 0
         return top + stagger
     }
 
@@ -1153,9 +1164,9 @@ final class OfficeRoomNode {
             items.append(OfficeLabelItem(id: a.member.id, x: a.root.position.x, y: a.root.position.y + labelBaseY(a), widths: a.labelWidths))
         }
         items.sort { $0.id < $1.id }
-        guard items != lastLabelItems || zoom != lastLabelZoom else { return }
-        lastLabelItems = items; lastLabelZoom = zoom
-        let result = OfficeLabelLayout.resolve(items, zoom: zoom).placements
+        guard items != lastLabelItems || labelZoom != lastLabelZoom else { return }
+        lastLabelItems = items; lastLabelZoom = labelZoom
+        let result = OfficeLabelLayout.resolve(items, zoom: labelZoom).placements
         for item in items {
             guard let a = actors[item.id], let p = result[item.id] else { continue }
             if a.labelVariant != p.variant { applyLabelVariant(a, p.variant) }

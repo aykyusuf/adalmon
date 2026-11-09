@@ -5,13 +5,15 @@ import SwiftUI
 struct OfficeSceneContainer: View {
     let members: [OfficeMember]
     @Binding var selectedRoom: String?
+    /// Pano (kiosk) düzeni: ayrı pencere tam ekranda ya da "Hep" iken true.
+    var panoActive = false
     @AppStorage(OfficeLighting.defaultsKey) private var lightingRaw = OfficeLightingMode.auto.rawValue
     @AppStorage(OfficeTheme.defaultsKey) private var themeRaw = OfficeTheme.default.rawValue
     @State private var card: OfficeDetailCard?
 
     var body: some View {
         OfficeSceneView(members: members, selectedRoom: $selectedRoom, lightingMode: OfficeLightingMode(rawValue: lightingRaw) ?? .auto,
-                        theme: OfficeTheme(rawValue: themeRaw) ?? .default, card: $card)
+                        theme: OfficeTheme(rawValue: themeRaw) ?? .default, panoActive: panoActive, card: $card)
             .overlay(alignment: .topTrailing) {
                 if let card {
                     OfficeCardView(card: card) { self.card = nil }

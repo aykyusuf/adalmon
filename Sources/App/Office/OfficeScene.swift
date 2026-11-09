@@ -55,6 +55,19 @@ final class OfficeScene: SKScene {
     private var dragLast: CGPoint?
     private var dragging = false
     /// Duvar kâğıdı: nil değilse etkileşimsiz genel bakış kamerası (tüm odalar ekrana sığar) ve etiket politikası geçerlidir.
+    /// Arka plan: düz renk ya da temalı (vektör temada gradyan + doku; piksel temada eski koyu zemin). Varsayılan: eski düz zemin.
+    private(set) var backdropStyle = OfficeBackdropStyle.solid(OfficeBackdropStyle.defaultSolid)
+    private var backdropNode: OfficeBackdropNode?
+    /// Pano (kiosk) modu: kenar boşluğu azalır, oda başına eşit aralık, ad levhası/etiket/balonlar ekran yüksekliğiyle büyür.
+    var panoMode = false {
+        didSet {
+            guard panoMode != oldValue else { return }
+            applyUIScale()
+            relayout(animated: false)
+        }
+    }
+    var themedBackdropActive: Bool { backdropStyle == .themed && !theme.integerZoomOnly }
+    var uiScale: CGFloat { panoMode && !theme.integerZoomOnly ? CGFloat(OfficePanoLayout.uiScale(viewHeight: size.height)) : 1 }
     var wallpaperLabels: OfficeLabelPolicy? {
         didSet {
             guard wallpaperLabels != oldValue else { return }
@@ -103,6 +116,8 @@ final class OfficeScene: SKScene {
     required init?(coder: NSCoder) { fatalError("init(coder:) yok") }
 
     override func didChangeSize(_ oldSize: CGSize) {
+        backdropNode?.setSize(size)
+        applyUIScale()
         relayout(animated: false)
         onActivity?()
     }
@@ -113,6 +128,7 @@ final class OfficeScene: SKScene {
     func setTheme(_ newTheme: OfficeTheme) {
         guard newTheme != theme else { return }
         theme = newTheme
+        refreshBackdrop(animated: false)
         for r in rooms.values { destroy(r) }
         for r in dying { destroy(r) }
         for r in world.children where r !== selectionFrame && r !== tooltipNode { r.removeAllActions(); r.removeFromParent() }
@@ -121,6 +137,49 @@ final class OfficeScene: SKScene {
         if let t = tooltipNode, t.parent == nil { world.addChild(t) }
         cameraPlaced = false
         apply(members: lastMembers, animated: false)
+    }
+
+    // MARK: Arka plan
+
+    /// Arka planı değiştirir (düz renk ya da temalı). Temalı arka plan yalnızca vektör temada çizilir.
+    func setBackdropStyle(_ style: OfficeBackdropStyle) {
+        guard style != backdropStyle else { return }
+        backdropStyle = style
+        refreshBackdrop(animated: false)
+        for r in rooms.values { syncShadow(r) }
+    }
+
+    private func refreshBackdrop(animated: Bool) {
+        if case .solid(let c) = backdropStyle { backgroundColor = SKColor(red: c.r, green: c.g, blue: c.b, alpha: 1) }
+        if themedBackdropActive {
+            if backdropNode == nil {
+                let node = OfficeBackdropNode(size: size, night: isNight)
+                cameraNode.addChild(node)
+                backdropNode = node
+            }
+            backgroundColor = SKColor(red: 0.075, green: 0.075, blue: 0.095, alpha: 1)
+        } else if let node = backdropNode {
+            node.removeFromParent()
+            backdropNode = nil
+        }
+        for r in rooms.values { syncShadow(r) }
+    }
+
+    /// Odanın gölge/parıltı katmanını arka plan durumuna uydurur (yalnızca temalı arka planda).
+    private func syncShadow(_ room: OfficeRoomNode) {
+        guard themedBackdropActive else {
+            room.backdropShadow?.removeFromParent(); room.backdropShadow = nil
+            return
+        }
+        guard room.backdropShadow == nil else { return }
+        let shadow = OfficeRoomShadow(bodySize: CGSize(width: room.frameSize.width, height: room.frameSize.height - OfficeRoomNode.headerHeight), night: isNight)
+        room.root.addChild(shadow)
+        room.backdropShadow = shadow
+    }
+
+    private func applyUIScale() {
+        let u = uiScale
+        for r in rooms.values { r.setUIScale(u) }
     }
 
     // MARK: Üyeleri uygulama
@@ -156,7 +215,9 @@ final class OfficeScene: SKScene {
             node.setNight(isNight, animated: false)
             node.onAnimationChange = { [weak self] in self?.notifyAnimationState() }
             node.setZoom(zoom)
+            node.setUIScale(uiScale)
             world.addChild(node.root)
+            syncShadow(node)
             rooms[rp.id] = node
             if animated && (!replaced || known[rp.id] != nil) { fade.insert(rp.id); node.root.alpha = 0; if replaced { grown.insert(rp.id) } }
             changed = true
@@ -209,8 +270,13 @@ final class OfficeScene: SKScene {
             return
         }
         let sizes = ordered.map { OfficeRoomSize(id: $0.id, width: $0.frameSize.width, height: $0.frameSize.height) }
-        arrangement = wallpaperLabels != nil ? OfficeWallpaperCamera.bestArrangement(sizes, view: size)
-            : OfficeRoomArranger.best(sizes, viewWidth: size.width, viewHeight: size.height)
+        if wallpaperLabels != nil {
+            arrangement = OfficeWallpaperCamera.bestArrangement(sizes, view: size)
+        } else if panoMode && !theme.integerZoomOnly {
+            arrangement = OfficePanoLayout.arrange(sizes, view: size).arrangement
+        } else {
+            arrangement = OfficeRoomArranger.best(sizes, viewWidth: size.width, viewHeight: size.height)
+        }
         let contentH = arrangement.contentHeight
         for cell in arrangement.cells {
             guard let room = rooms[cell.id] else { continue }
@@ -444,7 +510,8 @@ final class OfficeScene: SKScene {
         let night = OfficeLighting.isNight(mode: lightingMode, date: now, timeZone: timeZone)
         guard night != isNight else { return }
         isNight = night
-        for r in rooms.values { r.setNight(night, animated: animated) }
+        for r in rooms.values { r.setNight(night, animated: animated); r.backdropShadow?.setNight(night, animated: animated) }
+        backdropNode?.setNight(night, animated: animated)
         if animated { track(world, key: "lighting", .wait(forDuration: OfficeLighting.crossfade + 0.1)) }
     }
 

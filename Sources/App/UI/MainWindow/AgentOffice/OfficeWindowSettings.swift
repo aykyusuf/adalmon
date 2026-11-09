@@ -10,14 +10,24 @@ struct OfficeWindowSettings: Codable, Equatable, Sendable {
     var allSpaces = false
     /// Şeffaf başlık çubuğu (başlık metni gizlenir, sahne arkasından görünür).
     var transparentTitlebar = false
+    /// Pano görünümü: Otomatik (tam ekranda), Hep, Kapalı.
+    var panoMode = OfficePanoMode.auto
+    /// Pano köşelerinde saat ve özet (pano etkinken).
+    var showsClockSummary = true
+    /// Ekranı uyanık tut: pencere tam ekran ve açıkken ekranın uykuya dalmasını engeller (varsayılan kapalı).
+    var keepAwake = false
 
     static let defaultsKey = "officeWindow.settings"
     static let `default` = OfficeWindowSettings()
 
-    init(alwaysOnTop: Bool = false, allSpaces: Bool = false, transparentTitlebar: Bool = false) {
+    init(alwaysOnTop: Bool = false, allSpaces: Bool = false, transparentTitlebar: Bool = false,
+         panoMode: OfficePanoMode = .auto, showsClockSummary: Bool = true, keepAwake: Bool = false) {
         self.alwaysOnTop = alwaysOnTop
         self.allSpaces = allSpaces
         self.transparentTitlebar = transparentTitlebar
+        self.panoMode = panoMode
+        self.showsClockSummary = showsClockSummary
+        self.keepAwake = keepAwake
     }
 
     // Eksik anahtarlar varsayılan olur (eski/kısmi kayıt); türü yanlış bir değer tüm kaydı geçersiz kılar.
@@ -26,6 +36,9 @@ struct OfficeWindowSettings: Codable, Equatable, Sendable {
         alwaysOnTop = try c.decodeIfPresent(Bool.self, forKey: .alwaysOnTop) ?? false
         allSpaces = try c.decodeIfPresent(Bool.self, forKey: .allSpaces) ?? false
         transparentTitlebar = try c.decodeIfPresent(Bool.self, forKey: .transparentTitlebar) ?? false
+        panoMode = try c.decodeIfPresent(OfficePanoMode.self, forKey: .panoMode) ?? .auto
+        showsClockSummary = try c.decodeIfPresent(Bool.self, forKey: .showsClockSummary) ?? true
+        keepAwake = try c.decodeIfPresent(Bool.self, forKey: .keepAwake) ?? false
     }
 
     var level: NSWindow.Level { alwaysOnTop ? .floating : .normal }
@@ -102,7 +115,16 @@ final class OfficeWindowState {
     }
     /// Odaklanılan oda (oturum kimliği); nil: hepsi görünür.
     var selectedRoom: String?
+    /// Pencere tam ekranda mı; araç şeridi görünür mü (tam ekranda 3 sn hareketsizlikte gizlenir).
+    var isFullScreen = false
+    var stripVisible = true
+    /// Pano köşe saati (yalnızca pano etkin ve pencere görünürken çalışır).
+    let clock = OfficePanoClock()
     @ObservationIgnored var onSettingsChange: ((OfficeWindowSettings) -> Void)?
+    @ObservationIgnored var onToggleFullScreen: (() -> Void)?
+
+    var panoActive: Bool { settings.panoMode.isActive(fullScreen: isFullScreen) }
+    var stripShown: Bool { !isFullScreen || stripVisible }
 
     init(settings: OfficeWindowSettings) {
         self.settings = settings

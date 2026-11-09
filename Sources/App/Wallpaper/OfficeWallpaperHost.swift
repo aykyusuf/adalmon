@@ -50,8 +50,7 @@ final class OfficeWallpaperHost {
             scene.setLightingMode(newOptions.lighting, animated: false); changed = true
         }
         if newOptions.background != options.background || scene.wallpaperLabels == nil {
-            let c = newOptions.background.rgb
-            scene.backgroundColor = SKColor(red: c.r, green: c.g, blue: c.b, alpha: 1); changed = true
+            scene.setBackdropStyle(newOptions.background.style); changed = true
         }
         if newOptions.labels != scene.wallpaperLabels { scene.wallpaperLabels = newOptions.labels; changed = true }
         options = newOptions
