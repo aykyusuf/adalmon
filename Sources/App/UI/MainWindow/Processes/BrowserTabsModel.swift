@@ -46,6 +46,14 @@ final class BrowserTabsModel {
     private(set) var safariMemory: SafariMemorySummary?
     private(set) var safariUpdated: Date?
 
+    /// Sekme ↔ süreç eşlemesi (ölçerek; kullanıcı isteğiyle). Anahtar: Safari'de `safariKey(for:)`, Chrome'da hedef kimliği.
+    private(set) var safariProbe: TabProbeState = .idle
+    private(set) var safariMap = TabProcessMap()
+    private(set) var chromeProbe: TabProbeState = .idle
+    private(set) var chromeMap = TabProcessMap()
+    @ObservationIgnored private let cpuSeconds: @Sendable (Int32) -> Double?
+    @ObservationIgnored private var probeTask: Task<Void, Never>?
+
     private(set) var chromeState: ChromeState
     private(set) var chromeTabs: [ChromeTabSnapshot] = []
     /// Bu hata ayıklama örneğinin renderer süreçleri (SystemInfo destekleniyorsa); nil = bilinmiyor.
@@ -72,7 +80,8 @@ final class BrowserTabsModel {
     init(defaults: UserDefaults = .standard, safari: any SafariTabsSource = SafariAppleScriptSource(),
          safariPIDs: @escaping @MainActor () -> Set<Int32> = { SafariWebContentScanner.safariPIDs },
          webContentScan: @escaping @Sendable (Set<Int32>) -> [WebContentProcess] = { SafariWebContentScanner.scan(safariPIDs: $0) },
-         useNetwork: Bool = true) {
+         useNetwork: Bool = true, cpuSeconds: @escaping @Sendable (Int32) -> Double? = { ProcessCPU.seconds(of: $0) }) {
+        self.cpuSeconds = cpuSeconds
         self.defaults = defaults
         self.safari = safari
         self.safariPIDs = safariPIDs
@@ -143,8 +152,52 @@ final class BrowserTabsModel {
         }
     }
 
+    /// Safari sekme anahtarı: pencere-sıra ve adres (sekme değişince eşleme geçersiz olur).
+    static func safariKey(for tab: SafariTab) -> String { "\(tab.window)-\(tab.index)|\(tab.url)" }
+
+    /// Her Safari sekmesinde kısa bir JS döngüsü çalıştırıp hangi WebContent sürecinin CPU'su arttığına bakar (sırayla, iptal edilebilir).
+    /// Develop menüsünde "Apple Events'ten JavaScript'e izin ver" kapalıysa `.javascriptDisabled` olur ve hiçbir şey değişmez.
+    func probeSafari() async {
+        guard safariEnabled, safariState == .loaded, !safariTabs.isEmpty, !isProbing(safariProbe) else { return }
+        let tabs = safariTabs
+        safariProbe = .running(done: 0, total: tabs.count)
+        let scan = webContentScan, pids = safariPIDs()
+        let candidates = await Task.detached(priority: .utility) { scan(pids).map(\.pid) }.value
+        let cpu = cpuSeconds
+        var map: [String: Int32] = [:]
+        for (i, tab) in tabs.enumerated() {
+            if Task.isCancelled || !safariEnabled { safariProbe = .idle; return }
+            safariProbe = .running(done: i, total: tabs.count)
+            let before = Dictionary(uniqueKeysWithValues: candidates.compactMap { pid in cpu(pid).map { (pid, $0) } })
+            switch await safari.spin(window: tab.window, index: tab.index) {
+            case .javascriptDisabled: safariProbe = .javascriptDisabled; return
+            case .failed: continue
+            case .ok: break
+            }
+            let after = Dictionary(uniqueKeysWithValues: candidates.compactMap { pid in cpu(pid).map { (pid, $0) } })
+            if let pid = TabProcessProbe.attribute(before: before, after: after) { map[Self.safariKey(for: tab)] = pid }
+        }
+        // Ölçüm sürerken sekmeler değiştiyse (sıra kayar) sonuç güvenilmez: atılır.
+        guard safariTabs == tabs else { safariProbe = .failed("Ölçüm sırasında sekmeler değişti; yeniden deneyin."); return }
+        safariMap = TabProcessMap(pidByTab: map, updatedAt: .now)
+        safariProbe = .finished(mapped: map.count, total: tabs.count)
+        publishSafariTitles()
+    }
+
+    private func publishSafariTitles() {
+        var titles: [Int32: [String]] = [:]
+        for tab in safariTabs {
+            if let pid = safariMap.pidByTab[Self.safariKey(for: tab)] { titles[pid, default: []].append(tab.title.isEmpty ? tab.url : tab.title) }
+        }
+        BrowserTabMapStore.shared.set(source: "safari", titles: titles)
+    }
+
+    private func isProbing(_ state: TabProbeState) -> Bool { if case .running = state { true } else { false } }
+
     private func clearSafari(_ state: SafariState) {
         if safariState != state { safariState = state }
+        if !safariMap.isEmpty { safariMap = TabProcessMap(); BrowserTabMapStore.shared.clear(source: "safari") }
+        if safariProbe != .idle { safariProbe = .idle }
         if !safariTabs.isEmpty { safariTabs = [] }
         if safariMemory != nil { safariMemory = nil }
     }
@@ -238,6 +291,27 @@ final class BrowserTabsModel {
         if chromeState != state { chromeState = state }
         if !chromeTabs.isEmpty { chromeTabs = [] }
         if chromeRenderer != nil { chromeRenderer = nil }
+        if !chromeMap.isEmpty { chromeMap = TabProcessMap(); BrowserTabMapStore.shared.clear(source: "chrome") }
+        if chromeProbe != .idle { chromeProbe = .idle }
+    }
+
+    /// Chrome (hata ayıklama örneği): her sekmede kısa JS döngüsü → hangi renderer'ın CPU'su arttı (bkz. `TabProcessProbe`).
+    func probeChrome() async {
+        guard chromeEnabled, chromeState == .connected, let poller, !isProbing(chromeProbe), !isPolling else { return }
+        isPolling = true   // yoklama ile aynı soketleri paylaşır: üst üste binmesin
+        defer { isPolling = false }
+        chromeProbe = .running(done: 0, total: chromeTabs.count)
+        let cpu = cpuSeconds
+        let total = chromeTabs.count
+        let map = await poller.probeTabProcesses(cpu: cpu, progress: { [weak self] done, count in
+            Task { @MainActor in self?.chromeProbe = .running(done: done, total: count) }
+        })
+        guard chromeState == .connected else { return }
+        chromeMap = TabProcessMap(pidByTab: map, updatedAt: .now)
+        chromeProbe = .finished(mapped: map.count, total: total)
+        var titles: [Int32: [String]] = [:]
+        for tab in chromeTabs { if let pid = map[tab.id] { titles[pid, default: []].append(tab.title.isEmpty ? tab.url : tab.title) } }
+        BrowserTabMapStore.shared.set(source: "chrome", titles: titles)
     }
 
     func resetChromeConnection() {

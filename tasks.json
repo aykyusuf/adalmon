@@ -73,6 +73,14 @@
       "done_when": "Tarayicilar sayfasinda Safari/Chrome sekmeleri, site rozetleri, arama ve surec cubuklari gercek veriyle dogru gorunuyor; Surecler'de Safari/Chrome altinda 'Web Icerigi (sekme)' gibi adlar RAM ile listeleniyor; kullanici onayladi",
       "status": "todo",
       "evidence": "cb13381 sonrasi kuruldu; birim ve onizleme testleri gecti; gercek Safari/Chrome ile canli bakilmadi. Not: Safari ve Chrome surec-sekme eslemesini vermiyor"
+    },
+    {
+      "id": "TABMAP-01",
+      "title": "Sekme basligi <-> surec RAM eslemesi (Chrome ve Safari) canli dogrula",
+      "priority": 2,
+      "done_when": "Chrome debug modunda ve Safari'de (Develop > Apple Events'ten JavaScript'e izin ver acikken) 'Sekme RAM'ini olc' dugmesi sekmeleri surecle eslestiriyor; sekme satirlarinda surec RAM'i, paylasimda 'ortak xN', Surecler listesinde surec adinin yaninda sekme basligi gorunuyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Kuruldu; birim testleri gecti (TabProcessProbeLogicTests, ChromeTabProbeTests, SafariTabProbeModelTests); gercek Safari/Chrome ile canli denenmedi"
     }
   ]
 }

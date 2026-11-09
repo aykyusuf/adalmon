@@ -160,6 +160,41 @@ actor ChromeTabsPoller {
         return ChromeSnapshot(tabs: tabs, processes: await processInfo())
     }
 
+    /// Sekme ↔ renderer eşlemesi (ölçerek): her sekmede kısa bir JS döngüsü çalıştırıp hangi renderer'ın CPU süresinin arttığına
+    /// bakar. Sekmeler sırayla (aynı anda değil) işlenir; belirsiz sonuçlar eşlenmez. `cpu`: pid → kümülatif CPU saniyesi.
+    func probeTabProcesses(cpu: @escaping @Sendable (Int32) -> Double?, progress: (@Sendable (Int, Int) -> Void)? = nil) async -> [String: Int32] {
+        guard let listURL = CDPEndpointGuard.httpURL(port: port, path: "/json/list"),
+              let data = try? await http.get(listURL), let targets = try? CDPCodec.targets(from: data),
+              let processes = await processInfo() else { return [:] }
+        let pids = processes.filter { $0.type == "renderer" }.map(\.id)
+        guard !pids.isEmpty else { return [:] }
+        let measured = Array(targets.prefix(Self.maxTabs))
+        var result: [String: Int32] = [:]
+        for (index, target) in measured.enumerated() {
+            progress?(index, measured.count)
+            if Task.isCancelled { break }
+            guard let connection = await ensureConnection(for: target) else { continue }
+            let before = Dictionary(uniqueKeysWithValues: pids.compactMap { pid in cpu(pid).map { (pid, $0) } })
+            do {
+                _ = try await connection.call("Runtime.evaluate", params: ["expression": TabProcessProbe.spinSource],
+                                              timeout: callTimeout + .milliseconds(TabProcessProbe.spinMilliseconds))
+            } catch { continue }
+            let after = Dictionary(uniqueKeysWithValues: pids.compactMap { pid in cpu(pid).map { (pid, $0) } })
+            if let pid = TabProcessProbe.attribute(before: before, after: after) { result[target.id] = pid }
+            try? await Task.sleep(for: .milliseconds(30))
+        }
+        progress?(measured.count, measured.count)
+        return result
+    }
+
+    private func ensureConnection(for target: CDPTarget) async -> CDPConnection? {
+        if let existing = tabConnections[target.id], await !existing.isClosed { return existing }
+        guard let raw = target.webSocketDebuggerUrl, let url = URL(string: raw), CDPEndpointGuard.isAllowed(url, port: port) else { return nil }
+        let connection = CDPConnection(socket: sockets.connect(url))
+        tabConnections[target.id] = connection
+        return connection
+    }
+
     private func processInfo() async -> [CDPProcess]? {
         guard !processInfoUnsupported else { return nil }
         do {

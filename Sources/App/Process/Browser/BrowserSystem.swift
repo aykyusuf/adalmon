@@ -6,10 +6,24 @@ import Foundation
 // MARK: Safari (AppleScript)
 
 /// Safari sekme kaynağı (testlerde sahtesi kullanılır).
+/// Sekmede kısa JS döngüsü çalıştırma sonucu (sekme ↔ süreç eşlemesi için).
+enum SafariSpinResult: Equatable, Sendable {
+    case ok
+    /// Develop menüsündeki "Apple Events'ten JavaScript'e izin ver" kapalı.
+    case javascriptDisabled
+    case failed(Int)
+}
+
 protocol SafariTabsSource: Sendable {
     /// `ask` false iken izin penceresi AÇILMAZ (yalnızca durum okunur); true yalnızca kullanıcı düğmeye bastığında.
     func permission(ask: Bool) async -> SafariAutomationPermission
     func fetchTabs() async throws -> [SafariTab]
+    /// `window`/`index`: `SafariTab`'daki 1'den başlayan sıra. Sayfanın içeriğine dokunmayan ≈`milliseconds` ms'lik bir döngü çalıştırır.
+    func spin(window: Int, index: Int) async -> SafariSpinResult
+}
+
+extension SafariTabsSource {
+    func spin(window: Int, index: Int) async -> SafariSpinResult { .failed(-1) }
 }
 
 /// NSAppleScript ile Safari sekme listesi. Ana thread'i bloklamaz: tüm Apple olayları kendi seri kuyruğunda, tek uçuşlu;
@@ -55,6 +69,21 @@ final class SafariAppleScriptSource: SafariTabsSource, @unchecked Sendable {
         let output = try outcome.get()
         if SafariTabsScript.isNotRunning(output) { throw SafariTabsError.notRunning }
         return SafariTabsScript.parse(output)
+    }
+
+    func spin(window: Int, index: Int) async -> SafariSpinResult {
+        guard Self.isSafariRunning else { return .failed(-600) }
+        let source = "tell application \"Safari\" to do JavaScript \"\(TabProcessProbe.spinSource)\" in tab \(index) of window \(window)"
+        let outcome: SafariSpinResult? = await run(timeout: 6) {
+            guard let script = NSAppleScript(source: source) else { return .failed(-1) }
+            var error: NSDictionary?
+            _ = script.executeAndReturnError(&error)
+            guard let error else { return .ok }
+            let message = (error[NSAppleScript.errorMessage] as? String) ?? ""
+            if message.localizedCaseInsensitiveContains("JavaScript") { return .javascriptDisabled }
+            return .failed((error[NSAppleScript.errorNumber] as? Int) ?? -1)
+        }
+        return outcome ?? .failed(-1712)
     }
 
     /// Kuyrukta çalıştırır; `timeout` dolarsa nil döner (iş arka planda biter, sonucu atılır). Önceki çağrı hâlâ sürüyorsa

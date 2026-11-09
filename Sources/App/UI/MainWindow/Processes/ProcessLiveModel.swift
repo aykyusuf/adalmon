@@ -225,6 +225,8 @@ final class ProcessLiveModel {
     private func memberRows(_ list: [LiveMember], group: LiveRow, snap: LiveSnapshot) -> [LiveRow] {
         list.map { member in
             var m = LiveRow.make(member: member, group: group, elapsed: snap.elapsed, cores: cores)
+            // Tarayıcılar sekmesinde sekme–süreç ölçümü yapıldıysa süreç adının yanına sekme başlığı eklenir.
+            if member.pids.count == 1, let label = BrowserTabMapStore.shared.label(for: member.pid) { m.name += " · " + label }
             if m.category != .system {
                 let state = ProcessActions.state(of: member.pids)
                 m.isSuspended = state.isSuspended

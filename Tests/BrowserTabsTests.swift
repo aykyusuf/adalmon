@@ -217,6 +217,8 @@ private final class FakeTransport: CDPHTTPClient, CDPSocketFactory, @unchecked S
         default: return nil
         }
     }
+    /// Verilirse her soket kendi adresine göre davranır (sekme ↔ süreç eşleme testleri için).
+    var handlerFactory: (@Sendable (URL) -> (@Sendable (String) -> String?))?
     private(set) var sockets: [(URL, FakeSocket)] = []
 
     init(listJSON: String) { self.listJSON = listJSON }
@@ -230,7 +232,7 @@ private final class FakeTransport: CDPHTTPClient, CDPSocketFactory, @unchecked S
     }
 
     func connect(_ url: URL) -> any CDPSocket {
-        let s = FakeSocket(handler: handler)
+        let s = FakeSocket(handler: handlerFactory?(url) ?? handler)
         lock.withLock { sockets.append((url, s)) }
         return s
     }
@@ -324,6 +326,14 @@ private final class FakeSafari: SafariTabsSource, @unchecked Sendable {
     var error: SafariTabsError?
     private(set) var asks: [Bool] = []
     private(set) var fetches = 0
+    var spinResult: SafariSpinResult = .ok
+    /// Her `spin` çağrısında (pencere, sıra) ile çağrılır: testte ilgili sürecin CPU'sunu artırır.
+    var onSpin: (@Sendable (Int, Int) -> Void)?
+
+    func spin(window: Int, index: Int) async -> SafariSpinResult {
+        onSpin?(window, index)
+        return lock.withLock { spinResult }
+    }
 
     func permission(ask: Bool) async -> SafariAutomationPermission {
         lock.withLock { asks.append(ask); return permissionValue }
@@ -430,5 +440,140 @@ final class BrowserTabsModelTests: XCTestCase {
         safari.permissionValue = .safariNotRunning
         await model.refreshSafari(ask: false)
         XCTAssertEqual(model.safariState, .notRunning)
+    }
+}
+
+
+// MARK: Sekme ↔ süreç eşleme (ölçerek)
+
+private final class CPUBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Int32: Double]
+    init(_ initial: [Int32: Double]) { values = initial }
+    func add(_ pid: Int32, _ seconds: Double) { lock.withLock { values[pid, default: 0] += seconds } }
+    func value(_ pid: Int32) -> Double? { lock.withLock { values[pid] } }
+}
+
+final class TabProcessProbeLogicTests: XCTestCase {
+    func testAttributesTheProcessWhoseCPUJumped() {
+        XCTAssertEqual(TabProcessProbe.attribute(before: [1: 10, 2: 20], after: [1: 10.01, 2: 20.16]), 2)
+    }
+
+    func testTooSmallOrAmbiguousDeltasAreNotAttributed() {
+        XCTAssertNil(TabProcessProbe.attribute(before: [1: 0, 2: 0], after: [1: 0.02, 2: 0.03]), "döngü yarısından az")
+        XCTAssertNil(TabProcessProbe.attribute(before: [1: 0, 2: 0], after: [1: 0.16, 2: 0.15]), "iki süreç birden yoğun: belirsiz")
+        XCTAssertNil(TabProcessProbe.attribute(before: [:], after: [1: 5]), "önceki ölçüm yok")
+        XCTAssertNil(TabProcessProbe.attribute(before: [1: 5], after: [1: 4]), "sayaç geri gitmez")
+        XCTAssertEqual(TabProcessProbe.attribute(before: [1: 0, 2: 0], after: [1: 0.16, 2: 0.04]), 1, "ikinci çok küçükse net")
+    }
+
+    func testMapSharedCounts() {
+        let map = TabProcessMap(pidByTab: ["a": 7, "b": 7, "c": 9], updatedAt: .now)
+        XCTAssertEqual(map.sharedCount(for: 7), 2)
+        XCTAssertEqual(map.tabKeys(for: 7), ["a", "b"])
+        XCTAssertEqual(map.sharedCount(for: 1), 0)
+    }
+
+    @MainActor
+    func testStoreLabelTruncatesAndCountsExtras() {
+        let store = BrowserTabMapStore()
+        store.set(source: "safari", titles: [5: ["YouTube", "X", "GitHub", "Çok uzun bir sekme başlığı burada devam ediyor"]])
+        XCTAssertEqual(store.label(for: 5), "YouTube · X +2")
+        store.set(source: "chrome", titles: [6: ["A"]])
+        XCTAssertEqual(store.label(for: 6), "A")
+        store.clear(source: "safari")
+        XCTAssertNil(store.label(for: 5))
+        XCTAssertEqual(store.label(for: 6), "A", "kaynaklar birbirini silmez")
+    }
+}
+
+final class ChromeTabProbeTests: XCTestCase {
+    private static let list = "[" + ["A", "B", "C", "D"].map {
+        #"{"id":"\#($0)","type":"page","title":"T\#($0)","url":"https://\#($0).com","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/\#($0)"}"#
+    }.joined(separator: ",") + "]"
+
+    func testProbeMapsTabsToRenderersSharedAndAmbiguous() async throws {
+        let box = CPUBox([101: 5, 102: 7])
+        let t = FakeTransport(listJSON: Self.list)
+        t.handlerFactory = { url in
+            let tab = url.lastPathComponent
+            return { method in
+                switch method {
+                case "SystemInfo.getProcessInfo":
+                    return #""result":{"processInfo":[{"type":"renderer","id":101,"cpuTime":5},{"type":"renderer","id":102,"cpuTime":7},{"type":"gpu-process","id":9,"cpuTime":1}]}"#
+                case "Runtime.evaluate":
+                    switch tab {
+                    case "A", "C": box.add(101, 0.16)          // A ve C aynı renderer'ı paylaşır
+                    case "B": box.add(102, 0.16)
+                    default: box.add(101, 0.16); box.add(102, 0.15)   // D: belirsiz
+                    }
+                    return #""result":{"result":{"type":"number","value":1}}"#
+                default: return #""result":{}"#
+                }
+            }
+        }
+        let poller = ChromeTabsPoller(port: 9_222, http: t, sockets: t)
+        let map = await poller.probeTabProcesses(cpu: { box.value($0) })
+        XCTAssertEqual(map, ["A": 101, "B": 102, "C": 101])
+        let evaluated = try XCTUnwrap(t.socket(for: "/devtools/page/A")).methods
+        XCTAssertEqual(evaluated, ["Runtime.evaluate"])
+        XCTAssertFalse(evaluated.contains("Page.navigate"), "sayfaya dokunulmaz: yalnızca boş döngü")
+    }
+
+    func testProbeReturnsEmptyWhenProcessInfoUnsupported() async {
+        let t = FakeTransport(listJSON: Self.list)
+        t.handlerFactory = { _ in { method in method == "SystemInfo.getProcessInfo" ? #""error":{"code":-32601,"message":"x"}"# : #""result":{}"# } }
+        let map = await ChromeTabsPoller(port: 9_222, http: t, sockets: t).probeTabProcesses(cpu: { _ in 1 })
+        XCTAssertTrue(map.isEmpty)
+    }
+}
+
+@MainActor
+final class SafariTabProbeModelTests: XCTestCase {
+    private func make(_ safari: FakeSafari, box: CPUBox) -> BrowserTabsModel {
+        let name = "SafariTabProbe-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        defaults.set(true, forKey: BrowserTabsModel.safariEnabledKey)
+        return BrowserTabsModel(defaults: defaults, safari: safari, safariPIDs: { [10] },
+                                webContentScan: { _ in [WebContentProcess(pid: 11, footprint: 300), WebContentProcess(pid: 12, footprint: 500)] },
+                                useNetwork: false, cpuSeconds: { box.value($0) })
+    }
+
+    func testProbeMapsSafariTabsAndPublishesTitles() async {
+        let box = CPUBox([11: 1, 12: 2])
+        let safari = FakeSafari()
+        safari.tabs = [SafariTab(window: 1, index: 1, title: "YouTube", url: "https://youtube.com"),
+                       SafariTab(window: 1, index: 2, title: "GitHub", url: "https://github.com")]
+        safari.onSpin = { _, index in box.add(index == 1 ? 12 : 11, 0.16) }
+        let model = make(safari, box: box)
+        await model.refreshSafari(ask: false)
+        await model.probeSafari()
+        XCTAssertEqual(model.safariProbe, .finished(mapped: 2, total: 2))
+        XCTAssertEqual(model.safariMap.pidByTab[BrowserTabsModel.safariKey(for: model.safariTabs[0])], 12)
+        XCTAssertEqual(model.safariMap.pidByTab[BrowserTabsModel.safariKey(for: model.safariTabs[1])], 11)
+        XCTAssertEqual(BrowserTabMapStore.shared.label(for: 12), "YouTube")
+        XCTAssertEqual(BrowserTabMapStore.shared.label(for: 11), "GitHub")
+        BrowserTabMapStore.shared.clear(source: "safari")
+    }
+
+    func testJavascriptFromAppleEventsDisabledShowsGuidanceAndMapsNothing() async {
+        let box = CPUBox([11: 1, 12: 2])
+        let safari = FakeSafari()
+        safari.spinResult = .javascriptDisabled
+        let model = make(safari, box: box)
+        await model.refreshSafari(ask: false)
+        await model.probeSafari()
+        XCTAssertEqual(model.safariProbe, .javascriptDisabled)
+        XCTAssertTrue(model.safariMap.isEmpty)
+    }
+
+    func testUnmappedWhenNoProcessShowsClearCPUJump() async {
+        let box = CPUBox([11: 1, 12: 2])
+        let safari = FakeSafari()          // spin hiçbir CPU artırmaz
+        let model = make(safari, box: box)
+        await model.refreshSafari(ask: false)
+        await model.probeSafari()
+        XCTAssertEqual(model.safariProbe, .finished(mapped: 0, total: 2))
     }
 }

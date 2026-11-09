@@ -163,15 +163,19 @@ enum CDPCodec {
 struct ChromeRendererMemory: Equatable, Sendable {
     var count: Int
     var total: UInt64
+    /// Renderer süreci başına ayak izi (sekme eşlemesinde sekmenin RAM'i için).
+    var perPID: [Int32: UInt64] = [:]
 
     static func make(processes: [CDPProcess], path: (Int32) -> String?, footprint: (Int32) -> UInt64?) -> ChromeRendererMemory {
         var count = 0
         var total: UInt64 = 0
+        var perPID: [Int32: UInt64] = [:]
         for p in processes where p.type == "renderer" {
             guard let exe = path(p.id), exe.contains("Google Chrome"), let bytes = footprint(p.id) else { continue }
             count += 1
             total &+= bytes
+            perPID[p.id] = bytes
         }
-        return ChromeRendererMemory(count: count, total: total)
+        return ChromeRendererMemory(count: count, total: total, perPID: perPID)
     }
 }

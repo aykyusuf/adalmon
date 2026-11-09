@@ -174,11 +174,19 @@ private struct SafariPanel: View {
             }
             Spacer(minLength: 0)
         }
+        TabProbeBar(state: browser.safariProbe, mappedAt: browser.safariMap.updatedAt, safari: true,
+                    hasTabs: !tabs.isEmpty) { Task { await browser.probeSafari() } }
         SiteChips(tabs: tabs.map { ($0.url) }, query: $query)
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: 22) { tabList.frame(minWidth: 340, idealWidth: 480, maxWidth: .infinity); processList.frame(minWidth: 300, idealWidth: 360, maxWidth: 460) }
             VStack(alignment: .leading, spacing: 18) { tabList; processList }
         }
+    }
+
+    /// Bu sürece eşlenen sekme başlıkları (ölçüm yapıldıysa).
+    private func mappedTitles(pid: Int32) -> [String] {
+        browser.safariTabs.filter { browser.safariMap.pidByTab[BrowserTabsModel.safariKey(for: $0)] == pid }
+            .map { $0.title.isEmpty ? BrowserTabRow.host($0.url) : $0.title }
     }
 
     private var filteredTabs: [SafariTab] {
@@ -199,7 +207,10 @@ private struct SafariPanel: View {
             let multiWindow = Set(browser.safariTabs.map(\.window)).count > 1
             VStack(spacing: 2) {
                 ForEach(tabs.prefix(Self.maxTabs)) { tab in
-                    BrowserTabRow(title: tab.title, url: tab.url, badge: multiWindow ? "Pencere \(tab.window)" : nil, trailing: nil)
+                    let pid = browser.safariMap.pidByTab[BrowserTabsModel.safariKey(for: tab)]
+                    BrowserTabRow(title: tab.title, url: tab.url, badge: multiWindow ? "Pencere \(tab.window)" : nil, trailing: nil,
+                                  memory: pid.flatMap { p in browser.safariMemory?.processes.first { $0.pid == p }?.footprint },
+                                  shared: pid.map { browser.safariMap.sharedCount(for: $0) } ?? 0)
                 }
             }
             if tabs.count > Self.maxTabs { Text("ve \(tabs.count - Self.maxTabs) sekme daha").font(.caption).foregroundStyle(.secondary) }
@@ -220,7 +231,7 @@ private struct SafariPanel: View {
             VStack(spacing: 2) {
                 ForEach(Array(processes.prefix(Self.maxProcesses).enumerated()), id: \.element.id) { index, process in
                     BrowserMemoryRow(title: "Web İçeriği #\(index + 1)", detail: "pid \(process.pid) · %\(Int((Double(process.footprint) / total * 100).rounded()))",
-                                     bytes: process.footprint, fraction: Double(process.footprint) / peak)
+                                     bytes: process.footprint, fraction: Double(process.footprint) / peak, tabs: mappedTitles(pid: process.pid))
                 }
             }
             if processes.count > Self.maxProcesses { Text("ve \(processes.count - Self.maxProcesses) süreç daha").font(.caption).foregroundStyle(.secondary) }
@@ -286,6 +297,8 @@ private struct ChromePanel: View {
             }
             Spacer(minLength: 0)
         }
+        TabProbeBar(state: browser.chromeProbe, mappedAt: browser.chromeMap.updatedAt, safari: false,
+                    hasTabs: !tabs.isEmpty) { Task { await browser.probeChrome() } }
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text("Sekmeler").font(.subheadline.weight(.semibold))
@@ -297,8 +310,11 @@ private struct ChromePanel: View {
             let peak = max(1, tabs.compactMap { $0.metrics?.jsHeapUsed }.max() ?? 1)
             VStack(spacing: 2) {
                 ForEach(tabs) { tab in
+                    let pid = browser.chromeMap.pidByTab[tab.id]
                     BrowserTabRow(title: tab.title, url: tab.url, badge: nil, trailing: Self.metricsText(tab.metrics),
-                                  bar: tab.metrics?.jsHeapUsed.map { $0 / peak })
+                                  bar: tab.metrics?.jsHeapUsed.map { $0 / peak },
+                                  memory: pid.flatMap { browser.chromeRenderer?.perPID[$0] },
+                                  shared: pid.map { browser.chromeMap.sharedCount(for: $0) } ?? 0)
                 }
             }
         }
@@ -409,6 +425,9 @@ private struct BrowserTabRow: View {
     let badge: String?
     let trailing: String?
     var bar: Double?
+    /// Eşleme yapıldıysa sekmenin süreç RAM'i; süreç birden çok sekme tarafından paylaşılıyorsa `shared` > 1 ("ortak").
+    var memory: UInt64?
+    var shared = 0
     @State private var hovering = false
 
     var body: some View {
@@ -419,6 +438,17 @@ private struct BrowserTabRow: View {
                 Text(Self.host(url).isEmpty ? url : Self.host(url)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 6)
+            if let memory {
+                HStack(spacing: 5) {
+                    if shared > 1 {
+                        Text("ortak ×\(shared)").font(.caption2).foregroundStyle(.secondary)
+                            .padding(.horizontal, 5).padding(.vertical, 1).background(.quaternary, in: .capsule)
+                            .help("Bu süreç \(shared) sekme tarafından paylaşılıyor; RAM ortaktır")
+                    }
+                    Text(ResourceFormat.bytes(Double(memory))).font(.callout.weight(.semibold)).monospacedDigit()
+                        .foregroundStyle(BrowserHeat.tint(bytes: memory))
+                }
+            }
             if let badge { Text(badge).font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 6).padding(.vertical, 1.5).background(.quaternary, in: .capsule) }
             if let bar {
                 Capsule().fill(Color.accentColor.opacity(0.6)).frame(width: max(3, 56 * bar), height: 5)
@@ -444,12 +474,17 @@ private struct BrowserMemoryRow: View {
     let detail: String
     let bytes: UInt64
     let fraction: Double
+    var tabs: [String] = []
 
     var body: some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.callout)
                 Text(detail).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                if !tabs.isEmpty {
+                    Text(tabs.prefix(3).joined(separator: " · ") + (tabs.count > 3 ? " +\(tabs.count - 3)" : ""))
+                        .font(.caption).foregroundStyle(.tint).lineLimit(1).truncationMode(.tail)
+                }
             }
             Spacer(minLength: 6)
             ZStack(alignment: .leading) {
@@ -513,5 +548,51 @@ private struct BrowserInfoButton: View {
             }
             .accessibilityLabel("Açıklama")
             .help("Açıklama")
+    }
+}
+
+/// "Sekme RAM'ini ölç" düğmesi ve durumu. Ölçüm kullanıcı isteğiyledir; sekmelerde kısa bir JS döngüsü çalıştırır.
+private struct TabProbeBar: View {
+    let state: TabProbeState
+    let mappedAt: Date?
+    let safari: Bool
+    let hasTabs: Bool
+    let action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Button(action: action) {
+                    Label(mappedAt == nil ? "Sekme RAM'ini ölç" : "Yeniden ölç", systemImage: "scope")
+                }
+                .disabled(!hasTabs || isRunning)
+                statusView
+                Spacer(minLength: 0)
+                BrowserInfoButton(text: "\(safari ? "Safari" : "Chrome") hangi sürecin hangi sekmeye ait olduğunu söylemez. Adalmon her sekmede yaklaşık 150 ms'lik boş bir JavaScript döngüsü çalıştırır ve hangi sürecin CPU süresinin arttığına bakar; böylece sekme başlığı ile süreç RAM'i eşleşir. Sayfanın içeriğine dokunulmaz. Aynı süreci paylaşan sekmelerde RAM “ortak” yazılır. Sekmeler değişince yeniden ölçmek gerekir.")
+            }
+            if state == .javascriptDisabled {
+                Label("Safari › Ayarlar › Gelişmiş › “Web geliştiricileri için özellikleri göster”i açın, sonra menü çubuğunda Geliştir › Geliştirici Ayarları › “Apple Events’ten JavaScript’e izin ver”i işaretleyin. İşiniz bitince kapatabilirsiniz.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var isRunning: Bool { if case .running = state { true } else { false } }
+
+    @ViewBuilder
+    private var statusView: some View {
+        switch state {
+        case .idle:
+            Text("Her sekmenin RAM'ini başlığıyla görmek için ölçün.").font(.caption).foregroundStyle(.secondary)
+        case .running(let done, let total):
+            HStack(spacing: 6) { ProgressView().controlSize(.small); Text("\(done)/\(total) sekme").font(.caption).foregroundStyle(.secondary).monospacedDigit() }
+        case .finished(let mapped, let total):
+            Text("\(mapped)/\(total) sekme eşlendi" + (mapped < total ? " · kalanlar belirsiz" : "")).font(.caption).foregroundStyle(.secondary)
+        case .javascriptDisabled:
+            EmptyView()
+        case .failed(let message):
+            Text(message).font(.caption).foregroundStyle(.orange)
+        }
     }
 }
