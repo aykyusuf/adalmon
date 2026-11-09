@@ -435,7 +435,7 @@ private struct BrowserTabRow: View {
             SiteAvatar(host: Self.host(url))
             VStack(alignment: .leading, spacing: 1) {
                 Text(title.isEmpty ? "Adsız sekme" : title).font(.callout).lineLimit(1).truncationMode(.tail)
-                Text(Self.host(url).isEmpty ? url : Self.host(url)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Text(Self.shortAddress(url)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 6)
             if let memory {
@@ -466,6 +466,15 @@ private struct BrowserTabRow: View {
     static func host(_ url: String) -> String {
         guard let h = URL(string: url)?.host() else { return "" }
         return h.hasPrefix("www.") ? String(h.dropFirst(4)) : h
+    }
+
+    /// "youtube.com/watch?v=abc…" gibi: aynı sitedeki sekmeler (ör. üç YouTube sekmesi) birbirinden ayırt edilsin.
+    static func shortAddress(_ url: String) -> String {
+        let h = host(url)
+        guard !h.isEmpty, let u = URL(string: url) else { return url }
+        var rest = u.path == "/" ? "" : u.path
+        if let q = u.query, !q.isEmpty { rest += "?" + q }
+        return h + rest
     }
 }
 

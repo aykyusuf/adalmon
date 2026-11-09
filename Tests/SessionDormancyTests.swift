@@ -30,19 +30,26 @@ final class SessionDormancyTests: XCTestCase {
     func testBusySessionsNeverMinimize() {
         let late = t0.addingTimeInterval(10 * 86_400)
         for status in [AgentStatus.thinking, .tool("Bash"), .waitingPermission] {
-            XCTAssertFalse(SessionDormancy.isMinimized(session(status: status), override: nil, now: late), "\(status)")
-            XCTAssertFalse(SessionDormancy.isMinimized(session(status: status), override: .minimized, now: late), "elle küçültülmüş olsa da çalışırken açılır")
+            XCTAssertFalse(SessionDormancy.isMinimized(session(status: status), override: nil, now: late), "otomatik: \(status)")
         }
+        // Elle küçültülen: çalışsa da küçük kalır; yalnızca izin beklerken öne çıkar.
+        for status in [AgentStatus.thinking, .tool("Bash")] {
+            XCTAssertTrue(SessionDormancy.isMinimized(session(status: status), override: .minimized, now: late), "elle küçültülmüş çalışırken de küçük kalır: \(status)")
+        }
+        XCTAssertFalse(SessionDormancy.isMinimized(session(status: .waitingPermission), override: .minimized, now: late), "izin bekliyor: açılır")
+        let asking = AgentSubagent(agentID: "p", agentType: "Explore", model: nil, status: .waitingPermission)
+        XCTAssertFalse(SessionDormancy.isMinimized(session(subagents: [asking]), override: .minimized, now: late), "alt ajan izin bekliyor: açılır")
         let working = AgentSubagent(agentID: "a", agentType: "Explore", model: nil, status: .thinking)
         XCTAssertFalse(SessionDormancy.isMinimized(session(subagents: [working]), override: nil, now: late), "çalışan alt ajanı olan oturum")
         let finished = AgentSubagent(agentID: "b", agentType: "Explore", model: nil, status: .done)
         XCTAssertTrue(SessionDormancy.isMinimized(session(subagents: [finished]), override: nil, now: late), "biten alt ajan oturumu tutmaz")
     }
 
-    func testRunningBackgroundShellKeepsSessionOpen() {
+    func testRunningBackgroundShellKeepsSessionOpenAutomaticallyButNotAgainstManualMinimize() {
         let item = SessionShell(pid: 42, name: "node", ageSeconds: 100, cpuPercent: 1, rssBytes: 1_000_000, hasChildren: false)
         let s = session(shells: SessionShells(items: [item], total: 1))
-        XCTAssertFalse(SessionDormancy.isMinimized(s, override: nil, now: t0.addingTimeInterval(86_400)))
+        XCTAssertFalse(SessionDormancy.isMinimized(s, override: nil, now: t0.addingTimeInterval(86_400)), "otomatik küçülme arka plan işlemi varken olmaz")
+        XCTAssertTrue(SessionDormancy.isMinimized(s, override: .minimized, now: t0), "elle küçültme arka plan işlemine takılmaz (eskiden geri açılıyordu)")
     }
 
     func testEndedSessionIsNeverMinimized() {
@@ -101,7 +108,7 @@ final class SessionDormancyTests: XCTestCase {
     }
 
     @MainActor
-    func testMonitorMinimizeRestoreAndAutoReopenOnWork() {
+    func testMonitorMinimizeStaysMinimizedWhileWorkingAndReopensOnPermissionRequest() {
         let monitor = AgentMonitorModel()
         monitor.ingest(event(.sessionStart))
         XCTAssertEqual(monitor.dock.open.map(\.id), ["s1"])
@@ -112,8 +119,10 @@ final class SessionDormancyTests: XCTestCase {
         XCTAssertEqual(monitor.dock.open.map(\.id), ["s1"])
         monitor.minimize("s1")
         monitor.ingest(event(.userPromptSubmit))
-        XCTAssertEqual(monitor.dock.open.map(\.id), ["s1"], "çalışmaya başlayan oturum kendiliğinden açılır")
-        XCTAssertNil(monitor.dockOverrides["s1"], "elle küçült kararı çalışınca silinir")
+        XCTAssertEqual(monitor.dock.minimized.map(\.id), ["s1"], "elle küçültülen oturum çalışmaya başlasa da küçük kalır")
+        monitor.ingest(event(.permissionRequest))
+        XCTAssertEqual(monitor.dock.open.map(\.id), ["s1"], "izin beklerken oda öne çıkar")
+        XCTAssertNil(monitor.dockOverrides["s1"], "dikkat gerektirince elle küçült kararı silinir")
         monitor.ingest(event(.stop))
         XCTAssertEqual(monitor.dock.open.map(\.id), ["s1"], "iş bitince eski karar geri gelmez")
     }

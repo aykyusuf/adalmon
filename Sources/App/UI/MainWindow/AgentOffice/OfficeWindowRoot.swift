@@ -16,14 +16,18 @@ struct OfficeWindowRoot: View {
         // Tam ekranda şerit sahnenin üstüne biner (sahne tüm yüksekliği kullanır) ve 3 sn hareketsizlikte solar; pencerede eskisi gibi hep görünür.
         ZStack(alignment: .top) {
             OfficeSceneContainer(members: members, selectedRoom: $state.selectedRoom, panoActive: state.panoActive, onMinimize: { minimize($0) },
-                                 sleeping: dock.minimized, onRestore: { model.agents.monitor.restore($0) }, commands: sceneCommands)
+                                 sleeping: dock.minimized, onRestore: { model.agents.monitor.restore($0) }, commands: sceneCommands,
+                                 // Tam ekranda hareketsizken (imleç ve şerit gizliyken) küçült düğmesi de çıkmaz; kart şeridin altına iner.
+                                 hoverControlsEnabled: state.stripShown,
+                                 cardTopInset: state.isFullScreen && state.stripShown ? stripHeight : 0)
                 .padding(.top, state.isFullScreen ? 0 : stripHeight)
                 .overlay { if sessions.isEmpty { emptyHint } }
                 .accessibilityLabel("Ajan ofisi: \(sessions.count) oturum" + (dock.minimized.isEmpty ? "" : ", \(dock.minimized.count) uykuda"))
             if state.panoActive {
                 let night = OfficeLighting.isNight(mode: OfficeLightingMode(rawValue: lightingRaw) ?? .auto, date: state.clock.now)
                 OfficePanoCorners(members: members, now: state.clock.now, night: night, showsClock: state.settings.showsClockSummary)
-                    .opacity(state.settings.showsClockSummary ? 1 : 0)
+                    // Üst paneller (saat/özet) tam ekranda yalnızca hareket/hover varken görünür; şeritle birlikte solar.
+                    .opacity(state.settings.showsClockSummary && state.stripShown ? 1 : 0)
                     // Tam ekranda şerit sahnenin üstüne biner: görünürken köşe pill'leri onun altına iner (yapışık durmasın).
                     .padding(.top, state.isFullScreen ? (state.stripShown ? stripHeight : 0) : stripHeight)
                     .animation(.easeOut(duration: OfficeChromeVisibility.fadeDuration), value: state.stripShown)

@@ -81,7 +81,7 @@ final class AgentMonitorModel {
         guard !dockOverrides.isEmpty else { return }
         for (id, o) in dockOverrides {
             guard let s = state.sessions[id] else { dockOverrides[id] = nil; continue }
-            if o == .minimized, SessionDormancy.isBusy(s) { dockOverrides[id] = nil }
+            if o == .minimized, SessionDormancy.needsAttention(s) { dockOverrides[id] = nil }  // izin bekliyor: oda açılır ve açık kalır
         }
     }
 

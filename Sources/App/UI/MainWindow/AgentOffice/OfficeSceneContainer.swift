@@ -12,6 +12,10 @@ struct OfficeSceneContainer: View {
     var sleeping: [AgentSession] = []
     var onRestore: ((String) -> Void)?
     var commands: OfficeSceneCommands?
+    /// Oda üstüne gelince çıkan küçült düğmesi etkin mi (tam ekranda hareketsizken kapanır: düğme takılı kalmasın).
+    var hoverControlsEnabled = true
+    /// Bilgi kartının üst boşluğu (tam ekranda görünür araç şeridinin altında kalması için).
+    var cardTopInset: CGFloat = 0
     @AppStorage(OfficeLighting.defaultsKey) private var lightingRaw = OfficeLightingMode.auto.rawValue
     @AppStorage(OfficeTheme.defaultsKey) private var themeRaw = OfficeTheme.default.rawValue
     @State private var card: OfficeDetailCard?
@@ -24,6 +28,7 @@ struct OfficeSceneContainer: View {
                         theme: OfficeTheme(rawValue: themeRaw) ?? .default, panoActive: panoActive, card: $card,
                         commands: commands, onRoomHover: onMinimize == nil ? nil : { roomHover($0) })
             .overlay { minimizeButtonLayer }
+            .onChange(of: hoverControlsEnabled) { _, enabled in if !enabled { hoveredRoom = nil; overButton = false } }
             .overlay(alignment: .leading) {
                 if let onRestore { OfficeSleepRail(sessions: sleeping, onRestore: onRestore) }
             }
@@ -31,6 +36,7 @@ struct OfficeSceneContainer: View {
                 if let card {
                     OfficeCardView(card: card, onMinimize: onMinimize.map { f in { f(card.memberID); self.card = nil } }) { self.card = nil }
                         .padding(10)
+                        .padding(.top, cardTopInset)
                         .transition(.opacity)
                 }
             }
@@ -53,7 +59,7 @@ struct OfficeSceneContainer: View {
 
     @ViewBuilder
     private var minimizeButtonLayer: some View {
-        if let room = hoveredRoom, let onMinimize {
+        if hoverControlsEnabled, let room = hoveredRoom, let onMinimize {
             GeometryReader { geo in
                 let x = min(max(room.rect.maxX - 22, 22), geo.size.width - 22)
                 let y = min(max(room.rect.minY + 18, 22), geo.size.height - 22)

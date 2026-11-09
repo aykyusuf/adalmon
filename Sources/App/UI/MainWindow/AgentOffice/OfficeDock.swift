@@ -48,13 +48,19 @@ struct OfficeSleepRail: View {
     }
 
     private var notches: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 7) {
+            Image(systemName: "moon.zzz.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                .shadow(color: .black.opacity(0.5), radius: 2)
             ForEach(sessions.prefix(8)) { s in
-                Capsule().fill(s.badge.tint.opacity(0.85)).frame(width: 5, height: 24)
-                    .shadow(color: .black.opacity(0.25), radius: 2)
+                Capsule().fill(s.badge.tint).frame(width: 6, height: 28)
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.55), lineWidth: 0.8))
+                    .shadow(color: .black.opacity(0.4), radius: 3)
+            }
+            if sessions.count > 8 {
+                Text("+\(sessions.count - 8)").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.85))
             }
         }
-        .padding(.leading, 6)
+        .padding(.leading, 5)
         .accessibilityHidden(true)
     }
 

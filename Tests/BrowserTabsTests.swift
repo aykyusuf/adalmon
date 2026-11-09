@@ -157,7 +157,7 @@ final class ChromeDebugLogicTests: XCTestCase {
                                       3: "/usr/bin/other",  // pid yeniden kullanılmış: sayılmaz
                                       4: "/Applications/Google Chrome.app/Contents/Frameworks/x/Google Chrome Helper (Renderer)"]
         let m = ChromeRendererMemory.make(processes: procs, path: { paths[$0] }, footprint: { $0 == 4 ? nil : UInt64($0) * 100 })
-        XCTAssertEqual(m, ChromeRendererMemory(count: 1, total: 200))
+        XCTAssertEqual(m, ChromeRendererMemory(count: 1, total: 200, perPID: [2: 200]), "yalnızca Chrome renderer'ı; pid başına ayak izi de tutulur")
     }
 }
 

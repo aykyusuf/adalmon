@@ -26,16 +26,21 @@ enum SessionDormancy {
         return last.addingTimeInterval(idleAfter)
     }
 
+    /// Kullanıcının dikkatini gerektiriyor mu (izin bekliyor)? Elle küçültülmüş olsa da oda bu durumda öne çıkar.
+    static func needsAttention(_ s: AgentSession) -> Bool {
+        s.status == .waitingPermission || s.subagents.contains { $0.status == .waitingPermission }
+    }
+
     /// Oturum şu an küçük (sekme) olarak mı gösterilmeli?
+    /// - Elle küçültülen oturum, çalışıyor ya da arka plan işlemi olsa bile küçük KALIR (kullanıcı bilerek küçülttü); yalnızca izin
+    ///   beklerken geri açılır. Çalışma durumu şeritteki kartta (nokta + durum) görünür.
+    /// - Otomatik (30 dk boşta) küçülme yalnızca gerçekten boşta oturumlar içindir; çalışmaya başlayınca kendiliğinden açılır.
     static func isMinimized(_ s: AgentSession, override: SessionDockOverride?, now: Date) -> Bool {
         guard s.status != .ended else { return false }
-        if isBusy(s) { return false } // çalışmaya başlayan oturum kendiliğinden açılır
-        switch override {
-        case .minimized?: return true
-        case .opened?, nil:
-            guard let due = dormantDate(s, override: override) else { return false }
-            return now >= due
-        }
+        if case .minimized? = override { return !needsAttention(s) }
+        if isBusy(s) { return false }
+        guard let due = dormantDate(s, override: override) else { return false }
+        return now >= due
     }
 
     /// Küçük oturumlar ve açık oturumlar (sıra korunur). `overrides` anahtarı oturum kimliğidir.

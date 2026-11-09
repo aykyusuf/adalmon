@@ -652,6 +652,21 @@ final class OfficeScene: SKScene {
         track(room.root, key: key, .group([move, shrink, fade])) { [weak self] in
             self?.tuckedAt[id] = .now
             completion()
+            self?.scheduleTuckRecovery(id)
+        }
+    }
+
+    /// Küçültme animasyonu bitti ama üst katman oturumu uykuya almadıysa (oda hâlâ sahnede) oda görünmez/küçük kalmamalı:
+    /// sessiz sahnede `apply` gelmeyeceği için bir süre sonra kendiliğinden eski haline döner.
+    private func scheduleTuckRecovery(_ id: String) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard let self, self.tuckedAt[id] != nil, let room = self.rooms[id] else { return }
+            self.tuckedAt[id] = nil
+            self.onCameraAnimation?(Self.transitionDuration * 2)
+            room.root.zPosition = 0
+            self.track(room.root, key: "\(id).untuck", .group([.scale(to: 1, duration: Self.transitionDuration), .fadeIn(withDuration: Self.transitionDuration)]))
+            self.relayout(animated: true)
         }
     }
 

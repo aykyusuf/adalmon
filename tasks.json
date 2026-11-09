@@ -81,6 +81,14 @@
       "done_when": "Chrome debug modunda ve Safari'de (Develop > Apple Events'ten JavaScript'e izin ver acikken) 'Sekme RAM'ini olc' dugmesi sekmeleri surecle eslestiriyor; sekme satirlarinda surec RAM'i, paylasimda 'ortak xN', Surecler listesinde surec adinin yaninda sekme basligi gorunuyor; kullanici onayladi",
       "status": "todo",
       "evidence": "Kuruldu; birim testleri gecti (TabProcessProbeLogicTests, ChromeTabProbeTests, SafariTabProbeModelTests); gercek Safari/Chrome ile canli denenmedi"
+    },
+    {
+      "id": "PANO-02",
+      "title": "Tam ekran: ortali saat, hover'da cikan ust paneller/kucult dugmesi, sol kenarda uykuda seridi canli dogrula",
+      "priority": 1,
+      "done_when": "Tam ekranda hareketsizken ust paneller ve kucult dugmesi gizleniyor, hareketle geliyor; saat ortada, bilgi karti seridin altinda; elle kucultulen oturum calisirken de kucuk kaliyor ve sol kenarda cikiyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Kuruldu; birim ve uctan uca testler gecti (OfficeLiveArrivalTests, OfficeTuckRecoveryTests); gercek tam ekranda gozle bakilmadi"
     }
   ]
 }

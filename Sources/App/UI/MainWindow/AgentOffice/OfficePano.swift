@@ -190,7 +190,7 @@ final class OfficeKeepAwake {
 
 // MARK: Köşe katmanı
 
-/// Pano köşeleri: sol üstte "N oturum · M ajan · K çalışıyor", sağ üstte saat + gün/tarih. Yarı saydam, küçük, düşük kontrast;
+/// Pano üst katmanı: sol üstte "N oturum · M ajan · K çalışıyor", üstte ortada saat + gün/tarih. Yarı saydam, küçük, düşük kontrast;
 /// konum her 5 dakikada kayar (burn-in).
 struct OfficePanoCorners: View {
     let members: [OfficeMember]
@@ -210,13 +210,14 @@ struct OfficePanoCorners: View {
                     .padding(.leading, edge + shift.width).padding(.top, edge + shift.height)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 if showsClock {
+                    // Saat üstte ortalı: sağ üstteki bilgi kartıyla ve sol üstteki özetle çakışmaz.
                     HStack(spacing: 8 * s) {
                         Text(OfficePanoText.time(now)).font(.system(size: 15 * s, weight: .semibold).monospacedDigit())
                         Text(OfficePanoText.day(now)).font(.system(size: 12.5 * s, weight: .medium)).opacity(0.8)
                     }
                     .modifier(PanoPill(night: night, scale: s))
-                    .padding(.trailing, edge + shift.width).padding(.top, edge + shift.height)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(.top, edge + shift.height).offset(x: shift.width / 2)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             }
         }
