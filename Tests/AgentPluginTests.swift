@@ -496,3 +496,178 @@ final class AgentConfigGuardTests: XCTestCase {
         XCTAssertEqual(try? Data(contentsOf: realConfig), realBefore, "test gerçek config.json'a dokunmamalı")
     }
 }
+
+/// Gerçek zincir: GERÇEK forward.py betiği → gerçek yerel HTTP dinleyicisi (kimlik doğrulamalı) → AgentMonitorModel.
+/// Kenar durumlar: oturumdan sonra başlama (SessionStart/SubagentStart yok), turunu bitirmiş ana ajan + çalışan arka plan ajanları,
+/// yanlış token, config'in ezilip onarılması. Geçici dizin kullanılır; gerçek config.json'a dokunulmaz.
+@MainActor
+final class AgentRealScriptEndToEndTests: XCTestCase {
+    private var tmp: URL!
+    private var generator: AgentPluginGenerator!
+    private var service: AgentService!
+    private var defaults: UserDefaults!
+    private var suite = ""
+
+    override func setUp() async throws {
+        tmp = FileManager.default.temporaryDirectory.appending(path: "e2e-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        suite = "AgentE2E-\(UUID().uuidString)"
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let prefs = Preferences(defaults: defaults)
+        prefs.agentsEnabled = true
+        generator = AgentPluginGenerator(root: tmp, usesPython: true)
+        try generator.write(port: 1, token: "gecici")           // betik dosyalarını üretir
+        service = AgentService(prefs: prefs, installer: AgentPluginInstaller(generator: generator))
+        service.apply()
+        for _ in 0..<60 where service.port == nil { try await Task.sleep(for: .milliseconds(100)) }
+        _ = try XCTUnwrap(service.port, "dinleyici başlamalı")
+        try await Task.sleep(for: .milliseconds(300))
+    }
+
+    override func tearDown() async throws {
+        service.setEnabled(false)
+        defaults.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: tmp)
+    }
+
+    private func fire(_ payload: [String: Any]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = ["-I", generator.pythonScriptURL.path]
+        process.environment = ["ADALMON_AGENTS_CONFIG": generator.configURL.path]
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        input.fileHandleForWriting.write(try JSONSerialization.data(withJSONObject: payload))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+    }
+
+    private func hook(_ event: String, session: String, agent: String? = nil, type: String? = nil, tool: String? = nil) -> [String: Any] {
+        var p: [String: Any] = ["hook_event_name": event, "session_id": session, "cwd": "/tmp/proje"]
+        if let agent { p["agent_id"] = agent }
+        if let type { p["agent_type"] = type }
+        if let tool { p["tool_name"] = tool }
+        return p
+    }
+
+    private func eventually(_ what: String, timeout: TimeInterval = 4, _ cond: () -> Bool) async throws {
+        let end = Date().addingTimeInterval(timeout)
+        while Date() < end { if cond() { return }; try await Task.sleep(for: .milliseconds(50)) }
+        XCTFail("beklenen durum oluşmadı: \(what)")
+    }
+
+    func testBackgroundAgentsFlowThroughTheRealScriptAndServer() async throws {
+        let monitor = service.monitor
+        try fire(hook("SessionStart", session: "e2e"))
+        try fire(hook("UserPromptSubmit", session: "e2e"))
+        try fire(hook("SubagentStart", session: "e2e", agent: "bg1", type: "crew-chief:implementer-hard"))
+        try fire(hook("SubagentStart", session: "e2e", agent: "bg2", type: "crew-chief:deep-reader"))
+        try fire(hook("Stop", session: "e2e"))                    // ana ajan turunu bitirdi, arka plan ajanları sürüyor
+        try await eventually("2 alt ajan + ana ajan done") {
+            let s = monitor.state.sessions["e2e"]
+            return s?.status == .done && s?.subagents.map(\.agentID) == ["bg1", "bg2"]
+        }
+        XCTAssertEqual(OfficeMember.members(from: monitor.dock.open).map(\.id), ["e2e", "e2e#bg1", "e2e#bg2"], "ofiste üç karakter")
+
+        try fire(hook("PreToolUse", session: "e2e", agent: "bg2", type: "crew-chief:deep-reader", tool: "Bash"))
+        try await eventually("bg2 araç kullanıyor") { monitor.state.sessions["e2e"]?.subagents.last?.status == .tool("Bash") }
+        XCTAssertEqual(monitor.state.sessions["e2e"]?.status, .done, "alt ajanın aracı ana ajanın durumunu değiştirmez")
+    }
+
+    func testAdalmonStartingAfterTheSessionStillShowsItsAgents() async throws {
+        let monitor = service.monitor
+        // SessionStart ve SubagentStart hiç gelmedi (Adalmon sonradan açıldı); yalnızca alt ajanların araç olayları geliyor.
+        try fire(hook("PreToolUse", session: "gec", agent: "x1", type: "Explore", tool: "Read"))
+        try fire(hook("PostToolUse", session: "gec", agent: "x2", type: "Plan", tool: "Grep"))
+        try await eventually("oturum ve iki ajan evlat edinildi") { monitor.state.sessions["gec"]?.subagents.count == 2 }
+        XCTAssertEqual(OfficeMember.members(from: monitor.dock.open).map(\.id), ["gec", "gec#x1", "gec#x2"])
+        XCTAssertEqual(monitor.state.sessions["gec"]?.status, .idle, "ana ajan yanlışlıkla çalışıyor görünmez")
+    }
+
+    func testWrongTokenIsRejectedAndRepairedConfigWorksAgain() async throws {
+        let monitor = service.monitor
+        let port = try XCTUnwrap(service.port)
+        try generator.writeConfig(port: port, token: "yanlis-token")
+        try fire(hook("SessionStart", session: "yetkisiz"))
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertNil(monitor.state.sessions["yetkisiz"], "yanlış token reddedilmeli")
+
+        XCTAssertTrue(service.repairConfigIfNeeded(), "ezilen config geri yazılmalı")
+        try fire(hook("SessionStart", session: "onarildi"))
+        try await eventually("onarım sonrası olay ulaşır") { monitor.state.sessions["onarildi"] != nil }
+    }
+
+    func testEventsAreDroppedQuietlyWhenAdalmonIsClosed() async throws {
+        let port = try XCTUnwrap(service.port)
+        service.setEnabled(false)
+        try await Task.sleep(for: .milliseconds(300))
+        try generator.writeConfig(port: port, token: "x")
+        let started = Date()
+        try fire(hook("SessionStart", session: "kapali"))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3, "Adalmon kapalıyken betik Claude'u bekletmemeli")
+        XCTAssertNil(service.monitor.state.sessions["kapali"])
+    }
+}
+
+final class AgentHookSelfTestLogicTests: XCTestCase {
+    private func result(listener: Bool = true, plugin: Bool = true, arrived: Bool = true, live: Int = 3, reporting: Int = 3) -> AgentHookSelfTest.Result {
+        AgentHookSelfTest.evaluate(listenerRunning: listener, pluginInstalled: plugin, eventArrived: arrived, latencyMs: 40, liveClaudeProcesses: live, reportingProcesses: reporting, at: .now)
+    }
+
+    func testVerdicts() {
+        XCTAssertEqual(result().verdict, .healthy)
+        XCTAssertEqual(result(live: 4, reporting: 2).verdict, .someSessionsSilent)
+        XCTAssertEqual(result(live: 4, reporting: 2).silentProcesses, 2)
+        XCTAssertEqual(result(listener: false).verdict, .listenerOff)
+        XCTAssertEqual(result(plugin: false).verdict, .pluginMissing)
+        XCTAssertEqual(result(arrived: false).verdict, .eventLost)
+        XCTAssertTrue(result().isHealthy)
+        XCTAssertTrue(result(live: 4, reporting: 2).isHealthy)
+        XCTAssertFalse(result(arrived: false).isHealthy)
+    }
+
+    func testMessagesAreActionable() {
+        XCTAssertTrue(result(live: 4, reporting: 1).message.contains("/reload-plugins"))
+        XCTAssertTrue(result(arrived: false).message.contains("yeniden başlat"))
+        XCTAssertTrue(result().message.contains("3/3"))
+    }
+}
+
+@MainActor
+final class AgentSelfTestEndToEndTests: XCTestCase {
+    func testSelfTestRunsTheRealScriptThroughTheRealListener() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appending(path: "selftest-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        let suite = "AgentSelfTest-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: tmp) }
+        let prefs = Preferences(defaults: defaults)
+        prefs.agentsEnabled = true
+        let generator = AgentPluginGenerator(root: tmp, usesPython: true)
+        try generator.write(port: 1, token: "gecici")
+        let service = AgentService(prefs: prefs, installer: AgentPluginInstaller(generator: generator))
+        service.apply()
+        for _ in 0..<60 where service.port == nil { try await Task.sleep(for: .milliseconds(100)) }
+        try await Task.sleep(for: .milliseconds(300))
+
+        await service.runSelfTest()
+        let ok = try XCTUnwrap(service.selfTest)
+        XCTAssertTrue(ok.isHealthy, "çalışan hatta test geçmeli: \(ok.message)")
+        XCTAssertNotNil(ok.latencyMs, "olay izleyiciye ulaşmalı")
+        XCTAssertTrue(service.monitor.state.sessions.isEmpty, "test gerçek bir oturum oluşturmamalı")
+
+        // Ezilmiş config: test önce onarır, hat yine sağlam çıkar.
+        try generator.writeConfig(port: 9, token: "bozuk")
+        await service.runSelfTest()
+        XCTAssertTrue(try XCTUnwrap(service.selfTest).isHealthy)
+
+        // Dinleyici kapalıyken net teşhis.
+        service.setEnabled(false)
+        try await Task.sleep(for: .milliseconds(300))
+        await service.runSelfTest()
+        XCTAssertEqual(service.selfTest?.verdict, .listenerOff)
+    }
+}

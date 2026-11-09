@@ -84,6 +84,10 @@ struct AgentSession: Equatable, Identifiable, Sendable {
     var activityAt: Date?
     /// Oturumun başlattığı ve hâlâ çalışan komutlar (süreç ağacından; yalnızca gözlemci varken örneklenir).
     var shells: SessionShells = .empty
+    /// Süreç taramasıyla bulunmuş, henüz hiç olay göndermemiş "bekleyen" oturum (kimlik `discovered-<pid>`). İlk gerçek olayda yerini alır.
+    var discovered = false
+    /// Bitmiş (SubagentStop) ya da listeden düşmüş alt ajan kimlikleri: sonradan gelen olay bunları yeniden eklemez.
+    var retiredAgents: [String] = []
 
     /// Panelde ana başlık: oturum adı, yoksa proje klasörü adı.
     var displayName: String { title ?? project }
@@ -110,6 +114,11 @@ struct AgentState: Equatable, Sendable {
     static let exitedLinger: TimeInterval = 10
     /// Süreç başlangıcı, o sürecin olayından bu kadar sonra çıkarsa pid yeniden kullanılmıştır (saat/ölçüm payı).
     static let pidReuseSlack: TimeInterval = 2
+    /// Alt ajan bu süre hiçbir olay göndermediyse (kapanış olayı kaçırılmış olabilir) listeden düşer. Arka plan ajanları uzun
+    /// düşünebilir; bu yüzden uzun tutulur.
+    static let subagentStaleAfter: TimeInterval = 45 * 60
+    /// Oturum başına hatırlanan bitmiş alt ajan sayısı (geç gelen olay bitmiş ajanı hortlatmasın).
+    static let retiredLimit = 64
 
     private(set) var sessions: [String: AgentSession] = [:]
     /// Agent aracının sonucu, `SubagentStart` gelmeden önce geldiyse model burada bekler.
@@ -131,6 +140,7 @@ struct AgentState: Equatable, Sendable {
     @discardableResult
     mutating func apply(_ e: AgentEvent, now: Date) -> Bool {
         guard let name = e.name else { return false }
+        removeDiscoveredPlaceholder(matching: e)
         let hadSession = sessions[e.sessionID] != nil
         if name == .sessionStart {
             sessions[e.sessionID] = AgentSession(id: e.sessionID, project: e.project ?? "?", model: e.model, status: .idle,
@@ -161,8 +171,10 @@ struct AgentState: Equatable, Sendable {
             s.status = .thinking
             s.activity = nil; s.target = nil; s.activityAt = now
         case .preToolUse:
+            Self.adoptIfUnknown(e, in: &s, now: now)
             Self.setStatus(.tool(e.toolName ?? "araç"), activity: e.toolName, target: e.target, for: e.agentID, in: &s, now: now)
         case .postToolUse, .postToolUseFailure:
+            Self.adoptIfUnknown(e, in: &s, now: now)
             Self.setStatus(.thinking, for: e.agentID, in: &s, now: now)
             if let id = e.resolvedAgentID, let model = e.resolvedModel {
                 if let i = s.subagents.firstIndex(where: { $0.agentID == id }) { s.subagents[i].model = model } else {
@@ -170,6 +182,7 @@ struct AgentState: Equatable, Sendable {
                 }
             }
         case .permissionRequest:
+            Self.adoptIfUnknown(e, in: &s, now: now)
             Self.setStatus(.waitingPermission, for: e.agentID, in: &s, now: now)
         case .notification:
             switch e.notificationType {
@@ -185,6 +198,7 @@ struct AgentState: Equatable, Sendable {
             // agent_type boş olan iç/yardımcı ajanlar listelenmez.
             guard let id = e.agentID, let type = e.agentType else { break }
             if !s.subagents.contains(where: { $0.agentID == id }) {
+                s.retiredAgents.removeAll { $0 == id }   // aynı kimlikle yeniden başlatıldıysa canlı
                 s.subagents.append(AgentSubagent(agentID: id, agentType: type, model: pendingSubagentModels.removeValue(forKey: id) ?? e.model,
                                                  status: .thinking, activityAt: now))
             }
@@ -192,11 +206,58 @@ struct AgentState: Equatable, Sendable {
             guard let id = e.agentID, e.agentType != nil, let i = s.subagents.firstIndex(where: { $0.agentID == id }) else { break }
             s.subagents[i].status = .done
             s.subagents[i].activity = nil; s.subagents[i].target = nil
+            Self.retire(id, in: &s)
         case .postModelSwitch:
             if let model = e.toModel { s.model = model }
         }
         sessions[e.sessionID] = s
         return true
+    }
+
+    /// Taramayla bulunan bekleyen oturumlar: pid'i bilinen hiçbir oturumda olmayan Claude süreci için yer tutucu oluşturur.
+    /// Gerçek bir oturumla aynı pid'i taşıyanlar atlanır. Yeni oturum eklendiyse true.
+    @discardableResult
+    mutating func discoverSessions(_ found: [ClaudeProcessDiscovery.Found], now: Date) -> Bool {
+        var changed = false
+        let known = Set(sessions.values.filter { $0.status != .ended }.compactMap(\.pid))
+        for f in found where !known.contains(f.pid) {
+            let id = "discovered-\(f.pid)"
+            guard sessions[id] == nil else { continue }
+            var s = AgentSession(id: id, project: f.project, model: nil, status: .idle, startedAt: now, lastEventAt: now, pid: f.pid)
+            s.discovered = true
+            sessions[id] = s
+            changed = true
+        }
+        return changed
+    }
+
+    /// Gerçek oturumun ilk olayı gelince aynı süreç için oluşturulmuş yer tutucu silinir (pid eşleşir; eski betikte pid yoksa aynı
+    /// proje adındaki tek yer tutucu).
+    private mutating func removeDiscoveredPlaceholder(matching e: AgentEvent) {
+        guard !e.sessionID.hasPrefix("discovered-") else { return }
+        let placeholders = sessions.values.filter(\.discovered)
+        guard !placeholders.isEmpty else { return }
+        if let pid = e.pid {
+            for p in placeholders where p.pid == pid { sessions[p.id] = nil }
+        } else if let project = e.project, sessions[e.sessionID] == nil {
+            let same = placeholders.filter { $0.project == project }
+            if same.count == 1, let only = same.first { sessions[only.id] = nil }
+        }
+    }
+
+    /// Adalmon oturumdan sonra başladıysa (ya da `SubagentStart` kaçırıldıysa) alt ajan listede yoktur; ama alt ajanın kendi araç olayları
+    /// `agent_id` + `agent_type` taşır. Böyle bir olay gelince ajan listeye alınır (bitmiş ajanlar hariç); böylece olay, yanlışlıkla ana
+    /// ajanın durumunu değiştirmez ve ajan ofiste görünür.
+    private static func adoptIfUnknown(_ e: AgentEvent, in s: inout AgentSession, now: Date) {
+        guard let id = e.agentID, let type = e.agentType, !id.isEmpty, !type.isEmpty else { return }
+        guard !s.subagents.contains(where: { $0.agentID == id }), !s.retiredAgents.contains(id), s.status != .ended else { return }
+        s.subagents.append(AgentSubagent(agentID: id, agentType: type, model: e.model, status: .thinking, activityAt: now))
+    }
+
+    private static func retire(_ id: String, in s: inout AgentSession) {
+        s.retiredAgents.removeAll { $0 == id }
+        s.retiredAgents.append(id)
+        if s.retiredAgents.count > retiredLimit { s.retiredAgents.removeFirst(s.retiredAgents.count - retiredLimit) }
     }
 
     /// Durumu ilgili ajana (agent_id'li alt ajan, yoksa oturumun ana ajanı) yazar; araç bilgisi (`activity`/`target`) yalnızca
@@ -226,6 +287,28 @@ struct AgentState: Equatable, Sendable {
         case .thinking, .tool, .waitingPermission: return s.lastEventAt.addingTimeInterval(staleAfter)
         case .ended: return nil
         }
+    }
+
+    /// Bir alt ajanın bayatlama anı (son kendi etkinliği + `subagentStaleAfter`); biten/kapanan ajanlar için nil.
+    private static func subagentDue(_ sub: AgentSubagent, in s: AgentSession) -> Date? {
+        guard sub.status != .done, sub.status != .ended else { return nil }
+        return (sub.activityAt ?? s.lastEventAt).addingTimeInterval(subagentStaleAfter)
+    }
+
+    /// Uzun süredir olay göndermeyen (kapanış olayı kaçırılmış) alt ajanları düşürür ve bir daha eklenmemeleri için hatırlar. Değişti mi.
+    @discardableResult
+    mutating func pruneSubagents(now: Date) -> Bool {
+        var changed = false
+        for id in sessions.keys {
+            guard var s = sessions[id] else { continue }
+            let stale = s.subagents.filter { Self.subagentDue($0, in: s).map { now >= $0 } ?? false }
+            guard !stale.isEmpty else { continue }
+            for sub in stale { Self.retire(sub.agentID, in: &s) }
+            s.subagents.removeAll { sub in stale.contains { $0.agentID == sub.agentID } }
+            sessions[id] = s
+            changed = true
+        }
+        return changed
     }
 
     /// Bayat ve süresi dolan kapalı oturumları listeden düşürür; düşen kimlikleri döndürür.
@@ -279,7 +362,9 @@ struct AgentState: Equatable, Sendable {
 
     /// Bir sonraki budama anı (olay yoksa hiçbir zamanlayıcı kurulmaz).
     func nextPruneDate() -> Date? {
-        sessions.values.compactMap(Self.dueDate).min()
+        let sessionDates = sessions.values.compactMap(Self.dueDate)
+        let subagentDates = sessions.values.flatMap { s in s.subagents.compactMap { Self.subagentDue($0, in: s) } }
+        return (sessionDates + subagentDates).min()
     }
 
     /// Pid'li oturumların süreçlerini yoklar; ölü ya da başka sürece geçmiş pid'in oturumunu (ve alt ajanlarını) kapatır.

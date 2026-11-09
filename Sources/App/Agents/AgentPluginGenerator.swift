@@ -48,6 +48,9 @@ struct AgentPluginGenerator: Sendable {
     var pythonScriptURL: URL { pluginDirectory.appending(path: "scripts/forward.py") }
     var shellScriptURL: URL { pluginDirectory.appending(path: "scripts/forward.sh") }
 
+    /// Bu makinede kullanılan betik (Python varsa forward.py, yoksa forward.sh).
+    var activeScriptURL: URL { usesPython ? pythonScriptURL : shellScriptURL }
+
     /// Hook komutu; `${CLAUDE_PLUGIN_ROOT}` Claude tarafından plugin köküne çözülür.
     var hookCommand: String {
         usesPython ? "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/forward.py\"" : "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/forward.sh\""

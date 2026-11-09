@@ -491,3 +491,172 @@ private final class FakeProcessTable: ProcessLivenessProbing, @unchecked Sendabl
         return table[pid] ?? .dead
     }
 }
+
+// MARK: Adalmon oturumdan sonra başladığında / olay kaçırıldığında
+
+extension AgentStateTests {
+    private func late(_ name: AgentEvent.Name, at: TimeInterval, agent: String? = nil, type: String? = nil, tool: String? = nil) -> (AgentEvent, Date) {
+        ev(name, session: "late", at: at, agentID: agent, agentType: type, tool: tool)
+    }
+
+    func testUnknownSubagentIsAdoptedFromItsOwnToolEvent() {
+        var state = AgentState()
+        // Adalmon oturumdan sonra açıldı: SessionStart ve SubagentStart kaçırıldı; alt ajanın araç olayları geliyor.
+        let (e1, d1) = late(.preToolUse, at: 0, agent: "bg1", type: "crew-chief:implementer-hard", tool: "Read")
+        state.apply(e1, now: d1)
+        let s = state.sessions["late"]
+        XCTAssertEqual(s?.subagents.map(\.agentID), ["bg1"], "alt ajan olaydan listeye alınmalı")
+        XCTAssertEqual(s?.subagents.first?.agentType, "crew-chief:implementer-hard")
+        XCTAssertEqual(s?.subagents.first?.status, .tool("Read"))
+        XCTAssertNotEqual(s?.status, .tool("Read"), "alt ajanın aracı ana ajanın durumuna yazılmamalı")
+        // İkinci olay yinelemez, durumu günceller.
+        let (e2, d2) = late(.postToolUse, at: 1, agent: "bg1", type: "crew-chief:implementer-hard", tool: "Read")
+        state.apply(e2, now: d2)
+        XCTAssertEqual(state.sessions["late"]?.subagents.count, 1)
+        XCTAssertEqual(state.sessions["late"]?.subagents.first?.status, .thinking)
+        // Başka bir arka plan ajanı da aynı şekilde.
+        let (e3, d3) = late(.permissionRequest, at: 2, agent: "bg2", type: "crew-chief:deep-reader")
+        state.apply(e3, now: d3)
+        XCTAssertEqual(state.sessions["late"]?.subagents.map(\.agentID), ["bg1", "bg2"])
+        XCTAssertEqual(state.sessions["late"]?.subagents.last?.status, .waitingPermission)
+    }
+
+    func testFinishedSubagentIsNotResurrectedByALateEvent() {
+        var state = AgentState()
+        for (e, d) in [late(.sessionStart, at: 0), late(.subagentStart, at: 1, agent: "a", type: "Explore"),
+                       late(.subagentStop, at: 2, agent: "a", type: "Explore"), late(.userPromptSubmit, at: 3)] { state.apply(e, now: d) }
+        XCTAssertTrue(state.sessions["late"]?.subagents.isEmpty ?? false, "yeni istemde biten ajan temizlenir")
+        let (e, d) = late(.postToolUse, at: 4, agent: "a", type: "Explore", tool: "Bash")
+        state.apply(e, now: d)
+        XCTAssertTrue(state.sessions["late"]?.subagents.isEmpty ?? false, "bitmiş ajan geç gelen olayla geri gelmemeli")
+        // Aynı kimlik gerçekten yeniden başlatılırsa canlıdır.
+        let (s2, d2) = late(.subagentStart, at: 5, agent: "a", type: "Explore")
+        state.apply(s2, now: d2)
+        XCTAssertEqual(state.sessions["late"]?.subagents.map(\.agentID), ["a"])
+    }
+
+    func testEventsWithoutAgentIDStillDriveTheLead() {
+        var state = AgentState()
+        let (e, d) = late(.preToolUse, at: 0, tool: "Bash")
+        state.apply(e, now: d)
+        XCTAssertEqual(state.sessions["late"]?.status, .tool("Bash"))
+        XCTAssertTrue(state.sessions["late"]?.subagents.isEmpty ?? false)
+    }
+
+    func testSilentSubagentIsPrunedAfterStalenessAndNotReadded() {
+        var state = AgentState()
+        for (e, d) in [late(.sessionStart, at: 0), late(.subagentStart, at: 1, agent: "z", type: "Explore")] { state.apply(e, now: d) }
+        XCTAssertNotNil(state.nextPruneDate(), "alt ajan için bayatlama zamanlayıcısı gerekir")
+        let before = t0.addingTimeInterval(AgentState.subagentStaleAfter - 5)
+        XCTAssertFalse(state.pruneSubagents(now: before))
+        let after = t0.addingTimeInterval(AgentState.subagentStaleAfter + 10)
+        XCTAssertTrue(state.pruneSubagents(now: after))
+        XCTAssertTrue(state.sessions["late"]?.subagents.isEmpty ?? false)
+        let (e, d) = late(.preToolUse, at: AgentState.subagentStaleAfter + 20, agent: "z", type: "Explore", tool: "Bash")
+        state.apply(e, now: d)
+        XCTAssertTrue(state.sessions["late"]?.subagents.isEmpty ?? false, "bayat diye düşen ajan hemen geri eklenmez")
+    }
+
+    func testActiveSubagentIsNotPrunedAndDoneOnesNeverBlockPruneTimer() {
+        var state = AgentState()
+        for (e, d) in [late(.sessionStart, at: 0), late(.subagentStart, at: 1, agent: "k", type: "Explore"),
+                       late(.preToolUse, at: AgentState.subagentStaleAfter - 60, agent: "k", type: "Explore", tool: "Bash")] { state.apply(e, now: d) }
+        XCTAssertFalse(state.pruneSubagents(now: t0.addingTimeInterval(AgentState.subagentStaleAfter + 30)), "yeni olay göndermiş ajan bayat sayılmaz")
+        let (stop, sd) = late(.subagentStop, at: AgentState.subagentStaleAfter + 31, agent: "k", type: "Explore")
+        state.apply(stop, now: sd)
+        XCTAssertNil(state.nextPruneDate().flatMap { $0 > t0.addingTimeInterval(AgentState.subagentStaleAfter + 31) ? nil : $0 } ?? nil)
+    }
+}
+
+// MARK: Süreç taramasıyla "bekleyen oturum" (Adalmon sonradan açıldı / oturum boşta ve olay yok)
+
+extension AgentStateTests {
+    func testDiscoveryFilterKeepsOnlyInteractiveClaudeSessions() {
+        let found = ClaudeProcessDiscovery.filter([
+            .init(pid: 10, argv: ["claude", "--dangerously-skip-permissions"], cwd: "/Users/x/Documents/proje-a"),
+            .init(pid: 11, argv: ["/Users/x/.local/bin/claude"], cwd: "/Users/x/proje-b"),
+            .init(pid: 12, argv: ["claude", "-p", "merhaba"], cwd: "/tmp/test"),
+            .init(pid: 13, argv: ["claude", "--print", "x"], cwd: "/tmp/test"),
+            .init(pid: 14, argv: ["claude", "mcp", "serve"], cwd: "/tmp"),
+            .init(pid: 15, argv: ["claude", "--chrome-native-host"], cwd: "/tmp"),
+            .init(pid: 16, argv: ["node", "claude"], cwd: "/tmp"),
+            .init(pid: 17, argv: ["claude"], cwd: ""),
+        ])
+        XCTAssertEqual(found.map(\.pid), [10, 11, 17])
+        XCTAssertEqual(found.first?.project, "proje-a")
+        XCTAssertEqual(found.last?.project, "?")
+    }
+
+    func testDiscoveredSessionsAppearAsIdleAndSkipKnownPIDs() {
+        var state = AgentState()
+        // Pid 5 için gerçek oturum zaten var.
+        state.apply(ev(.sessionStart, session: "gercek", pid: 5).0, now: t0)
+        let changed = state.discoverSessions([.init(pid: 5, project: "a"), .init(pid: 6, project: "b")], now: t0)
+        XCTAssertTrue(changed)
+        XCTAssertEqual(Set(state.sessions.keys), ["gercek", "discovered-6"])
+        let d = state.sessions["discovered-6"]
+        XCTAssertEqual(d?.status, .idle)
+        XCTAssertEqual(d?.discovered, true)
+        XCTAssertEqual(d?.pid, 6)
+        XCTAssertEqual(d?.displayName, "b")
+        XCTAssertFalse(state.discoverSessions([.init(pid: 6, project: "b")], now: t0), "aynı süreç tekrar eklenmez")
+        XCTAssertEqual(state.livenessTargets.map(\.pid).sorted(), [5, 6], "ölünce canlılık yoklaması kapatır")
+    }
+
+    func testFirstRealEventReplacesThePlaceholderByPIDOrByProject() {
+        var state = AgentState()
+        state.discoverSessions([.init(pid: 6, project: "adaltek_social"), .init(pid: 7, project: "diger")], now: t0)
+        // pid ile eşleşme
+        state.apply(ev(.userPromptSubmit, session: "social-1", pid: 6).0, now: t0.addingTimeInterval(1))
+        XCTAssertNil(state.sessions["discovered-6"], "gerçek olay yer tutucunun yerini alır")
+        XCTAssertNotNil(state.sessions["social-1"])
+        XCTAssertNotNil(state.sessions["discovered-7"], "başka sürecin yer tutucusuna dokunulmaz")
+        // Eski betik: pid yok → aynı proje adındaki tek yer tutucu.
+        var other = AgentState()
+        other.discoverSessions([.init(pid: 8, project: "Adalmon")], now: t0)
+        other.apply(ev(.sessionStart, session: "x").0, now: t0.addingTimeInterval(1))    // ev() project = "Adalmon"
+        XCTAssertNil(other.sessions["discovered-8"])
+        XCTAssertEqual(Set(other.sessions.keys), ["x"])
+    }
+
+    func testPlaceholderGoesAwayWhenItsProcessDies() {
+        var state = AgentState()
+        state.discoverSessions([.init(pid: 99, project: "olu")], now: t0)
+        struct Dead: ProcessLivenessProbing { func probe(pid: Int32) -> ProcessProbeResult { .dead } }
+        let closed = state.applyLiveness(using: Dead(), now: t0.addingTimeInterval(2))
+        XCTAssertEqual(closed, ["discovered-99"])
+        state.prune(now: t0.addingTimeInterval(2 + AgentState.exitedLinger + 1))
+        XCTAssertTrue(state.sessions.isEmpty)
+    }
+
+    @MainActor
+    func testMonitorDiscoveryCreatesPlaceholderThenRealEventReplacesIt() async {
+        let monitor = AgentMonitorModel()
+        await monitor.discoverRunningSessions(force: true, scan: { [.init(pid: 4242, project: "social")] })
+        XCTAssertEqual(monitor.state.sessions.keys.sorted(), ["discovered-4242"])
+        XCTAssertEqual(monitor.dock.open.map(\.id), ["discovered-4242"], "ofiste görünür")
+        monitor.ingest(ev(.userPromptSubmit, session: "gercek-1", pid: 4242).0, now: .now)
+        XCTAssertEqual(monitor.state.sessions.keys.sorted(), ["gercek-1"])
+        monitor.reset()
+    }
+
+    func testSystemScanFindsARealProcessNamedClaudeAndItsWorkingDirectory() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "disc-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let work = dir.appending(path: "proje-xyz", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let link = dir.appending(path: "claude")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(fileURLWithPath: "/bin/sleep"))
+        let process = Process()
+        process.executableURL = link
+        process.arguments = ["30"]
+        process.currentDirectoryURL = work
+        try process.run()
+        defer { process.terminate(); process.waitUntilExit() }
+        usleep(300_000)
+        let found = ClaudeProcessDiscovery.scan()
+        let mine = found.first { $0.pid == process.processIdentifier }
+        XCTAssertNotNil(mine, "adı claude olan gerçek süreç bulunmalı")
+        XCTAssertEqual(mine?.project, "proje-xyz", "çalışma klasöründen proje adı")
+    }
+}

@@ -150,6 +150,22 @@ final class AgentMonitorModel {
         if next.setShells(mapped) { commit(next) }
     }
 
+    @ObservationIgnored private var lastDiscovery: Date?
+
+    /// Çalışan Claude CLI süreçlerinden "bekleyen oturum" üretir (Adalmon sonradan açıldıysa ya da oturum boşta olay üretmiyorsa).
+    /// En çok 10 sn'de bir; tarama arka planda yapılır. `scan` testte sahtesiyle değiştirilir.
+    func discoverRunningSessions(force: Bool = false, scan: @escaping @Sendable () -> [ClaudeProcessDiscovery.Found] = { ClaudeProcessDiscovery.scan() }) async {
+        if !force, let last = lastDiscovery, Date().timeIntervalSince(last) < 10 { return }
+        lastDiscovery = .now
+        let found = await Task.detached(priority: .utility) { scan() }.value
+        var next = state
+        guard next.discoverSessions(found, now: .now) else { return }
+        commit(next)
+        refreshSummary()
+        updateLivenessPolling()
+        schedulePrune()
+    }
+
     /// Canlılık döngüsü çalışıyor mu (testler yaşam döngüsünü buradan doğrular).
     var isPollingLiveness: Bool { livenessTask != nil }
 
@@ -212,7 +228,9 @@ final class AgentMonitorModel {
 
     func prune(now: Date = .now) {
         var next = state
-        guard !next.prune(now: now).isEmpty else { return }
+        let droppedSessions = next.prune(now: now)
+        let droppedSubagents = next.pruneSubagents(now: now)
+        guard !droppedSessions.isEmpty || droppedSubagents else { return }
         commit(next)
         lookups.retain(Set(state.sessions.keys))
         refreshSummary()

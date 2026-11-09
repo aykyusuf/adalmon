@@ -97,6 +97,14 @@
       "done_when": "Tam test suite'i sonrasi ~/Library/Application Support/Adalmon/ClaudePlugin/config.json degismiyor ve calisan uygulamanin dinleyicisi erisilebilir; config ezilirse uygulama one gelince kendini onariyor",
       "status": "done",
       "evidence": "2026-11-09: tam suite oncesi/sonrasi config md5 ayni, /v1/state erisilebilir; AgentConfigGuardTests; AppModel.start testte agents.apply() cagirmiyor"
+    },
+    {
+      "id": "HOOK-02",
+      "title": "Kenar durumlar: Adalmon sonradan acildi, bosta oturum, kacirilan SubagentStart, hat sagligi",
+      "priority": 1,
+      "done_when": "Adalmon oturumdan sonra acilinca acik Claude oturumlari odada gorunuyor; bilinmeyen alt ajan kendi olayindan listeye aliniyor; takili kalan ajan 45 dk sonra dusuyor; ofis basliginda hat saglik cipi ve 'Hatti test et' calisiyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "2026-11-09: gercek uygulamada 5 acik oturum gorundu; gercek claude -p ile arka plan+senkron alt ajan uctan uca goruldu; 1187 test (yalniz 7 Dusuk Guc testi dusuyor); saglik cipi gozle bakilmadi"
     }
   ]
 }

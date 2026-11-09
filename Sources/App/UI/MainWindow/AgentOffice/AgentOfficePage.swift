@@ -32,6 +32,7 @@ struct AgentOfficePage: View {
                                 .help("Bu oturumu uykuya al: oda kapanır, altta sekme olarak kalır")
                         }
                     }
+                    AgentHookHealthChip(agents: model.agents)
                     OfficeThemeMenu()
                     OfficeLightingMenu()
                     demoMenu
@@ -52,7 +53,7 @@ struct AgentOfficePage: View {
             if sessions.isEmpty { emptyState }
         }
         .padding(24)
-        .onAppear { model.agents.monitor.addShellObserver() }
+        .onAppear { model.agents.repairConfigIfNeeded(); model.agents.monitor.addShellObserver() }
         .onDisappear { stopDemo(); model.agents.monitor.removeShellObserver() }
     }
 

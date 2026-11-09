@@ -22,6 +22,10 @@ final class AgentService {
     /// Kurulumdan sonra: açık Claude oturumları plugin'i görmez, yeni oturum gerekir.
     private(set) var needsNewSession = false
 
+    /// "Hattı test et" sonucu (hook betiği → dinleyici → izleyici zinciri) ve çalışıyor mu.
+    private(set) var selfTest: AgentHookSelfTest.Result?
+    private(set) var isSelfTesting = false
+
     @ObservationIgnored private let prefs: Preferences
     @ObservationIgnored private var installer: AgentPluginInstaller
     @ObservationIgnored private var server: AgentEventServer?
@@ -32,6 +36,8 @@ final class AgentService {
     /// Açık SSE akışı varken izleyici sayacına +1 yazılmış mı (arka plan işlemleri yalnızca tarayıcı görünümü açıkken örneklenir).
     @ObservationIgnored private var webObserving = false
     @ObservationIgnored private var activationObserver: (any NSObjectProtocol)?
+    /// Süreç taramasıyla bekleyen oturum bulma. Testte kapalıdır (test makinesindeki gerçek Claude süreçleri sonuçları bozmasın).
+    @ObservationIgnored var discoveryEnabled = !AppEnvironment.isRunningTests
 
     init(prefs: Preferences, installer: AgentPluginInstaller = AgentPluginInstaller()) {
         self.prefs = prefs
@@ -125,9 +131,41 @@ final class AgentService {
         // gider; uygulama öne her geldiğinde dosya bu örneğin değerleriyle karşılaştırılıp gerekirse geri yazılır.
         if activationObserver == nil {
             activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.repairConfigIfNeeded() }
+                MainActor.assumeIsolated {
+                    self?.repairConfigIfNeeded()
+                    if let self, self.discoveryEnabled { Task { await self.monitor.discoverRunningSessions() } }
+                }
             }
         }
+    }
+
+    /// Hat testi: GERÇEK hook betiğini yapay bir olayla çalıştırır ve izleyicinin olayı alıp almadığına bakar; ayrıca çalışan Claude
+    /// oturumlarından kaçının olay gönderdiğini sayar. Gerçek bir oturum oluşturmaz.
+    func runSelfTest() async {
+        guard !isSelfTesting else { return }
+        isSelfTesting = true
+        defer { isSelfTesting = false }
+        repairConfigIfNeeded()
+        let before = monitor.lastEventAt
+        var latency: Double?
+        if case .running = listener {
+            let started = ContinuousClock.now
+            let script = installer.generator.activeScriptURL, config = installer.generator.configURL
+            let launched = await Task.detached(priority: .userInitiated) { AgentHookSelfTest.fire(script: script, config: config) }.value
+            if launched {
+                for _ in 0..<40 {
+                    if monitor.lastEventAt != before, monitor.lastEventAt != nil { latency = Double((ContinuousClock.now - started).components.attoseconds) / 1e15; break }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+        }
+        let live = Set(await Task.detached(priority: .utility) { ClaudeProcessDiscovery.scan().map(\.pid) }.value)
+        // Olay göndermemiş ("bekleyen") oturumlar sayılmaz: yalnızca gerçek hook olayı almış oturumlar.
+        let reporting = Set(monitor.state.sessions.values.filter { !$0.discovered }.compactMap(\.pid)).intersection(live).count
+        if discoveryEnabled { await monitor.discoverRunningSessions(force: true) }
+        selfTest = AgentHookSelfTest.evaluate(listenerRunning: { if case .running = listener { true } else { false } }(),
+                                              pluginInstalled: pluginStatus == .installed || FileManager.default.fileExists(atPath: installer.generator.activeScriptURL.path),
+                                              eventArrived: latency != nil, latencyMs: latency, liveClaudeProcesses: live.count, reportingProcesses: reporting, at: .now)
     }
 
     /// config.json bu örneğin port/token'ından farklıysa (başkası yazmışsa) geri yazar. Dinleyici çalışmıyorsa hiçbir şey yapmaz.
@@ -165,6 +203,7 @@ final class AgentService {
         case .running(let port):
             listener = .running(port)
             if prefs.agentsPort != Int(port) { prefs.agentsPort = Int(port) }
+            if discoveryEnabled { Task { await monitor.discoverRunningSessions(force: true) } }
             // Betik port/token'ı bu dosyadan okur; port değişse de yeniden kurulum gerekmez.
             try? installer.generator.writeConfig(port: port, token: token, showTargets: prefs.agentsShowTargets)
         }

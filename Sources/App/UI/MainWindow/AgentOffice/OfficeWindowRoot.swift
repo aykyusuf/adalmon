@@ -38,7 +38,7 @@ struct OfficeWindowRoot: View {
                 .animation(.easeOut(duration: OfficeChromeVisibility.fadeDuration), value: state.stripShown)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { stripHeight = $0 }
         }
-        .onAppear { model.agents.monitor.addShellObserver() }
+        .onAppear { model.agents.repairConfigIfNeeded(); model.agents.monitor.addShellObserver() }
         .onDisappear { model.agents.monitor.removeShellObserver() }
     }
 
