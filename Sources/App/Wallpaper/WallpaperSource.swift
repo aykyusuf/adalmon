@@ -25,11 +25,15 @@ enum OfficeLabelPolicy: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 enum OfficeWallpaperBackground: String, Codable, CaseIterable, Identifiable, Sendable {
-    case dark, light, office
+    /// Otomatik: ışık gece olunca Koyu, gündüz Açık (ışık modunu izler; "Işık" Otomatik ise yerel saate göre).
+    case auto, dark, light, office
 
     var id: String { rawValue }
+    /// Otomatik ise gece/gündüze göre Koyu ya da Açık; diğerleri kendisi.
+    func resolved(night: Bool) -> OfficeWallpaperBackground { self == .auto ? (night ? .dark : .light) : self }
     var title: String {
         switch self {
+        case .auto: "Otomatik"
         case .dark: "Koyu"
         case .light: "Açık"
         case .office: "Ofis"
@@ -38,7 +42,7 @@ enum OfficeWallpaperBackground: String, Codable, CaseIterable, Identifiable, Sen
     /// Sahne zemini (odaların dışı): koyu #0E1014, açık #E7EAF0. Ofis: temalı arka planın yedeği (piksel temada eski koyu zemin #12131A).
     var rgb: (r: Double, g: Double, b: Double) {
         switch self {
-        case .dark: (r: 14.0 / 255.0, g: 16.0 / 255.0, b: 20.0 / 255.0)
+        case .dark, .auto: (r: 14.0 / 255.0, g: 16.0 / 255.0, b: 20.0 / 255.0)
         case .light: (r: 231.0 / 255.0, g: 234.0 / 255.0, b: 240.0 / 255.0)
         case .office: (r: OfficeBackdropStyle.defaultSolid.r, g: OfficeBackdropStyle.defaultSolid.g, b: OfficeBackdropStyle.defaultSolid.b)
         }

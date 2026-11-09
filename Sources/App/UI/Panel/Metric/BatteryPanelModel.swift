@@ -61,7 +61,7 @@ struct BatteryPanelModel: Equatable {
         case .full: ("TAM ŞARJLI", "∞")
         case .charging: ("DOLANA KADAR", r.timeToFullMinutes.map(BatteryFormat.clock) ?? "…")
         case .pluggedNotCharging: ("ŞARJ OLMUYOR", "∞")
-        case .onBattery: ("BİTENE KADAR", r.timeToEmptyMinutes.map(BatteryFormat.clock) ?? "…")
+        case .onBattery: ("BİTENE KADAR", r.timeToEmptyMinutes.map { (r.timeToEmptyIsEstimate ? "≈" : "") + BatteryFormat.clock($0) } ?? "…")
         }
         let statusTitle: String = switch r.state {
         case .full: "Tam şarjlı"

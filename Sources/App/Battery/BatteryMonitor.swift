@@ -36,6 +36,7 @@ final class BatteryMonitor {
     @ObservationIgnored private let notify: (String, String) -> Void
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var engine = BatteryAlertEngine()
+    @ObservationIgnored private var runtime = BatteryRuntimeEstimator()
     @ObservationIgnored private var energy = BatteryEnergyTracker()
     @ObservationIgnored private var screen = ScreenOnClock(now: .now)
     @ObservationIgnored private var pending: [BatterySample] = []
@@ -170,6 +171,9 @@ final class BatteryMonitor {
         if visible || isEvent { lastRefreshAt = .now }
         r.temperatureC = temperatureC
         r.appleMaxCapacityPercent = appleMaxCapacity
+        // Kalan süre: anlık tüketimden kendi hesabımız; hesaplanamazsa macOS'un değeri kalır.
+        runtime.record(r)
+        if let own = runtime.minutes(for: r) { r.timeToEmptyMinutes = own; r.timeToEmptyIsEstimate = true }
         let stateChanged = (lastPlugged != nil && lastPlugged != r.isPluggedIn) || (lastCharging != nil && lastCharging != r.isCharging)
         lastPlugged = r.isPluggedIn
         lastCharging = r.isCharging

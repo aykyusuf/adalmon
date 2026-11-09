@@ -42,6 +42,8 @@ final class OfficeScene: SKScene {
     /// Ofis v3: ışık modu (varsayılan gündüz; ev sahibi kayıtlı modu verir), gece mi, tek saat-sınırı zamanlayıcısı.
     private(set) var lightingMode = OfficeLightingMode.day
     private(set) var isNight = false
+    /// Gece/gündüz değişince (ışık modu ya da saat sınırı): duvar kâğıdı "Otomatik" arka planı buradan yeniden çözer.
+    var onNightChange: ((Bool) -> Void)?
     var timeZone = TimeZone.current
     private var boundaryTimer: Timer?
     /// Büyüyen odanın eski düğümü kararırken ve yeni oda belirirken.
@@ -540,6 +542,7 @@ final class OfficeScene: SKScene {
         for r in rooms.values { r.setNight(night, animated: animated); r.backdropShadow?.setNight(night, animated: animated) }
         backdropNode?.setNight(night, animated: animated)
         if animated { track(world, key: "lighting", .wait(forDuration: OfficeLighting.crossfade + 0.1)) }
+        onNightChange?(night)
     }
 
     /// Ev sahibi kapanırken zamanlayıcıyı bırakır.

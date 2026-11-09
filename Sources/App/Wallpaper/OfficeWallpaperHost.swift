@@ -37,6 +37,8 @@ final class OfficeWallpaperHost {
         let scene = OfficeScene(assets: assets, size: size, theme: theme)
         scene.onAnimationStateChange = { [weak self] _ in self?.refreshRunState() }
         scene.onActivity = { [weak self] in self?.needsFrame = true; self?.refreshRunState() }
+        // "Otomatik" arka plan: gece/gündüz değişince Koyu ↔ Açık yeniden çözülür.
+        scene.onNightChange = { [weak self] _ in self?.applyBackground() }
         self.scene = scene
         view.presentScene(scene)
     }
@@ -45,16 +47,24 @@ final class OfficeWallpaperHost {
     func configure(options newOptions: OfficeWallpaperOptions, theme newTheme: OfficeTheme) {
         guard let scene else { return }
         var changed = false
+        let oldBackground = options.background
+        options.background = newOptions.background   // ışık değişimi "Otomatik" arka planı yeni seçimle çözsün
         if newTheme != theme { theme = newTheme; scene.setTheme(newTheme); changed = true }
         if newOptions.lighting != options.lighting || scene.wallpaperLabels == nil {
             scene.setLightingMode(newOptions.lighting, animated: false); changed = true
         }
-        if newOptions.background != options.background || scene.wallpaperLabels == nil {
-            scene.setBackdropStyle(newOptions.background.style); changed = true
-        }
+        if scene.wallpaperLabels == nil || newOptions.background != oldBackground { applyBackground(); changed = true }
         if newOptions.labels != scene.wallpaperLabels { scene.wallpaperLabels = newOptions.labels; changed = true }
         options = newOptions
         if changed { needsFrame = true; applyMembers(members); refreshRunState() }
+    }
+
+    /// Arka planı seçime göre uygular; "Otomatik" ise sahnenin gece/gündüz durumuna bakar.
+    private func applyBackground() {
+        guard let scene else { return }
+        scene.setBackdropStyle(options.background.resolved(night: scene.isNight).style)
+        needsFrame = true
+        refreshRunState()
     }
 
     func setMembers(_ new: [OfficeMember]) {

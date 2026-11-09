@@ -22,6 +22,8 @@ struct BatteryReading: Sendable, Equatable {
     var isPluggedIn = false
     var isFullyCharged = false
     var timeToEmptyMinutes: Int?
+    /// `timeToEmptyMinutes` anlık tüketimden hesaplandı (macOS'un tahmini değil): arayüz "≈" gösterir.
+    var timeToEmptyIsEstimate = false
     var timeToFullMinutes: Int?
     var cycles: Int?
     var designCycles: Int?

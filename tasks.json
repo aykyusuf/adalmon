@@ -49,6 +49,22 @@
       "done_when": "Gercek bir oturum 30 dk bosta kalinca ofis dock'unda sekme oluyor, tiklaninca oda aciliyor, Kucult dugmesi calisiyor; kullanici onayladi",
       "status": "todo",
       "evidence": "66fbc81 kuruldu; birim testleri gecti (SessionDormancyTests), canli gorsel dogrulama yok"
+    },
+    {
+      "id": "BATT-01",
+      "title": "Pil: anlik tuketimden bitis suresi (≈) canli dogrula",
+      "priority": 2,
+      "done_when": "Pilde iken panelde ve durum satirinda ≈ ile gorunen sure, yuk degisince (agir is baslatinca) birkac dakikada kisaliyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "BatteryRuntimeEstimator + testler gecti, kuruldu; Mac fisteyken canli olculmedi"
+    },
+    {
+      "id": "SAVER-01",
+      "title": "Saver/duvar kagidi: 16:10 ekranda 16:9 video kirpilmasi icin Doldur/Sigdir secenegi",
+      "priority": 3,
+      "done_when": "Ayarlarda Doldur ve Sigdir secimi var; MacBook Pro 14'te Sigdir secilince video kirpilmadan siyah barlarla gorunur; saver ve duvar kagidinda calisir; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Neden: AspectFill (LoopInstance/LoopingQueueBackend/AdalmonSaverView); henuz kod yok"
     }
   ]
 }

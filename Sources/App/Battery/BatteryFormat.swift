@@ -26,7 +26,7 @@ enum BatteryFormat {
             return "Şarj oluyor · süre hesaplanıyor"
         case .pluggedNotCharging: return "Güç adaptörü bağlı · şarj olmuyor"
         case .onBattery:
-            if let t = r.timeToEmptyMinutes { return "Pil · \(long(t)) kaldı" }
+            if let t = r.timeToEmptyMinutes { return "Pil · \(r.timeToEmptyIsEstimate ? "≈" : "")\(long(t)) kaldı" }
             return "Pil · süre hesaplanıyor"
         }
     }

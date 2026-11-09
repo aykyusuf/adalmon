@@ -169,6 +169,10 @@ final class OfficePanoTests: XCTestCase {
     func testWallpaperOfficeBackgroundDefault() throws {
         XCTAssertEqual(OfficeWallpaperOptions().background, .office)
         XCTAssertEqual(OfficeWallpaperBackground.office.title, "Ofis")
+        XCTAssertEqual(OfficeWallpaperBackground.auto.title, "Otomatik")
+        XCTAssertEqual(OfficeWallpaperBackground.auto.resolved(night: true), .dark)
+        XCTAssertEqual(OfficeWallpaperBackground.auto.resolved(night: false), .light)
+        XCTAssertEqual(OfficeWallpaperBackground.office.resolved(night: true), .office, "Otomatik dışındakiler değişmez")
         XCTAssertEqual(OfficeWallpaperBackground.office.style, .themed)
         XCTAssertEqual(OfficeWallpaperBackground.dark.style, .solid(OfficeRGB(r: 14.0 / 255, g: 16.0 / 255, b: 20.0 / 255)))
         let old = try JSONDecoder().decode(OfficeWallpaperOptions.self, from: Data(#"{"background":"light"}"#.utf8))
