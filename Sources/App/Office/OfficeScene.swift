@@ -4,6 +4,12 @@ import SpriteKit
 /// hesabı saf mantıkta (`OfficeRoomPlanner`, `OfficeRoomArranger`, `OfficeCamera`). SwiftUI'ya bağımlı değildir.
 /// Performans: görünmeyen odalar duraklatılır (SKAction'ları çalışmaz, `isAnimating`'e katılmaz); boşta hiçbir SKAction yoktur;
 /// `onAnimationStateChange` ile ev sahibi görünümü duraklatabilir.
+/// Fare bir odanın üstünde: oda kimliği ve odanın görünüm dikdörtgeni (SwiftUI koordinatı: sol-üst başlangıçlı, y aşağı).
+struct OfficeRoomHover: Equatable, Sendable {
+    var id: String
+    var rect: CGRect
+}
+
 @MainActor
 final class OfficeScene: SKScene {
     /// Oda ekleme/çıkarma, yeniden dizilim ve kamera geçişi süresi.
@@ -83,6 +89,11 @@ final class OfficeScene: SKScene {
     /// Kamera (yakınlaşma/uzaklaşma) animasyonu başlayınca süresiyle çağrılır: ev sahibi görünüm kare hızını geçici yükseltir.
     var onCameraAnimation: ((TimeInterval) -> Void)?
     var onSelectionChange: ((String?) -> Void)?
+    /// Fare bir odanın üstüne gelince/ayrılınca (hover'da çıkan "küçült" düğmesi için).
+    var onRoomHover: ((OfficeRoomHover?) -> Void)?
+    private var lastRoomHover: OfficeRoomHover?
+    /// Sola süzülüp (küçültme animasyonu) bitirmiş odaların bitiş anı; üst katman küçültmeyi uygulayamazsa (oturum çalışmaya başladı) geri açılır.
+    private var tuckedAt: [String: Date] = [:]
     /// Fare bir karakterin/tahtanın üstünde mi (imleç el işareti).
     var onHoverChange: ((Bool) -> Void)?
 
@@ -224,6 +235,11 @@ final class OfficeScene: SKScene {
             if animated && (!replaced || known[rp.id] != nil) { fade.insert(rp.id); node.root.alpha = 0; if replaced { grown.insert(rp.id) } }
             changed = true
         }
+        for (id, at) in tuckedAt where now.timeIntervalSince(at) > 1 {
+            // Küçültme uygulanmadı (ör. oturum çalışmaya başladı): oda eski haline döner.
+            tuckedAt[id] = nil
+            if let room = rooms[id] { room.root.setScale(1); room.root.alpha = 1; room.root.zPosition = 0; changed = true }
+        }
         let newOrder = plan.rooms.map(\.id)
         if newOrder != order { changed = true }
         order = newOrder
@@ -250,7 +266,10 @@ final class OfficeScene: SKScene {
     private func removeRoom(_ id: String, animated: Bool) {
         guard let room = rooms.removeValue(forKey: id) else { return }
         if selectedRoomID == id { setSelection(nil, animated: false) }
-        guard animated, room.isVisible else { destroy(room); return }
+        tuckedAt[id] = nil
+        // Sola süzülüp görünmez olmuş oda (küçültme): kararma beklenmez, kalanlar hemen yeniden dizilir.
+        guard animated, room.isVisible, room.root.alpha > 0.05 else { destroy(room); return }
+        onCameraAnimation?(Self.transitionDuration * 2)
         // Kısa kararma, sonra kaldır ve ızgarayı yeniden diz.
         dying.append(room)
         track(room.root, key: "\(id).fade", .sequence([.fadeAlpha(to: 0.35, duration: Self.transitionDuration * 0.4), .fadeOut(withDuration: Self.transitionDuration * 0.6)])) { [weak self, weak room] in
@@ -391,7 +410,8 @@ final class OfficeScene: SKScene {
     }
 
     private func updateSelectionFrame() {
-        guard let id = selectedRoomID, let cell = arrangement.cell(id: id) else { selectionFrame.isHidden = true; return }
+        // Vektör temada sert mavi çerçeve yok (kamera zaten odaya yakınlaşır); piksel temada eski çerçeve kalır.
+        guard theme.integerZoomOnly, let id = selectedRoomID, let cell = arrangement.cell(id: id) else { selectionFrame.isHidden = true; return }
         selectionFrame.isHidden = false
         let t = 2 / zoom, pad: CGFloat = 4
         let x = CGFloat(cell.x) - pad, w = CGFloat(cell.width) + pad * 2
@@ -566,6 +586,7 @@ final class OfficeScene: SKScene {
 
     /// Fare hareketi (görünüm koordinatı). Karakterin üstünde ad · rol · model · durum satırı; imleç değişimi için `onHoverChange`.
     func hover(at p: CGPoint?) {
+        reportRoomHover(p)
         if dragStart == nil, let p, let room = rackHit(atView: p), let top = room.rackTop {
             if hoverID != room.id + "#rack" { hoverID = room.id + "#rack"; onHoverChange?(true) }
             let node = tooltipNode ?? makeTooltip()
@@ -590,6 +611,45 @@ final class OfficeScene: SKScene {
         node.position = CGPoint(x: h.room.root.position.x + top.x, y: h.room.root.position.y + top.y + 10 / zoom)
         node.isHidden = false
         onActivity?()
+    }
+
+    private func reportRoomHover(_ p: CGPoint?) {
+        var next: OfficeRoomHover?
+        if let p, dragStart == nil, wallpaperLabels == nil {
+            let pt = OfficeCamera.contentPoint(fromView: p, view: size, center: cameraCenter, zoom: zoom)
+            if let cell = arrangement.cell(at: pt), let room = rooms[cell.id], !room.isPlaceholder, room.isVisible, room.root.alpha > 0.5 {
+                let r = cell.rect
+                next = OfficeRoomHover(id: cell.id, rect: CGRect(x: (r.minX - cameraCenter.x) * zoom + size.width / 2,
+                                                                   y: (r.minY - cameraCenter.y) * zoom + size.height / 2,
+                                                                   width: r.width * zoom, height: r.height * zoom))
+            }
+        }
+        guard next != lastRoomHover else { return }
+        lastRoomHover = next
+        onRoomHover?(next)
+    }
+
+    // MARK: Küçültme animasyonu
+
+    /// Odayı görünümün sol kenarına doğru küçülterek süzer (Stage Manager gibi); bitince `completion` çağrılır (üst katman küçültmeyi uygular).
+    /// Animasyon sürerken kare hızı yükseltilir. Oda görünmüyorsa/duvar kâğıdındaysa animasyonsuz hemen tamamlanır.
+    func tuck(_ id: String, completion: @escaping @MainActor () -> Void) {
+        guard let room = rooms[id], room.isVisible, wallpaperLabels == nil else { completion(); return }
+        let key = "\(id).tuck"
+        guard pending[key] == nil else { return }
+        let duration: TimeInterval = 0.38, s: CGFloat = 0.1
+        let half = size.width / 2 * cameraNode.xScale
+        let target = CGPoint(x: cameraNode.position.x - half + 8 / zoom, y: cameraNode.position.y - room.frameSize.height * s / 2)
+        onCameraAnimation?(duration + 0.1)
+        room.root.zPosition = 30_000
+        lastRoomHover = nil; onRoomHover?(nil)
+        let move = SKAction.move(to: target, duration: duration); move.timingMode = .easeIn
+        let shrink = SKAction.scale(to: s, duration: duration); shrink.timingMode = .easeIn
+        let fade = SKAction.sequence([.wait(forDuration: duration * 0.5), .fadeOut(withDuration: duration * 0.5)])
+        track(room.root, key: key, .group([move, shrink, fade])) { [weak self] in
+            self?.tuckedAt[id] = .now
+            completion()
+        }
     }
 
     private func hideTooltip() {

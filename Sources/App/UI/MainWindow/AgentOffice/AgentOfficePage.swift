@@ -11,6 +11,7 @@ struct AgentOfficePage: View {
     @State private var demoRunning = false
     /// Odaklanılan oda (oturum kimliği); nil: hepsi görünür.
     @State private var selectedRoom: String?
+    @State private var sceneCommands = OfficeSceneCommands()
 
     var body: some View {
         let dock = model.agents.monitor.dock
@@ -41,11 +42,9 @@ struct AgentOfficePage: View {
                 }
             }
             OfficeSceneContainer(members: OfficeMember.members(from: sessions), selectedRoom: $selectedRoom,
-                                 onMinimize: demoSessions == nil ? { minimize($0) } : nil)
-                .overlay(alignment: .bottom) {
-                    OfficeDock(sessions: sleeping) { model.agents.monitor.restore($0) }
-                }
-                .animation(.easeOut(duration: 0.2), value: sleeping.map(\.id))
+                                 onMinimize: demoSessions == nil ? { minimize($0) } : nil,
+                                 sleeping: sleeping, onRestore: demoSessions == nil ? { model.agents.monitor.restore($0) } : nil,
+                                 commands: sceneCommands)
                 .clipShape(.rect(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.08)))
                 .frame(minHeight: 360)
@@ -57,9 +56,13 @@ struct AgentOfficePage: View {
         .onDisappear { stopDemo(); model.agents.monitor.removeShellObserver() }
     }
 
+    /// Oda sola süzülerek küçülür, animasyon bitince oturum uykuya alınır.
     private func minimize(_ id: String) {
-        if selectedRoom == id { selectedRoom = nil }
-        model.agents.monitor.minimize(id)
+        let monitor = model.agents.monitor
+        sceneCommands.tuck(id) {
+            if selectedRoom == id { selectedRoom = nil }
+            monitor.minimize(id)
+        }
     }
 
     private var demoMenu: some View {

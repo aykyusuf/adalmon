@@ -5,17 +5,28 @@ import SwiftUI
 struct OfficeSceneContainer: View {
     let members: [OfficeMember]
     @Binding var selectedRoom: String?
-    /// Pano (kiosk) düzeni: ayrı pencere tam ekranda ya da "Hep" iken true.
     var panoActive = false
-    /// Oturum kartındaki "Küçült" düğmesi (oturum kimliği); nil ise düğme çıkmaz (ör. demo).
+    /// Oturumu küçültür (oturum kimliği). nil ise küçült düğmeleri çıkmaz (ör. demo). Animasyonu çağıran taraf `commands` ile yapar.
     var onMinimize: ((String) -> Void)?
+    /// Uykudaki (küçük) oturumlar ve geri açma; boşsa sol şerit çıkmaz.
+    var sleeping: [AgentSession] = []
+    var onRestore: ((String) -> Void)?
+    var commands: OfficeSceneCommands?
     @AppStorage(OfficeLighting.defaultsKey) private var lightingRaw = OfficeLightingMode.auto.rawValue
     @AppStorage(OfficeTheme.defaultsKey) private var themeRaw = OfficeTheme.default.rawValue
     @State private var card: OfficeDetailCard?
+    @State private var hoveredRoom: OfficeRoomHover?
+    @State private var overButton = false
+    @State private var clearTask: Task<Void, Never>?
 
     var body: some View {
         OfficeSceneView(members: members, selectedRoom: $selectedRoom, lightingMode: OfficeLightingMode(rawValue: lightingRaw) ?? .auto,
-                        theme: OfficeTheme(rawValue: themeRaw) ?? .default, panoActive: panoActive, card: $card)
+                        theme: OfficeTheme(rawValue: themeRaw) ?? .default, panoActive: panoActive, card: $card,
+                        commands: commands, onRoomHover: onMinimize == nil ? nil : { roomHover($0) })
+            .overlay { minimizeButtonLayer }
+            .overlay(alignment: .leading) {
+                if let onRestore { OfficeSleepRail(sessions: sleeping, onRestore: onRestore) }
+            }
             .overlay(alignment: .topTrailing) {
                 if let card {
                     OfficeCardView(card: card, onMinimize: onMinimize.map { f in { f(card.memberID); self.card = nil } }) { self.card = nil }
@@ -24,9 +35,41 @@ struct OfficeSceneContainer: View {
                 }
             }
     }
+
+    /// Fare bir odanın üstündeyken köşesinde "küçült" düğmesi. Oda dışına çıkınca kısa gecikmeyle söner (düğmeye ulaşmak için).
+    private func roomHover(_ hover: OfficeRoomHover?) {
+        if let hover {
+            clearTask?.cancel()
+            hoveredRoom = hover
+        } else {
+            clearTask?.cancel()
+            clearTask = Task {
+                try? await Task.sleep(for: .seconds(0.3))
+                guard !Task.isCancelled, !overButton else { return }
+                hoveredRoom = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var minimizeButtonLayer: some View {
+        if let room = hoveredRoom, let onMinimize {
+            GeometryReader { geo in
+                let x = min(max(room.rect.maxX - 22, 22), geo.size.width - 22)
+                let y = min(max(room.rect.minY + 18, 22), geo.size.height - 22)
+                OfficeMinimizeButton { hoveredRoom = nil; onMinimize(room.id) }
+                    .position(x: x, y: y)
+                    .onHover { inside in
+                        overButton = inside
+                        if inside { clearTask?.cancel() } else { roomHover(nil) }
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+            }
+            .animation(.easeOut(duration: 0.15), value: room.id)
+        }
+    }
 }
 
-/// "Işık: Otomatik / Gün / Gece" menüsü (sayfa başlığı ve ayrı pencere seçenek menüsü).
 struct OfficeLightingMenu: View {
     @AppStorage(OfficeLighting.defaultsKey) private var lightingRaw = OfficeLightingMode.auto.rawValue
 

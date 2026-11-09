@@ -76,6 +76,9 @@ struct OfficeSceneView: NSViewRepresentable {
     var theme: OfficeTheme = .default
     var panoActive = false
     @Binding var card: OfficeDetailCard?
+    /// Üst katmanın sahneye komut vermesi (küçültme animasyonu) ve oda üzerine gelme bildirimi.
+    var commands: OfficeSceneCommands?
+    var onRoomHover: ((OfficeRoomHover?) -> Void)?
 
     @MainActor
     final class Coordinator {
@@ -159,6 +162,7 @@ struct OfficeSceneView: NSViewRepresentable {
             scene?.onSelectionChange = nil
             scene?.onCardChange = nil
             scene?.onHoverChange = nil
+            scene?.onRoomHover = nil
             scene?.shutdown()
             scene = nil
         }
@@ -187,6 +191,11 @@ struct OfficeSceneView: NSViewRepresentable {
             DispatchQueue.main.async { coordinator?.pushedCard = card; cardBinding.wrappedValue = card }
         }
         scene.onHoverChange = { hand in (hand ? NSCursor.pointingHand : NSCursor.arrow).set() }
+        let hoverCallback = onRoomHover
+        scene.onRoomHover = { hover in hoverCallback?(hover) }
+        commands?.tuckHandler = { [weak scene] id, done in
+            if let scene { scene.tuck(id, completion: done) } else { done() }
+        }
         scene.setLightingMode(lightingMode, animated: false)
         coordinator.knownLighting = lightingMode
         scene.setBackdropStyle(.themed)

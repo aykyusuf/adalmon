@@ -7,6 +7,7 @@ struct OfficeWindowRoot: View {
     @Bindable var state: OfficeWindowState
     @AppStorage(OfficeLighting.defaultsKey) private var lightingRaw = OfficeLightingMode.auto.rawValue
     @State private var stripHeight: CGFloat = 36
+    @State private var sceneCommands = OfficeSceneCommands()
 
     var body: some View {
         let dock = model.agents.monitor.dock
@@ -14,11 +15,8 @@ struct OfficeWindowRoot: View {
         let members = OfficeMember.members(from: sessions)
         // Tam ekranda şerit sahnenin üstüne biner (sahne tüm yüksekliği kullanır) ve 3 sn hareketsizlikte solar; pencerede eskisi gibi hep görünür.
         ZStack(alignment: .top) {
-            OfficeSceneContainer(members: members, selectedRoom: $state.selectedRoom, panoActive: state.panoActive, onMinimize: { minimize($0) })
-                .overlay(alignment: .bottom) {
-                    OfficeDock(sessions: dock.minimized) { model.agents.monitor.restore($0) }
-                        .animation(.easeOut(duration: 0.2), value: dock.minimized.map(\.id))
-                }
+            OfficeSceneContainer(members: members, selectedRoom: $state.selectedRoom, panoActive: state.panoActive, onMinimize: { minimize($0) },
+                                 sleeping: dock.minimized, onRestore: { model.agents.monitor.restore($0) }, commands: sceneCommands)
                 .padding(.top, state.isFullScreen ? 0 : stripHeight)
                 .overlay { if sessions.isEmpty { emptyHint } }
                 .accessibilityLabel("Ajan ofisi: \(sessions.count) oturum" + (dock.minimized.isEmpty ? "" : ", \(dock.minimized.count) uykuda"))
@@ -40,9 +38,13 @@ struct OfficeWindowRoot: View {
         .onDisappear { model.agents.monitor.removeShellObserver() }
     }
 
+    /// Oda sola süzülerek küçülür, animasyon bitince oturum uykuya alınır.
     private func minimize(_ id: String) {
-        if state.selectedRoom == id { state.selectedRoom = nil }
-        model.agents.monitor.minimize(id)
+        let monitor = model.agents.monitor
+        sceneCommands.tuck(id) {
+            if state.selectedRoom == id { state.selectedRoom = nil }
+            monitor.minimize(id)
+        }
     }
 
     private func strip(sessions: [AgentSession]) -> some View {
