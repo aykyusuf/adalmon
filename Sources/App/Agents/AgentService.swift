@@ -89,7 +89,8 @@ final class AgentService {
     /// Yalnızca durum değişince (monitor.onStateChange) çalışır; özellik kapalıyken hiçbir şey üretmez.
     private func publishWeb() {
         guard prefs.agentsWebEnabled, server != nil, let webBuilder else { return }
-        let data = webBuilder.snapshot(sessions: monitor.state.orderedSessions)
+        let dock = monitor.dock
+        let data = webBuilder.snapshot(sessions: dock.open, minimized: dock.minimized)
         web.setState(data)
         server?.broadcast(data)
     }

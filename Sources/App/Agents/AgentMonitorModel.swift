@@ -17,6 +17,12 @@ final class AgentMonitorModel {
     private(set) var lastEventAt: Date?
     /// Menü çubuğu öğesi yalnızca bunu gözler.
     private(set) var summary = AgentSummary()
+    /// Elle küçültülen / elle açılan oturumlar (bellekte). Küçük oturumlar ofiste oda yerine sekme olarak durur.
+    private(set) var dockOverrides: [String: SessionDockOverride] = [:]
+    /// Otomatik küçülme anı gelince artar: görünümler `dock`'u yeniden hesaplasın diye (zamana bağlı karar için tek gözlenen alan).
+    private(set) var dockRevision = 0
+    @ObservationIgnored private var dormancyTask: Task<Void, Never>?
+    @ObservationIgnored private var dormancyDue: Date?
 
     /// Durum her değiştiğinde (olay, budama, canlılık, sıfırlama) çağrılır; tarayıcı görünümü bunu SSE'ye çevirir. Zamanlayıcı yok.
     @ObservationIgnored var onStateChange: (@MainActor (AgentState) -> Void)?
@@ -42,6 +48,57 @@ final class AgentMonitorModel {
         self.modelResolver = modelResolver
         self.shellSampler = shellSampler
         self.shellInterval = shellInterval
+    }
+
+    /// Açık (oda) ve küçük (sekme) oturumlar. Durum, elle karar ya da `dockRevision` değişince yeniden hesaplanır.
+    var dock: (open: [AgentSession], minimized: [AgentSession]) {
+        _ = dockRevision
+        return SessionDormancy.partition(state.orderedSessions, overrides: dockOverrides, now: .now)
+    }
+
+    /// Oturumu elle küçültür (çalışmaya başlayınca kendiliğinden açılır).
+    func minimize(_ id: String) {
+        guard state.sessions[id] != nil else { return }
+        dockOverrides[id] = .minimized
+        dockChanged()
+    }
+
+    /// Küçük oturumu açar; boşta sayacı bu andan yeniden başlar.
+    func restore(_ id: String, now: Date = .now) {
+        guard state.sessions[id] != nil else { return }
+        dockOverrides[id] = .opened(at: now)
+        dockChanged()
+    }
+
+    private func dockChanged() {
+        dockRevision &+= 1
+        scheduleDormancy()
+        onStateChange?(state)
+    }
+
+    /// Düşen oturumların kararlarını ve çalışmaya başlamış oturumların "elle küçült" kararını temizler.
+    private func tidyDockOverrides() {
+        guard !dockOverrides.isEmpty else { return }
+        for (id, o) in dockOverrides {
+            guard let s = state.sessions[id] else { dockOverrides[id] = nil; continue }
+            if o == .minimized, SessionDormancy.isBusy(s) { dockOverrides[id] = nil }
+        }
+    }
+
+    /// Bir sonraki otomatik küçülme anına tek seferlik uyku (boşta sıfır CPU). Aynı an için yeniden kurulmaz.
+    private func scheduleDormancy() {
+        let due = SessionDormancy.nextDormantDate(state.orderedSessions, overrides: dockOverrides, now: .now)
+        guard due != dormancyDue else { return }
+        dormancyTask?.cancel()
+        dormancyDue = due
+        guard let due else { dormancyTask = nil; return }
+        let delay = max(1, due.timeIntervalSinceNow)
+        dormancyTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay), tolerance: .seconds(10))
+            guard !Task.isCancelled, let self else { return }
+            self.dormancyDue = nil
+            self.dockChanged()
+        }
     }
 
     /// Arka plan işlemi örnekleme görevi çalışıyor mu (testler yaşam döngüsünü buradan doğrular).
@@ -188,6 +245,10 @@ final class AgentMonitorModel {
         livenessTask = nil
         shellTask?.cancel()
         shellTask = nil
+        dormancyTask?.cancel()
+        dormancyTask = nil
+        dormancyDue = nil
+        dockOverrides = [:]
         commit(AgentState())
         lookups.removeAll()
         lastEventAt = nil
@@ -196,6 +257,8 @@ final class AgentMonitorModel {
 
     private func commit(_ next: AgentState) {
         state = next
+        tidyDockOverrides()
+        scheduleDormancy()
         onStateChange?(next)
     }
 

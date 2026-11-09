@@ -7,6 +7,8 @@ struct OfficeSceneContainer: View {
     @Binding var selectedRoom: String?
     /// Pano (kiosk) düzeni: ayrı pencere tam ekranda ya da "Hep" iken true.
     var panoActive = false
+    /// Oturum kartındaki "Küçült" düğmesi (oturum kimliği); nil ise düğme çıkmaz (ör. demo).
+    var onMinimize: ((String) -> Void)?
     @AppStorage(OfficeLighting.defaultsKey) private var lightingRaw = OfficeLightingMode.auto.rawValue
     @AppStorage(OfficeTheme.defaultsKey) private var themeRaw = OfficeTheme.default.rawValue
     @State private var card: OfficeDetailCard?
@@ -16,7 +18,7 @@ struct OfficeSceneContainer: View {
                         theme: OfficeTheme(rawValue: themeRaw) ?? .default, panoActive: panoActive, card: $card)
             .overlay(alignment: .topTrailing) {
                 if let card {
-                    OfficeCardView(card: card) { self.card = nil }
+                    OfficeCardView(card: card, onMinimize: onMinimize.map { f in { f(card.memberID); self.card = nil } }) { self.card = nil }
                         .padding(10)
                         .transition(.opacity)
                 }
@@ -61,6 +63,7 @@ struct OfficeThemeMenu: View {
 /// Karakter detay kartı: oturum adı/rol, model rozeti, durum, araç, çalışma süresi sayacı, üst oturum ve alt ajan bilgisi.
 struct OfficeCardView: View {
     let card: OfficeDetailCard
+    var onMinimize: (() -> Void)?
     let close: () -> Void
 
     var body: some View {
@@ -112,6 +115,12 @@ struct OfficeCardView: View {
                         .font(.caption2)
                     }
                 }
+            }
+            if card.isSession, let onMinimize {
+                Divider()
+                Button("Küçült", systemImage: "minus.rectangle", action: onMinimize)
+                    .controlSize(.small)
+                    .help("Oturumu uykuya al: oda kapanır, altta sekme olarak kalır")
             }
         }
         .padding(12)

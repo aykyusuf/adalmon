@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let wallpaper = WallpaperService.shared.controller
             // Ofis duvar kâğıdı kaynağı: canlı ajan oturumları + özellik anahtarı (okunan @Observable alanlar izlenir).
             wallpaper.officeFeed = OfficeWallpaperFeed(snapshot: {
-                OfficeFeedSnapshot(members: OfficeMember.members(from: model.agents.monitor.state.orderedSessions), agentsEnabled: model.prefs.agentsEnabled)
+                OfficeFeedSnapshot(members: OfficeMember.members(from: model.agents.monitor.dock.open), agentsEnabled: model.prefs.agentsEnabled)
             }, setShellObserved: { observed in
                 if observed { model.agents.monitor.addShellObserver() } else { model.agents.monitor.removeShellObserver() }
             })

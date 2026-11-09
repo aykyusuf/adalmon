@@ -9,14 +9,19 @@ struct OfficeWindowRoot: View {
     @State private var stripHeight: CGFloat = 36
 
     var body: some View {
-        let sessions = model.agents.monitor.state.orderedSessions
+        let dock = model.agents.monitor.dock
+        let sessions = dock.open
         let members = OfficeMember.members(from: sessions)
         // Tam ekranda şerit sahnenin üstüne biner (sahne tüm yüksekliği kullanır) ve 3 sn hareketsizlikte solar; pencerede eskisi gibi hep görünür.
         ZStack(alignment: .top) {
-            OfficeSceneContainer(members: members, selectedRoom: $state.selectedRoom, panoActive: state.panoActive)
+            OfficeSceneContainer(members: members, selectedRoom: $state.selectedRoom, panoActive: state.panoActive, onMinimize: { minimize($0) })
+                .overlay(alignment: .bottom) {
+                    OfficeDock(sessions: dock.minimized) { model.agents.monitor.restore($0) }
+                        .animation(.easeOut(duration: 0.2), value: dock.minimized.map(\.id))
+                }
                 .padding(.top, state.isFullScreen ? 0 : stripHeight)
                 .overlay { if sessions.isEmpty { emptyHint } }
-                .accessibilityLabel("Ajan ofisi: \(sessions.count) oturum")
+                .accessibilityLabel("Ajan ofisi: \(sessions.count) oturum" + (dock.minimized.isEmpty ? "" : ", \(dock.minimized.count) uykuda"))
             if state.panoActive {
                 let night = OfficeLighting.isNight(mode: OfficeLightingMode(rawValue: lightingRaw) ?? .auto, date: state.clock.now)
                 OfficePanoCorners(members: members, now: state.clock.now, night: night, showsClock: state.settings.showsClockSummary)
@@ -35,11 +40,20 @@ struct OfficeWindowRoot: View {
         .onDisappear { model.agents.monitor.removeShellObserver() }
     }
 
+    private func minimize(_ id: String) {
+        if state.selectedRoom == id { state.selectedRoom = nil }
+        model.agents.monitor.minimize(id)
+    }
+
     private func strip(sessions: [AgentSession]) -> some View {
         HStack(spacing: 12) {
             Button("Hepsini göster", systemImage: "rectangle.grid.2x2") { state.selectedRoom = nil }
                 .disabled(state.selectedRoom == nil)
                 .help("Odadan çık, tüm odaları göster (Esc)")
+            if let room = state.selectedRoom {
+                Button("Odayı küçült", systemImage: "minus.rectangle") { minimize(room) }
+                    .help("Bu oturumu uykuya al: oda kapanır, altta sekme olarak kalır")
+            }
             Spacer(minLength: 8)
             Button("Tam ekran", systemImage: "arrow.up.left.and.arrow.down.right") { state.onToggleFullScreen?() }
                 .help("Tam ekran pano görünümü (⌃⌘F)")

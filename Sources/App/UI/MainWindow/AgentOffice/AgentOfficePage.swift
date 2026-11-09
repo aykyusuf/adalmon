@@ -13,17 +13,23 @@ struct AgentOfficePage: View {
     @State private var selectedRoom: String?
 
     var body: some View {
-        let sessions = demoSessions ?? model.agents.monitor.state.orderedSessions
+        let dock = model.agents.monitor.dock
+        let sessions = demoSessions ?? dock.open
+        let sleeping = demoSessions == nil ? dock.minimized : []
         VStack(alignment: .leading, spacing: 12) {
             PageHeader(title: MainSection.agentOffice.title) {
                 HStack(spacing: 10) {
                     if !sessions.isEmpty {
                         let working = sessions.reduce(0) { $0 + $1.workingCount }
-                        Text("\(working) çalışan ajan · \(sessions.count) oturum").font(.callout).foregroundStyle(.secondary)
+                        Text("\(working) çalışan ajan · \(sessions.count + sleeping.count) oturum" + (sleeping.isEmpty ? "" : " (\(sleeping.count) uykuda)")).font(.callout).foregroundStyle(.secondary)
                     }
-                    if selectedRoom != nil {
+                    if let room = selectedRoom {
                         Button("Hepsini göster", systemImage: "rectangle.grid.2x2") { selectedRoom = nil }
                             .help("Odadan çık, tüm odaları göster (Esc)")
+                        if demoSessions == nil {
+                            Button("Odayı küçült", systemImage: "minus.rectangle") { minimize(room) }
+                                .help("Bu oturumu uykuya al: oda kapanır, altta sekme olarak kalır")
+                        }
                     }
                     OfficeThemeMenu()
                     OfficeLightingMenu()
@@ -34,7 +40,12 @@ struct AgentOfficePage: View {
                         .accessibilityLabel("Ayrı pencerede aç")
                 }
             }
-            OfficeSceneContainer(members: OfficeMember.members(from: sessions), selectedRoom: $selectedRoom)
+            OfficeSceneContainer(members: OfficeMember.members(from: sessions), selectedRoom: $selectedRoom,
+                                 onMinimize: demoSessions == nil ? { minimize($0) } : nil)
+                .overlay(alignment: .bottom) {
+                    OfficeDock(sessions: sleeping) { model.agents.monitor.restore($0) }
+                }
+                .animation(.easeOut(duration: 0.2), value: sleeping.map(\.id))
                 .clipShape(.rect(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.08)))
                 .frame(minHeight: 360)
@@ -44,6 +55,11 @@ struct AgentOfficePage: View {
         .padding(24)
         .onAppear { model.agents.monitor.addShellObserver() }
         .onDisappear { stopDemo(); model.agents.monitor.removeShellObserver() }
+    }
+
+    private func minimize(_ id: String) {
+        if selectedRoom == id { selectedRoom = nil }
+        model.agents.monitor.minimize(id)
     }
 
     private var demoMenu: some View {

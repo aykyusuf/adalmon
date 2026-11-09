@@ -1,5 +1,19 @@
 # Adalmon — Durum (2026-11-05 ~19:30)
 
+
+## Constraints (kullanıcının koyduğu kurallar, kelimesi kelimesine)
+- "ASLA kendi kararınla yeni git branch AÇMA" — olduğun branch'e (main) commit et; branch yalnızca kullanıcı "branch aç" derse.
+- "commit at gh ile de public bi repo kur pushla, ama keyleri secretları falan gite koyma patlamayalım aman dikkat et" — her commit öncesi secret taraması.
+- "pil yemesin o kadar ona çok dikkat et iyi optimzie ettir" — idle CPU ~<%1 (görsel iyi + CPU <%5 üst sınır).
+- "dikkatli olsana olm" (ağ filtresi) — filtre değişikliğinde önce uyar; sonra `sysctl net.cfil.active_count` (2) ve `curl https://example.com` (200) kontrolü.
+- "maci yeniden başlatamam çalışmalar var" — reboot gerektiren adım yok.
+- "mevcuttaki düzeni bozmamaya çok dikkat et".
+- Belirsiz/riskli kararlarda AskUserQuestion ile sor (global CLAUDE.md); alt ajanlar sormaz, ana oturuma rapor verir.
+- Disk ~%96 dolu: ajan DerivedData'larını (`/private/tmp/claude-501/adalmon-dd-*`, `adalmon-dd-main` hariç) fazdan sonra sil.
+- Kullanıcı ekran başındayken UI'yi sürme / başka uygulamaya tuş gönderme; TCC pencerelerini kullanıcı tıklamaz.
+- Ajan modeli (YALNIZCA o oturum için söylendi, kalıcı değil): "ajanları opus açma ben sdiyene kadar en fazla sonnet high ajan açabilirsin"; basit işte sonnet medium.
+- Silme komutlarında crew-chief guard: 5 satır SAFE/RISKY gerekçesi yaz, sonra aynı komutu tekrar çalıştır.
+
 ## Çalışan
 - NE içerik filtresi (system extension) kurulu, aktif. SpoofDPI (127.0.0.1:8080) ayrıştırma: app→proxy akışı app'e yazılır, proxy egress hariç tutulur. Spike'ta 50 MB testinde %0,15 sapma, YouTube testi googlevideo'yu Chrome altında gösterdi.
 - XPC (pull, 1 sn), SQLite (~/Library/Application Support/Adalmon/usage.sqlite), mobil veri tespiti (NWPathMonitor isExpensive/isConstrained), 50 MB/dk ve günlük limit bildirimleri, mobilde engelleme.

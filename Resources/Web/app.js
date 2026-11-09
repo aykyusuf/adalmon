@@ -23,7 +23,7 @@
   const ctx = canvas.getContext('2d');
   const els = { dot: $('dot'), conn: $('conn'), counts: $('counts'), empty: $('empty'), error: $('error'), back: $('back'),
                 light: $('light'), loading: $('loading'), loadingText: $('loadingText'), tip: $('tip'), card: $('card'),
-                fs: $('fs'), pills: $('pills'), pillL: $('pillL'), pillR: $('pillR'), pillTime: $('pillTime'), pillDay: $('pillDay') };
+                dock: $('dock'), fs: $('fs'), pills: $('pills'), pillL: $('pillL'), pillR: $('pillR'), pillTime: $('pillTime'), pillDay: $('pillDay') };
 
   let layout = null;
   let assets = null;             // çözülmüş görseller (ImageBitmap) ve dizinler
@@ -574,6 +574,46 @@
     els.empty.hidden = n > 0;
     els.back.hidden = !focusId;
     renderPillSummary();
+    renderDock();
+  }
+
+  // Uykuda (küçültülmüş) oturumlar: yalnızca gösterim; açmak Adalmon uygulamasından yapılır. Metin textContent ile yazılır.
+  function idleText(since, now) {
+    const s = Math.max(0, Math.floor((now - since) / 1000));
+    if (s < 3600) return Math.max(1, Math.floor(s / 60)) + ' dk';
+    if (s < 86400) return Math.floor(s / 3600) + ' sa';
+    return Math.floor(s / 86400) + ' g';
+  }
+
+  function renderDock() {
+    const el = els.dock;
+    if (!el) return;
+    const list = (state && state.minimized) || [];
+    const key = list.map((m) => m.id + '|' + m.label + '|' + m.status).join(';');
+    el.hidden = list.length === 0;
+    if (el.dataset.key === key && el.dataset.at === String(Math.floor(Date.now() / 60000))) return;
+    el.dataset.key = key;
+    el.dataset.at = String(Math.floor(Date.now() / 60000));
+    while (el.firstChild) el.removeChild(el.firstChild);
+    if (!list.length) return;
+    const title = document.createElement('span');
+    title.className = 'dockTitle';
+    title.textContent = 'Uykuda';
+    el.appendChild(title);
+    const now = Date.now() + skew;
+    for (const m of list) {
+      const chip = document.createElement('span');
+      chip.className = 'dockChip';
+      chip.title = m.label + ' · ' + (m.badgeLabel || '') + ' · ' + (m.statusLabel || '');
+      const dot = document.createElement('i');
+      dot.className = 'dockDot ' + (m.status || 'idle');
+      const name = document.createElement('b');
+      name.textContent = m.label;
+      const idle = document.createElement('em');
+      idle.textContent = idleText(m.lastEventAt || now, now);
+      chip.appendChild(dot); chip.appendChild(name); chip.appendChild(idle);
+      el.appendChild(chip);
+    }
   }
 
   // ---------- Yürüme ızgarası (temizlikçi / taşıyıcı) ----------

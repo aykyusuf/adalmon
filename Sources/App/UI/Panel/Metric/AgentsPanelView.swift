@@ -34,11 +34,13 @@ struct AgentsPanelView: View {
     var maxHeight: CGFloat?
 
     var body: some View {
-        let sessions = monitor.state.orderedSessions
+        let dock = monitor.dock
+        let sessions = dock.open
+        let sleeping = dock.minimized
         let working = monitor.state.workingAgentCount
         PanelScaffold(kind: .agents, actions: actions, opensMainWindow: opensMainWindow,
-                      subtitle: sessions.isEmpty ? nil : "\(working) çalışan ajan · \(sessions.count) oturum", maxHeight: maxHeight) {
-            if sessions.isEmpty {
+                      subtitle: sessions.isEmpty && sleeping.isEmpty ? nil : "\(working) çalışan ajan · \(sessions.count + sleeping.count) oturum", maxHeight: maxHeight) {
+            if sessions.isEmpty && sleeping.isEmpty {
                 PanelCard {
                     VStack(alignment: .leading, spacing: 6) {
                         Label("Henüz ajan olayı yok", systemImage: "person.3").font(.callout.weight(.medium))
@@ -48,12 +50,18 @@ struct AgentsPanelView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                PanelCard(padding: 10) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(sessions) { session in
-                            AgentSessionRow(session: session).equatable()
+                if !sessions.isEmpty {
+                    PanelCard(padding: 10) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(sessions) { session in
+                                AgentSessionRow(session: session).equatable()
+                                    .contextMenu { Button("Küçült", systemImage: "minus.rectangle") { monitor.minimize(session.id) } }
+                            }
                         }
                     }
+                }
+                if !sleeping.isEmpty {
+                    SleepingSessionsCard(sessions: sleeping) { monitor.restore($0) }
                 }
             }
         } footer: { EmptyView() }
@@ -163,5 +171,54 @@ struct AgentShellsSection: View, Equatable {
             }
         }
         .padding(.leading, 16)
+    }
+}
+
+/// Panelde "Uykuda (N)" bölümü: uzun süre boşta kalan oturumlar tek satırlık sekmeler halinde, varsayılan kapalı.
+struct SleepingSessionsCard: View {
+    let sessions: [AgentSession]
+    let onRestore: (String) -> Void
+    @State private var expanded = false
+
+    var body: some View {
+        PanelCard(padding: 10) {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    expanded.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .bold)).frame(width: 10)
+                            .accessibilityHidden(true)
+                        Image(systemName: "moon.zzz.fill").font(.caption).accessibilityHidden(true)
+                        Text("Uykuda (\(sessions.count))").font(.callout.weight(.medium))
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(.secondary)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(expanded ? "açık" : "kapalı")
+                if expanded {
+                    ForEach(sessions) { s in
+                        Button { onRestore(s.id) } label: {
+                            HStack(spacing: 6) {
+                                RoundedRectangle(cornerRadius: 2).fill(s.badge.tint).frame(width: 3, height: 14).accessibilityHidden(true)
+                                Text(s.displayName).font(.caption).lineLimit(1).truncationMode(.tail)
+                                Spacer(minLength: 4)
+                                Text(SessionDormancy.idleText(since: s.lastEventAt, now: .now)).font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 9)).foregroundStyle(.secondary)
+                                    .accessibilityHidden(true)
+                            }
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Aç")
+                        .accessibilityLabel("\(s.displayName), uykuda")
+                        .accessibilityHint("Oturumu açar")
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }

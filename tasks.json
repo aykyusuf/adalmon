@@ -1,0 +1,46 @@
+{
+  "_rule": "Never delete or reword a task (id, title, done_when); new tasks may be added. Only status and evidence change. status: todo -> in_progress when work on it starts -> done only when every part of done_when is met, including any sign-off it names (passing tests alone do not close a task that also needs the user's approval) -> blocked when it cannot move, with the reason in evidence. evidence: what proves the status, e.g. the command run and its result, a file path, a date.",
+  "updated": "2026-11-09",
+  "tasks": [
+    {
+      "id": "PERM-01",
+      "title": "Izin gerektiren canli testler (ekran kaydi yeniden onayi, Esc icin Input Monitoring, Safari Otomasyon, Tarayicilar sekmesi)",
+      "priority": 1,
+      "done_when": "Her izin penceresi kullanici tarafindan onaylandi ve ilgili ozellik (Esc kapatma, Safari/Chrome sekme listesi) gercek uygulamada calisirken ekran goruntusuyle dogrulandi",
+      "status": "todo",
+      "evidence": "docs/STATUS.md handoff (2026-11-09): kullanici 'ekle' demisti, yapilmadi"
+    },
+    {
+      "id": "PANO-01",
+      "title": "Pano modunu (macOS + web) gercek tam ekranda gozle dogrula",
+      "priority": 1,
+      "done_when": "Gercek tam ekranda serit otomatik gizleme, imlec gizleme, kose saati/ozet ve uyanik tut calisiyor; web pano modu Chrome'da ekran goruntusuyle dogrulandi; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Kodlandi ve kuruldu (5b4d822); gercek tam ekran dogrulanmadi"
+    },
+    {
+      "id": "UI-01",
+      "title": "Pil uyari karti, kamera yakinlasma akiciligi ve temizlikci hizini canli dogrula",
+      "priority": 2,
+      "done_when": "Kullanici yeni pil uyari kartini, odaya yakinlasma akiciligini ve temizlikci yurume/supurme hizini canli gorup onayladi",
+      "status": "todo",
+      "evidence": "eb050fb, 0fd0c6b, 3ae9fd1 kuruldu; canli dogrulama yok"
+    },
+    {
+      "id": "WINPC-01",
+      "title": "Diger Windows PC Claude oturumlarini Adalmon'da goster",
+      "priority": 3,
+      "done_when": "Kullanici yaklasimi (type:http hook plugin + Mac'te LAN/Tailscale dinleme + makine adi alani) onayladi; Windows PC'deki bir oturum Adalmon ofisinde gorunuyor",
+      "status": "todo",
+      "evidence": "Analiz verildi, uygulanmadi; PC agi ve Claude Code surumu sorusu cevapsiz"
+    },
+    {
+      "id": "POLISH-01",
+      "title": "Kucuk iyilestirmeler: 'arac: Bash' durum metni, 10x10 kalabalikta etiket cakismasi",
+      "priority": 4,
+      "done_when": "Durum metni daha acik yaziyor ve 10x10 kalabalik sahnede etiketler okunur; ilgili testler geciyor",
+      "status": "todo",
+      "evidence": ""
+    }
+  ]
+}

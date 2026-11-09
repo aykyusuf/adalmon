@@ -61,7 +61,18 @@ final class AgentWebSnapshotBuilder {
     }
 
     /// Sıkıştırılmış tek satır JSON (SSE `data:` satırı olarak güvenli).
-    func snapshot(sessions: [AgentSession], now: Date = .now) -> Data {
+    /// Küçük (sekme) oturumlar: yalnızca kimlik, ad, model, durum ve son etkinlik zamanı (oda/koltuk yok).
+    static func minimizedJSON(_ sessions: [AgentSession]) -> [[String: Any]] {
+        sessions.map { s in
+            var item: [String: Any] = ["id": s.id, "label": s.displayName, "badge": s.badge.rawValue, "badgeLabel": s.badge.label,
+                                       "status": statusKey(s.status), "statusLabel": s.status.label, "lastEventAt": ms(s.lastEventAt),
+                                       "group": OfficeMember.stableGroup(for: s.id, fallback: 0)]
+            if let project = s.secondaryName { item["project"] = project }
+            return item
+        }
+    }
+
+    func snapshot(sessions: [AgentSession], minimized: [AgentSession] = [], now: Date = .now) -> Data {
         let members = OfficeMember.members(from: sessions)
         let plan = planner.update(members: members)
         let byID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
@@ -138,6 +149,7 @@ final class AgentWebSnapshotBuilder {
         let root: [String: Any] = [
             "v": 3, "now": Self.ms(now), "lighting": Self.lightingJSON(now: now), "sessions": rooms.count, "agents": agentCount, "rooms": rooms,
             "working": sessions.reduce(0) { $0 + $1.workingCount },
+            "minimized": Self.minimizedJSON(minimized),
         ]
         return (try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? Data(#"{"v":1,"rooms":[]}"#.utf8)
     }
