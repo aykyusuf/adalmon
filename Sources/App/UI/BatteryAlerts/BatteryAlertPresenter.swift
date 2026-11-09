@@ -107,19 +107,20 @@ final class BatteryAlertPresenter {
 }
 
 struct BatteryAlertBubbleView: View {
-    static let size = CGSize(width: 330, height: 64)
+    static let size = CGSize(width: 420, height: 88)
 
     let event: BatteryAlertEvent
     var onClose: () -> Void = {}
     @State private var shown = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// Uyarı rengi: düşük pil turuncu (≤%10 kırmızı), şarj/dolu yeşil, fişe takıldı nane, fişten çekildi mavi. Canlı ama göz yormayan tonlar.
     static func tint(for event: BatteryAlertEvent) -> Color {
         switch event.kind {
-        case .low(let t): t <= 10 ? .red : .orange
-        case .charged: .green
-        case .pluggedIn: .green
-        case .unplugged: .blue
+        case .low(let t): t <= 10 ? Color(red: 1.0, green: 0.31, blue: 0.27) : Color(red: 1.0, green: 0.62, blue: 0.10)
+        case .charged: Color(red: 0.24, green: 0.84, blue: 0.40)
+        case .pluggedIn: Color(red: 0.22, green: 0.86, blue: 0.62)
+        case .unplugged: Color(red: 0.25, green: 0.60, blue: 1.0)
         }
     }
 
@@ -134,39 +135,53 @@ struct BatteryAlertBubbleView: View {
 
     var body: some View {
         let tint = Self.tint(for: event)
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             ZStack {
-                Circle().stroke(.primary.opacity(0.12), lineWidth: 4)
+                Circle().stroke(tint.opacity(0.22), lineWidth: 5)
                 Circle()
                     .trim(from: 0, to: shown ? CGFloat(event.level) / 100 : 0)
-                    .stroke(tint, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                    .stroke(tint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                 Image(systemName: symbol)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 21, weight: .bold))
                     .foregroundStyle(tint)
             }
-            .frame(width: 40, height: 40)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(event.title).font(.system(.subheadline, weight: .semibold))
-                Text(event.message).font(.system(.callout, design: .rounded)).foregroundStyle(.secondary).monospacedDigit()
+            .frame(width: 54, height: 54)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(event.title)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.primary)
+                Text(event.message)
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .foregroundStyle(.primary.opacity(0.82))   // gri değil: koyu zeminde net okunur
+                    .monospacedDigit()
             }
             .lineLimit(1)
+            .minimumScaleFactor(0.85)
             Spacer(minLength: 4)
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22, height: 22)
-                    .background(.quaternary, in: .circle)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.primary.opacity(0.78))
+                    .frame(width: 32, height: 32)
+                    .background(.primary.opacity(0.14), in: .circle)
             }
             .buttonStyle(.plain)
+            .help("Kapat")
             .accessibilityLabel("Kapat")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 18)
         .frame(width: Self.size.width, height: Self.size.height)
-        .background(.regularMaterial, in: .capsule)
-        .overlay(Capsule().strokeBorder(.primary.opacity(0.12), lineWidth: 0.6))
-        .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
+        .background {
+            ZStack {
+                Capsule().fill(.regularMaterial)
+                // Uyarı rengiyle soldan sağa solan hafif ton: kartı ayırt edilir kılar, yazıyı boğmaz.
+                Capsule().fill(LinearGradient(colors: [tint.opacity(0.26), tint.opacity(0.08)], startPoint: .leading, endPoint: .trailing))
+            }
+        }
+        .overlay(Capsule().strokeBorder(tint.opacity(0.45), lineWidth: 1))
+        .shadow(color: tint.opacity(0.25), radius: 14, y: 4)
+        .shadow(color: .black.opacity(0.28), radius: 10, y: 3)
         .scaleEffect(shown || reduceMotion ? 1 : 0.92)
         .opacity(shown ? 1 : 0)
         .onAppear { withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.5, bounce: 0.25)) { shown = true } }
