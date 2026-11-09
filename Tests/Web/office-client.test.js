@@ -192,7 +192,7 @@ function makeLayout(o = {}) {
   const gen = {};
   for (const n of ['imac_silver', 'imac_blue', 'macbook_gray']) { gen[n + '_off'] = png(64, 128); for (let k = 1; k <= 3; k++) gen[n + '_on' + k] = png(64, 128); }
   Object.assign(gen, { lamp: png(32, 40), vglow_bulb: png(64, 64), vglow_pool: png(40, 24), vglow_screen: png(24, 16), vglow_moon: png(24, 40), mop: png(28, 64),
-                       box: png(40, 28), zzz: png(36, 32), bubble_alert: png(44, 48), bubble_think: png(44, 40), cup: png(24, 20) });
+                       box: png(40, 28), robot: png(60, 36), robot_brush: png(24, 24), zzz: png(36, 32), bubble_alert: png(44, 48), bubble_think: png(44, 40), cup: png(24, 20) });
   const furniture = { DESK_FRONT: png(192, 128), PLANT: png(64, 128), WHITEBOARD: png(128, 128) };
   if (o.badFurniture) furniture.PLANT = 'not-a-data-uri';
   const bg = (w, h) => ({ image: png(w * 4, h * 4), w: w * 4, h: h * 4, windows: [[24, 0, 14, 20], [100, 0, 14, 20]] });
@@ -202,6 +202,7 @@ function makeLayout(o = {}) {
   return {
     v: 3, tileSize: 16, theme: o.theme || 'vector',
     v3: {
+      cleaner: { robot: { body: 'robot', brush: 'robot_brush', pxPerSecond: 46 } },
       lighting: { nightStartHour: 19, nightStartMinute: 30, nightEndHour: 6, nightEndMinute: 30 },
       vector: {
         theme: 'vector', scale: 4, generated: gen, furniture, rack: { w: 16, h: 32, ledCount: 4, dotX: 8.6, dotY: 5.8, dotDy: 6, dotW: 5, dotH: 4, dots: { off: png(20, 16), green: png(20, 16), orange: png(20, 16) } }, door: png(64, 128), boardWrite: [png(88, 36), png(88, 36), png(88, 36)], boardWriteOrigin: [5, 12],
@@ -434,6 +435,8 @@ test('temizlikçi: aralık dolunca S rotasında yürür, paspas çizilir, sekme 
   e.doc.hidden = false;
   api.scheduleActors(e.clock.t);
   assert.ok(r.cleaner.entity && r.cleaner.entity.path.length > 5, 'rota var');
+  assert.strictEqual(r.cleaner.entity.robot, true, 'vektör görünümde temizlik robot süpürgeyle');
+  assert.strictEqual(r.cleaner.entity.speed, 46, 'robot kendi hızında süzülür');
   e.ctx.__ops.length = 0;
   api.advance(0.3);
   api.draw(e.clock.t);

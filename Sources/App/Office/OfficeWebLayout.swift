@@ -116,7 +116,7 @@ enum OfficeWebLayout {
                      "wanderChance": OfficeIdle.wanderChance, "wanderGapMin": OfficeIdle.wanderGap.lowerBound, "wanderGapMax": OfficeIdle.wanderGap.upperBound,
                      "wanderStayMin": OfficeIdle.wanderStay.lowerBound, "wanderStayMax": OfficeIdle.wanderStay.upperBound],
             "cleaner": ["intervalMin": OfficeCleaner.interval.lowerBound, "intervalMax": OfficeCleaner.interval.upperBound, "route": "S", "character": 1,
-                        "tint": [0.15, 0.45, 0.98], "tintBlend": 0.6, "prop": "mop", "trailArt": "glow_trail", "trailFade": 3.2, "stepSeconds": OfficeRoomNode.stepDuration],
+                        "tint": [0.15, 0.45, 0.98], "tintBlend": 0.6, "prop": "mop", "robot": ["body": "robot", "brush": "robot_brush", "pxPerSecond": 46], "trailArt": "glow_trail", "trailFade": 3.2, "stepSeconds": OfficeRoomNode.stepDuration],
             "carrier": ["steps": OfficeCarrier.sequence(withCarrier: true).map(\.rawValue), "dropSeconds": OfficeCarrier.dropDuration, "growFade": OfficeCarrier.growFade,
                         "character": 1, "tint": [0.9, 0.55, 0.15], "tintBlend": 0.5, "prop": "box"],
             "generated": generated,

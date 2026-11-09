@@ -209,6 +209,8 @@ final class OfficeRoomNode {
     /// Temizlikçi / taşıyıcı durumu (oda başına bir kerede bir).
     private(set) var cleanerDueAt: Date?
     private var cleaning = false
+    /// Son temizlik robot süpürgeyle mi yapıldı (vektör tema); testler ve ölçüm için.
+    private(set) var cleanerIsRobot = false
     private var carrying = false
     private var cleanerRuns = 0
     private var pendingSpawns: [String: (member: OfficeMember, seat: OfficeSeat)] = [:]
@@ -1657,8 +1659,13 @@ final class OfficeRoomNode {
         cleanerDueAt = now.addingTimeInterval(OfficeCleaner.delay(seed: id, n: cleanerRuns))
         guard route.count > 3, !cleaning else { return false }
         cleaning = true
-        let a = makeProp(label: "temizlikçi", tint: OfficeRGB(r: 0.15, g: 0.45, b: 0.98), blend: 0.6, prop: .cleaner)
-        if let t = assets.artTexture("mop", theme: theme) {
+        // Vektör temada temizlik robot süpürgeyle yapılır (yürüyen karakter yok); piksel tema (yedek) eski temizlikçiyi korur.
+        let robot = theme == .vector && assets.artTexture("robot", theme: theme) != nil
+        cleanerIsRobot = robot
+        let a = makeProp(label: robot ? "robot süpürge" : "temizlikçi", tint: OfficeRGB(r: 0.15, g: 0.45, b: 0.98), blend: 0.6, prop: .cleaner)
+        if robot {
+            attachRobot(to: a)
+        } else if let t = assets.artTexture("mop", theme: theme) {
             let mop = SKSpriteNode(texture: t, size: theme == .vector ? (OfficeVectorArt.artSize("mop") ?? t.size()) : t.size())
             mop.anchorPoint = CGPoint(x: 0.5, y: 0)
             mop.position = CGPoint(x: theme == .vector ? 7 : 8, y: 1)
@@ -1668,19 +1675,66 @@ final class OfficeRoomNode {
         }
         var steps = [spots.door] + route
         steps.append(spots.door)
-        // Temizlikçi yavaş yürür ve aralarda durup süpürür (paspas sallanmaya devam eder).
+        // Temizlikçi yavaş yürür ve aralarda durup süpürür (paspas sallanmaya devam eder). Robot kesintisiz süzülür.
         let count = steps.count
-        run(route: steps, for: a, stepDuration: OfficeCleaner.stepDuration,
-            pauseAfter: { OfficeCleaner.sweepPause(afterStep: $0, routeCount: count) },
-            onStep: { [weak self] tile in self?.addTrail(at: tile) }) { [weak self] in
+        run(route: steps, for: a, stepDuration: robot ? OfficeCleaner.robotStepDuration : OfficeCleaner.stepDuration,
+            pauseAfter: robot ? nil : { OfficeCleaner.sweepPause(afterStep: $0, routeCount: count) },
+            onStep: { [weak self] tile in self?.addTrail(at: tile, soft: robot) }) { [weak self] in
             self?.dismissProp(a) { self?.cleaning = false }
         }
         notify()
         return true
     }
 
+    /// Robot süpürge: karakter gövdesi gizlenir; yerine yuvarlak gövde, ezilip dönen yan fırça ve nefes alan LED gelir.
+    private func attachRobot(to a: OfficeActor) {
+        a.body.isHidden = true
+        guard let tex = assets.artTexture("robot", theme: theme) else { return }
+        let holder = SKNode()
+        holder.zPosition = 11
+        holder.setScale(1.35)                       // gerçek robot küçük ama sahnede seçilebilsin
+        let size = OfficeVectorArt.artSize("robot") ?? tex.size()
+        let body = SKSpriteNode(texture: tex, size: size)
+        body.anchorPoint = CGPoint(x: 0.5, y: 0.1)
+        // Hafif titreşim: süpürürken motor gibi.
+        body.run(.repeatForever(.sequence([.moveBy(x: 0, y: 0.35, duration: 0.09), .moveBy(x: 0, y: -0.35, duration: 0.09)])))
+        holder.addChild(body)
+        if let bt = assets.artTexture("robot_brush", theme: theme) {
+            let wrap = SKNode()
+            wrap.yScale = 0.5                       // üstten eğik bakış: dönen fırça yassı görünür
+            wrap.position = CGPoint(x: 5.2, y: 2.0)
+            wrap.zPosition = 1
+            let brush = SKSpriteNode(texture: bt, size: OfficeVectorArt.artSize("robot_brush") ?? bt.size())
+            brush.run(.repeatForever(.rotate(byAngle: -.pi * 2, duration: 0.38)))
+            wrap.addChild(brush)
+            holder.addChild(wrap)
+        }
+        // LED: gövdedeki yeşil noktanın üstünde nefes alan yumuşak parıltı (sert kare yok).
+        if let gt = assets.artTexture("vglow_screen", theme: theme) {
+            let led = SKSpriteNode(texture: gt, color: SKColor(red: 0.26, green: 0.88, blue: 0.54, alpha: 1), size: CGSize(width: 4.2, height: 2.6))
+            led.colorBlendFactor = 1
+            led.position = CGPoint(x: 3.5, y: 3.6)
+            led.zPosition = 2
+            led.blendMode = .add
+            led.run(.repeatForever(.sequence([.fadeAlpha(to: 0.2, duration: 0.6), .fadeAlpha(to: 1, duration: 0.6)])))
+            holder.addChild(led)
+        }
+        a.root.addChild(holder)
+    }
+
     /// Yürünen karoda kısa süre parlayan açık şerit.
-    private func addTrail(at t: OfficeTile) {
+    private func addTrail(at t: OfficeTile, soft: Bool = false) {
+        if soft, let tex = assets.artTexture("vglow_screen", theme: theme) {
+            // Robot süpürge: sert beyaz kare yerine yumuşak, soluk mavi bir temizlik izi.
+            let g = SKSpriteNode(texture: tex, size: CGSize(width: 20, height: 9))
+            g.alpha = 0.34
+            g.blendMode = .add
+            g.position = CGPoint(x: point(t).x, y: point(t).y + 2)
+            g.zPosition = 0.5
+            content.addChild(g)
+            g.run(.sequence([.fadeOut(withDuration: 2.4), .removeFromParent()]))
+            return
+        }
         let n = SKSpriteNode(color: SKColor(red: 0.8, green: 0.97, blue: 1, alpha: 1), size: CGSize(width: 14, height: 7))
         n.alpha = 0.5
         n.blendMode = .add

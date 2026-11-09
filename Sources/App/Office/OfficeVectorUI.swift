@@ -82,7 +82,7 @@ enum OfficeVectorUI {
 
     // MARK: Karakter yardımcı dokuları
 
-    static let overlayNames = ["zzz", "mop", "cup", "box", "bubble_alert", "bubble_think"]
+    static let overlayNames = ["zzz", "mop", "cup", "box", "bubble_alert", "bubble_think", "robot", "robot_brush"]
 
     static func overlaySize(_ name: String) -> CGSize? {
         switch name {
@@ -90,6 +90,8 @@ enum OfficeVectorUI {
         case "mop": CGSize(width: 7, height: 16)
         case "cup": CGSize(width: 6, height: 5)
         case "box": CGSize(width: 10, height: 7)
+        case "robot": CGSize(width: 15, height: 9)
+        case "robot_brush": CGSize(width: 6, height: 6)
         case "bubble_alert": CGSize(width: 11, height: 12)
         case "bubble_think": CGSize(width: 11, height: 10)
         default: nil
@@ -112,6 +114,25 @@ enum OfficeVectorUI {
                 c.vRR(2.4, 10.8, 2.2, 1.0, 0.4, fill: 0x9AA3B0, stroke: 0x5E6573, line: 0.25)
                 c.vPath(CGPath(roundedRect: CGRect(x: 0.6, y: 11.6, width: 5.8, height: 3.8), cornerWidth: 1.4, cornerHeight: 1.4, transform: nil), fill: 0xD9E4F4, stroke: 0x8DA2C4, line: 0.35)
                 for i in 0..<4 { c.vLine(1.5 + CGFloat(i) * 1.3, 12.8, 1.5 + CGFloat(i) * 1.3, 15.0, 0xFFFFFF, width: 0.45) }
+            case "robot":
+                // Robot süpürge (3/4 üstten görünüm): gölge, yan duvar, üst gövde, mavi halka, koyu plaka, lidar kulesi, düğme + LED.
+                c.vShadow(7.5, 1.5, 7.0, 1.3, 0.32)
+                c.vOval(0.8, 1.3, 13.4, 5.4, fill: 0xAEB6C4, stroke: 0x727B8B, line: 0.3)
+                c.vOval(0.8, 2.5, 13.4, 5.8, fill: 0xF1F4F8, stroke: 0x8D97A8, line: 0.3)
+                c.vOval(1.7, 3.2, 11.6, 4.4, stroke: 0x3C8DFF, line: 0.35)
+                c.vOval(2.6, 3.7, 9.8, 3.4, fill: 0x2E3447)
+                c.vOval(5.6, 4.6, 3.8, 2.2, fill: 0x20242F, stroke: 0x5A6378, line: 0.25)
+                c.vOval(6.4, 5.7, 1.5, 0.6, fill: 0x6C7690)
+                c.vOval(3.5, 4.5, 1.3, 0.8, fill: 0xD7DDE8)
+                c.vOval(10.2, 4.6, 1.1, 0.8, fill: 0x42E08A)
+            case "robot_brush":
+                // Yan fırça: üç kıl demeti (düğüm yatayda ezilip döndürülür).
+                for k in 0..<3 {
+                    let a = CGFloat(k) * 2 * .pi / 3 + .pi / 2
+                    c.vLine(3, 3, 3 + cos(a) * 2.4, 3 + sin(a) * 2.4, 0x39404F, width: 0.7)
+                    c.vOval(3 + cos(a) * 2.4 - 0.45, 3 + sin(a) * 2.4 - 0.45, 0.9, 0.9, fill: 0x3C8DFF)
+                }
+                c.vOval(2.2, 2.2, 1.6, 1.6, fill: 0x39404F)
             case "cup":
                 c.vShadow(2.6, 4.6, 2.6, 0.5, 0.2)
                 c.vRR(0.6, 0.8, 3.6, 3.6, 1.0, fill: 0xFAFAFA, stroke: 0x9A9AA6, line: 0.3)

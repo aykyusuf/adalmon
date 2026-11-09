@@ -131,6 +131,8 @@ enum OfficeCleaner {
 
     /// Temizlikçinin karo başına süresi (diğer karakterlerin yürüyüşünden ~2,2x yavaş: 0,25 sn).
     static let stepDuration: TimeInterval = 0.55
+    /// Robot süpürgenin karo başına süresi: yürüyen temizlikçiden daha sakin ama kesintisiz süzülür (mola yok).
+    static let robotStepDuration: TimeInterval = 0.34
     /// Süpürme molasının süresi ve sıklığı (her `sweepEvery` karoda bir).
     static let sweepSeconds: TimeInterval = 2.4
     static let sweepEvery = 6

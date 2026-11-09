@@ -687,7 +687,11 @@
     }
     tiles.push(ent, door);
     const start = pt(door);
-    cl.entity = { x: start.x, y: start.y, dir: 'left', path: walkVia(td, tiles), walkT: 0, alpha: 1, kind: 'cleaner', look: 1, shirt: '#2673FA', acc: 'apron' };
+    const rb = layout.v3 && layout.v3.cleaner && layout.v3.cleaner.robot;
+    // Vektör görünümde temizlik robot süpürgeyle yapılır (görsel hazırsa); yoksa eski temizlikçi.
+    const robot = !!(rb && assets.gen && assets.gen[rb.body]);
+    cl.entity = { x: start.x, y: start.y, dir: 'left', path: walkVia(td, tiles), walkT: 0, alpha: 1, kind: 'cleaner', look: 1, shirt: '#2673FA', acc: 'apron',
+                  robot, speed: robot ? rb.pxPerSecond : undefined };
     cl.entity.path.push({ x: start.x, y: start.y, last: true });
   }
 
@@ -711,7 +715,7 @@
 
   function stepEntity(e, dt) {
     if (e.pause > 0) { e.pause -= dt; return e.pause <= 0 ? 'resume' : null; }
-    let step = 64 * dt, ev = null;
+    let step = (e.speed || 64) * dt, ev = null;
     while (step > 0 && e.path.length) {
       const p = e.path[0], dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy);
       if (d <= step) {
@@ -725,13 +729,34 @@
     return ev;
   }
 
+  // Robot süpürge: gövde + ezilip dönen yan fırça + nefes alan LED (macOS sahnesiyle aynı çizim).
+  function drawRobot(e, ox, oy, night) {
+    const rb = layout.v3.cleaner.robot, body = assets.gen[rb.body], brush = assets.gen[rb.brush];
+    const sc = assets.scale, bw = body.width / sc, bh = body.height / sc;
+    const x = e.x - ox, y = e.y - oy + Math.sin(e.walkT * 35) * 0.2, k = 1.35;
+    ctx.save();
+    if (night) ctx.globalAlpha *= 0.82;
+    ctx.drawImage(body, x - (bw * k) / 2, y - bh * k * 0.9, bw * k, bh * k);
+    if (brush) {
+      const w = brush.width / sc, h = brush.height / sc;
+      ctx.save(); ctx.translate(x + 5.2 * k, y - 2.0 * k); ctx.scale(k, 0.5 * k); ctx.rotate(-e.walkT * (Math.PI * 2 / 0.38));
+      ctx.drawImage(brush, -w / 2, -h / 2, w, h);
+      ctx.restore();
+    }
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha *= 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(e.walkT * (Math.PI / 0.6)));
+    ctx.fillStyle = '#42e08a';
+    ctx.fillRect(x + 2.8 * k, y - 3.8 * k, 1.3 * k, 0.9 * k);
+    ctx.restore();
+  }
+
   function stepRoomExtras(room, dt) {
     const cl = room.cleaner;
     if (cl.entity) {
       const tile = tileOf(cl.entity.x, cl.entity.y);
       const ev = stepEntity(cl.entity, dt);
       const last = room.trail[room.trail.length - 1];
-      if (!last || last.c !== tile[0] + ',' + tile[1]) room.trail.push({ c: tile[0] + ',' + tile[1], x: tile[0] * T, y: tile[1] * T + 8, t: 3.2 });
+      if (!last || last.c !== tile[0] + ',' + tile[1]) room.trail.push({ c: tile[0] + ',' + tile[1], x: tile[0] * T, y: tile[1] * T + 8, t: 3.2, soft: !!cl.entity.robot });
       if (ev === 'done') { cl.entity = null; cl.next = nowMs() + cl.lo + cl.rnd() * (cl.hi - cl.lo); }
     }
     for (const tr of room.trail) tr.t -= dt;
@@ -978,6 +1003,7 @@
       const moving_ = e.path.length > 0 && !(e.pause > 0);
       const wc = layout.v3.vector.characters.walkCycle, F = layout.v3.vector.characters.frames;
       const frame = e.kind === 'carrier' ? F.carry[Math.floor(e.walkT / 0.125) % 3] : wc[Math.floor(e.walkT / 0.125) % wc.length];
+      if (e.robot) { drawRobot(e, ox, oy, night); return; }
       drawSprite(e.look, e.shirt, e.dir, moving_ ? frame : F.stand, e.acc, e.x - ox, e.y - oy, 1, room.alpha, night);
       if (e.kind === 'cleaner' && assets.gen.mop) {
         const mop = assets.gen.mop, mw = mop.width / sc, mh = mop.height / sc;
@@ -1008,7 +1034,11 @@
     // iz (temizlikçi): kısa süre parlayan açık şerit
     if (room.trail.length) {
       ctx.save(); ctx.globalCompositeOperation = 'lighter';
-      for (const tr of room.trail) { ctx.globalAlpha = room.alpha * clamp(tr.t / 3.2, 0, 1) * 0.28; ctx.fillStyle = '#ffffff'; ctx.fillRect(tr.x - ox + 1, tr.y - oy, 14, 7); }
+      for (const tr of room.trail) {
+        ctx.globalAlpha = room.alpha * clamp(tr.t / 3.2, 0, 1) * (tr.soft ? 0.3 : 0.28);
+        if (tr.soft) { ctx.fillStyle = '#9ccbff'; ctx.beginPath(); ctx.ellipse(tr.x - ox + 8, tr.y - oy + 3.5, 10, 4.5, 0, 0, Math.PI * 2); ctx.fill(); }
+        else { ctx.fillStyle = '#ffffff'; ctx.fillRect(tr.x - ox + 1, tr.y - oy, 14, 7); }
+      }
       ctx.restore();
     }
 
