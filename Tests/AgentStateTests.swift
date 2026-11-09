@@ -660,3 +660,114 @@ extension AgentStateTests {
         XCTAssertEqual(mine?.project, "proje-xyz", "çalışma klasöründen proje adı")
     }
 }
+
+// MARK: Tarama uzlaştırması: durdurulmuş süreç, gerçek boşta süresi, takılı "çalışıyor", periyodik döngü
+
+extension AgentStateTests {
+    func testDiscoveryIgnoresStoppedProcessesAndReadsTranscriptName() {
+        let found = ClaudeProcessDiscovery.filter([
+            .init(pid: 1, argv: ["claude"], cwd: "/a/etkin", stopped: false, lastActivity: t0),
+            .init(pid: 2, argv: ["claude"], cwd: "/a/ctrl-z", stopped: true, lastActivity: t0),
+        ])
+        XCTAssertEqual(found.map(\.pid), [1], "Ctrl+Z ile durdurulmuş süreç oturum sayılmaz")
+        XCTAssertEqual(found.first?.lastActivity, t0)
+        XCTAssertEqual(ClaudeProcessDiscovery.transcriptDirectoryName(forCWD: "/Users/x/Documents/websites/Adaltek/adaltek.com"), "-Users-x-Documents-websites-Adaltek-adaltek-com")
+        XCTAssertEqual(ClaudeProcessDiscovery.transcriptDirectoryName(forCWD: "/Users/x/adaltek-social/adaltek_social"), "-Users-x-adaltek-social-adaltek-social")
+    }
+
+    func testTranscriptActivityComesFromTheNewestJSONL() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "proj-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appending(path: ClaudeProcessDiscovery.transcriptDirectoryName(forCWD: "/tmp/benim_proje"), directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let old = dir.appending(path: "a.jsonl"), new = dir.appending(path: "b.jsonl"), other = dir.appending(path: "notlar.txt")
+        for f in [old, new, other] { try Data("x".utf8).write(to: f) }
+        try FileManager.default.setAttributes([.modificationDate: t0.addingTimeInterval(-3600)], ofItemAtPath: old.path)
+        try FileManager.default.setAttributes([.modificationDate: t0], ofItemAtPath: new.path)
+        try FileManager.default.setAttributes([.modificationDate: t0.addingTimeInterval(500)], ofItemAtPath: other.path)   // jsonl değil: sayılmaz
+        XCTAssertEqual(ClaudeProcessDiscovery.lastTranscriptActivity(cwd: "/tmp/benim_proje", projectsRoot: root), t0)
+        XCTAssertNil(ClaudeProcessDiscovery.lastTranscriptActivity(cwd: "/tmp/yok", projectsRoot: root))
+        XCTAssertNil(ClaudeProcessDiscovery.lastTranscriptActivity(cwd: "", projectsRoot: root))
+    }
+
+    func testPlaceholderUsesRealIdlenessSoOldIdleSessionsMinimizeAtOnce() {
+        var state = AgentState()
+        let now = t0.addingTimeInterval(7200)
+        state.discoverSessions([.init(pid: 1, project: "eski", lastActivity: t0), .init(pid: 2, project: "taze", lastActivity: now.addingTimeInterval(-60))], now: now)
+        XCTAssertEqual(state.sessions["discovered-1"]?.lastEventAt, t0, "boşta süresi keşif anından değil gerçek son etkinlikten")
+        let (open, minimized) = SessionDormancy.partition(state.orderedSessions, overrides: [:], now: now)
+        XCTAssertEqual(minimized.map(\.id), ["discovered-1"], "2 saattir sessiz oturum açılışta uykuda")
+        XCTAssertEqual(open.map(\.id), ["discovered-2"])
+    }
+
+    func testRescanRemovesGoneOrStoppedPlaceholdersAndAdvancesActivity() {
+        var state = AgentState()
+        state.discoverSessions([.init(pid: 1, project: "a", lastActivity: t0), .init(pid: 2, project: "b", lastActivity: t0)], now: t0.addingTimeInterval(10))
+        // Sonraki tarama: pid 2 kapandı/durduruldu; pid 1'in transkripti ilerledi.
+        XCTAssertTrue(state.discoverSessions([.init(pid: 1, project: "a", lastActivity: t0.addingTimeInterval(500))], now: t0.addingTimeInterval(600)))
+        XCTAssertNil(state.sessions["discovered-2"])
+        XCTAssertEqual(state.sessions["discovered-1"]?.lastEventAt, t0.addingTimeInterval(500))
+        XCTAssertFalse(state.discoverSessions([.init(pid: 1, project: "a", lastActivity: t0.addingTimeInterval(500))], now: t0.addingTimeInterval(700)), "değişiklik yoksa false")
+    }
+
+    func testStuckWorkingSessionBecomesIdleButBusyOnesAreLeftAlone() {
+        var state = AgentState()
+        state.apply(ev(.sessionStart, session: "s", pid: 7).0, now: t0)
+        state.apply(ev(.preToolUse, session: "s", at: 1, tool: "Bash", pid: 7).0, now: t0.addingTimeInterval(1))
+        XCTAssertEqual(state.sessions["s"]?.status, .tool("Bash"))
+        // 10 dk sessizlik: henüz takılı sayılmaz.
+        XCTAssertFalse(state.discoverSessions([.init(pid: 7, project: "p", lastActivity: t0)], now: t0.addingTimeInterval(600)))
+        XCTAssertEqual(state.sessions["s"]?.status, .tool("Bash"))
+        // 25 dk olay ve transkript yok: kapanış olayı kaçırılmış → boşta.
+        XCTAssertTrue(state.discoverSessions([.init(pid: 7, project: "p", lastActivity: t0)], now: t0.addingTimeInterval(1500)))
+        XCTAssertEqual(state.sessions["s"]?.status, .idle)
+        // Transkript taze ise (iş sürüyor) takılı sayılmaz.
+        var busy = AgentState()
+        busy.apply(ev(.sessionStart, session: "b", pid: 8).0, now: t0)
+        busy.apply(ev(.userPromptSubmit, session: "b", at: 1, pid: 8).0, now: t0.addingTimeInterval(1))
+        XCTAssertFalse(busy.discoverSessions([.init(pid: 8, project: "p", lastActivity: t0.addingTimeInterval(1490))], now: t0.addingTimeInterval(1500)))
+        XCTAssertEqual(busy.sessions["b"]?.status, .thinking)
+        // Çalışan alt ajanı olan oturum takılı sayılmaz (arka plan ajanı sürüyor olabilir).
+        var withSub = AgentState()
+        for (e, d) in [ev(.sessionStart, session: "c", pid: 9), ev(.userPromptSubmit, session: "c", at: 1, pid: 9),
+                       ev(.subagentStart, session: "c", at: 2, agentID: "a", agentType: "Explore", pid: 9)] { withSub.apply(e, now: d) }
+        XCTAssertEqual(withSub.sessions["c"]?.status, .thinking)
+        XCTAssertFalse(withSub.discoverSessions([.init(pid: 9, project: "p", lastActivity: t0)], now: t0.addingTimeInterval(1500)))
+        XCTAssertEqual(withSub.sessions["c"]?.status, .thinking, "çalışan alt ajanı olan oturum boşta işaretlenmez")
+    }
+
+    func testIdleRealSessionIsNotMinimizedWhileItsTranscriptIsStillMoving() {
+        var state = AgentState()
+        state.apply(ev(.sessionStart, session: "r", pid: 5).0, now: t0)
+        state.apply(ev(.stop, session: "r", at: 1, pid: 5).0, now: t0.addingTimeInterval(1))
+        let now = t0.addingTimeInterval(3600)
+        // Olaylar 1 saattir yok (kaçırıldı) ama transkript 1 dk önce değişti: oturum etkin, küçültülmemeli.
+        state.discoverSessions([.init(pid: 5, project: "p", lastActivity: now.addingTimeInterval(-60))], now: now)
+        XCTAssertEqual(SessionDormancy.partition(state.orderedSessions, overrides: [:], now: now).minimized.count, 0)
+    }
+
+    @MainActor
+    func testPeriodicRescanLoopKeepsReconcilingAndStopsOnReset() async throws {
+        let monitor = AgentMonitorModel()
+        let calls = LockedCounter()
+        monitor.startDiscoveryLoop(interval: { 0.05 }, scan: {
+            let n = calls.increment()
+            return n == 1 ? [.init(pid: 55, project: "ilk")] : []          // ikinci taramada süreç artık yok
+        })
+        for _ in 0..<60 where calls.value < 2 { try await Task.sleep(for: .milliseconds(50)) }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertGreaterThanOrEqual(calls.value, 2, "döngü tekrar tarar")
+        XCTAssertNil(monitor.state.sessions["discovered-55"], "kapanan sürecin bekleyen oturumu kalkar")
+        monitor.reset()
+        let after = calls.value
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertLessThanOrEqual(calls.value, after + 1, "reset döngüyü durdurur")
+    }
+}
+
+final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    var value: Int { lock.withLock { n } }
+    @discardableResult func increment() -> Int { lock.withLock { n += 1; return n } }
+}

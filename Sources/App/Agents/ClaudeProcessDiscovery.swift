@@ -9,22 +9,27 @@ enum ClaudeProcessDiscovery {
         var pid: Int32
         var argv: [String]
         var cwd: String
+        /// Süreç durdurulmuş (Ctrl+Z / SIGSTOP): terminalde arka plana atılmış, çalışmıyor.
+        var stopped = false
+        /// Projenin en son transkript değişimi (≈ oturumun son etkinliği).
+        var lastActivity: Date?
     }
 
     struct Found: Equatable, Sendable {
         var pid: Int32
         var project: String
+        var lastActivity: Date?
     }
 
     /// Saf ayıklama: etkileşimli Claude CLI oturumları. Başsız (`-p`/`--print`) çalıştırmalar, MCP/native-host yardımcıları elenir.
     static func filter(_ candidates: [Candidate]) -> [Found] {
         var out: [Found] = []
         for c in candidates {
-            guard let first = c.argv.first, (first as NSString).lastPathComponent == "claude" else { continue }
+            guard !c.stopped, let first = c.argv.first, (first as NSString).lastPathComponent == "claude" else { continue }
             let rest = c.argv.dropFirst()
             if rest.contains(where: { $0 == "-p" || $0 == "--print" || $0 == "mcp" || $0.contains("native-host") || $0 == "--mcp" }) { continue }
             let name = (c.cwd as NSString).lastPathComponent
-            out.append(Found(pid: c.pid, project: name.isEmpty || name == "/" ? "?" : name))
+            out.append(Found(pid: c.pid, project: name.isEmpty || name == "/" ? "?" : name, lastActivity: c.lastActivity))
         }
         return out.sorted { $0.pid < $1.pid }
     }
@@ -35,9 +40,33 @@ enum ClaudeProcessDiscovery {
         let me = getpid()
         for pid in CoalitionAPI.listPIDs() where pid != me {
             guard let argv = arguments(of: pid), let first = argv.first, (first as NSString).lastPathComponent == "claude" else { continue }
-            candidates.append(Candidate(pid: pid, argv: argv, cwd: workingDirectory(of: pid) ?? ""))
+            let cwd = workingDirectory(of: pid) ?? ""
+            candidates.append(Candidate(pid: pid, argv: argv, cwd: cwd, stopped: isStopped(pid), lastActivity: lastTranscriptActivity(cwd: cwd)))
         }
         return filter(candidates)
+    }
+
+    /// Claude Code'un transkript klasör adı: çalışma yolunda harf/rakam dışındaki her karakter "-" olur
+    /// (`/Users/x/adaltek-social/adaltek_social` → `-Users-x-adaltek-social-adaltek-social`).
+    static func transcriptDirectoryName(forCWD cwd: String) -> String {
+        String(String.UnicodeScalarView(cwd.unicodeScalars.map { ($0.isASCII && (CharacterSet.alphanumerics.contains($0))) ? $0 : "-" }))
+    }
+
+    /// Projenin en yeni `*.jsonl` transkriptinin değişim zamanı (oturum son ne zaman çalıştı); yoksa nil.
+    static func lastTranscriptActivity(cwd: String, projectsRoot: URL = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)) -> Date? {
+        guard !cwd.isEmpty else { return nil }
+        let dir = projectsRoot.appending(path: transcriptDirectoryName(forCWD: cwd), directoryHint: .isDirectory)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return nil }
+        return files.filter { $0.pathExtension == "jsonl" }
+            .compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }.max()
+    }
+
+    /// Süreç durmuş mu (`SSTOP`)?
+    static func isStopped(_ pid: Int32) -> Bool {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return false }
+        return info.pbi_status == 4   // SSTOP
     }
 
     /// `KERN_PROCARGS2`: argc, yürütülebilir yol, dolgu, sonra argv dizileri.

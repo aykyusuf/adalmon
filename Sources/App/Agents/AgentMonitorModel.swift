@@ -151,6 +151,27 @@ final class AgentMonitorModel {
     }
 
     @ObservationIgnored private var lastDiscovery: Date?
+    @ObservationIgnored private var discoveryLoop: Task<Void, Never>?
+
+    /// Çalışan Claude süreçlerini arada bir yeniden tarar: kaçırılan oturumlar eklenir, kapanan/durdurulanlar kalkar, boşta süresi
+    /// güncellenir. Arayüz açıkken (gözlemci varken) 30 sn'de bir, değilse 3 dk'da bir; tek tolerance'lı uyku, boşta CPU yok.
+    func startDiscoveryLoop(interval: (@MainActor @Sendable () -> TimeInterval)? = nil,
+                            scan: @escaping @Sendable () -> [ClaudeProcessDiscovery.Found] = { ClaudeProcessDiscovery.scan() }) {
+        guard discoveryLoop == nil else { return }
+        discoveryLoop = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.discoverRunningSessions(force: true, scan: scan)
+                let wait = interval?() ?? (self.shellObservers > 0 ? 30 : 180)
+                try? await Task.sleep(for: .seconds(wait), tolerance: .seconds(wait * 0.3))
+            }
+        }
+    }
+
+    func stopDiscoveryLoop() {
+        discoveryLoop?.cancel()
+        discoveryLoop = nil
+    }
 
     /// Çalışan Claude CLI süreçlerinden "bekleyen oturum" üretir (Adalmon sonradan açıldıysa ya da oturum boşta olay üretmiyorsa).
     /// En çok 10 sn'de bir; tarama arka planda yapılır. `scan` testte sahtesiyle değiştirilir.
@@ -263,6 +284,7 @@ final class AgentMonitorModel {
         livenessTask = nil
         shellTask?.cancel()
         shellTask = nil
+        stopDiscoveryLoop()
         dormancyTask?.cancel()
         dormancyTask = nil
         dormancyDue = nil

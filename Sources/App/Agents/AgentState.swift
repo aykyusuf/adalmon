@@ -117,6 +117,9 @@ struct AgentState: Equatable, Sendable {
     /// Alt ajan bu süre hiçbir olay göndermediyse (kapanış olayı kaçırılmış olabilir) listeden düşer. Arka plan ajanları uzun
     /// düşünebilir; bu yüzden uzun tutulur.
     static let subagentStaleAfter: TimeInterval = 45 * 60
+    /// Çalışıyor görünen ama olay da transkript değişimi de bu süre gelmeyen oturum takılı sayılıp boşta işaretlenir (kapanış olayı
+    /// kaçırılmış olabilir). Uzun süren tek bir araç da bu kadar sessiz kalabilir; sonraki olay durumu yine düzeltir.
+    static let stuckWorkingAfter: TimeInterval = 20 * 60
     /// Oturum başına hatırlanan bitmiş alt ajan sayısı (geç gelen olay bitmiş ajanı hortlatmasın).
     static let retiredLimit = 64
 
@@ -214,16 +217,47 @@ struct AgentState: Equatable, Sendable {
         return true
     }
 
-    /// Taramayla bulunan bekleyen oturumlar: pid'i bilinen hiçbir oturumda olmayan Claude süreci için yer tutucu oluşturur.
-    /// Gerçek bir oturumla aynı pid'i taşıyanlar atlanır. Yeni oturum eklendiyse true.
+    /// Taramayla bulunan bekleyen oturumları uzlaştırır:
+    /// - pid'i bilinen hiçbir gerçek oturumda olmayan Claude süreci için yer tutucu oluşturur (son etkinlik transkriptten);
+    /// - artık bulunmayan (kapanmış ya da durdurulmuş) sürecin yer tutucusunu kaldırır;
+    /// - mevcut yer tutucunun son etkinliğini ilerletir (boşta süresi doğru hesaplansın).
+    /// Bir şey değiştiyse true.
     @discardableResult
     mutating func discoverSessions(_ found: [ClaudeProcessDiscovery.Found], now: Date) -> Bool {
         var changed = false
-        let known = Set(sessions.values.filter { $0.status != .ended }.compactMap(\.pid))
+        let foundPIDs = Set(found.map(\.pid))
+        for (id, s) in sessions where s.discovered {
+            guard let pid = s.pid, foundPIDs.contains(pid) else { sessions[id] = nil; changed = true; continue }
+        }
+        // Gerçek (olay almış) oturumlar: transkript etkinliği ile uzlaştır.
+        let byPID = Dictionary(found.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
+        for (id, original) in sessions where !original.discovered && original.status != .ended {
+            guard let pid = original.pid, let la = byPID[pid]?.lastActivity.map({ min($0, now) }) else { continue }
+            var s = original
+            switch s.status {
+            case .idle, .done:
+                // Olay gelmedi ama transkript ilerledi: oturum aslında etkin; boşta sayılıp yanlışlıkla küçültülmesin.
+                if la > s.lastEventAt { s.lastEventAt = la }
+            case .thinking, .tool:
+                let last = max(s.lastEventAt, la)
+                if now.timeIntervalSince(last) >= Self.stuckWorkingAfter, s.workingCount == (s.status.isWorking ? 1 : 0) {
+                    s.status = .idle
+                    s.activity = nil; s.target = nil
+                    s.lastEventAt = last
+                }
+            default: break
+            }
+            if s != original { sessions[id] = s; changed = true }
+        }
+        let known = Set(sessions.values.filter { $0.status != .ended && !$0.discovered }.compactMap(\.pid))
         for f in found where !known.contains(f.pid) {
             let id = "discovered-\(f.pid)"
-            guard sessions[id] == nil else { continue }
-            var s = AgentSession(id: id, project: f.project, model: nil, status: .idle, startedAt: now, lastEventAt: now, pid: f.pid)
+            let activity = min(f.lastActivity ?? now, now)
+            if var existing = sessions[id] {
+                if activity > existing.lastEventAt { existing.lastEventAt = activity; sessions[id] = existing; changed = true }
+                continue
+            }
+            var s = AgentSession(id: id, project: f.project, model: nil, status: .idle, startedAt: min(activity, now), lastEventAt: activity, pid: f.pid)
             s.discovered = true
             sessions[id] = s
             changed = true

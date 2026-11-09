@@ -203,7 +203,7 @@ final class AgentService {
         case .running(let port):
             listener = .running(port)
             if prefs.agentsPort != Int(port) { prefs.agentsPort = Int(port) }
-            if discoveryEnabled { Task { await monitor.discoverRunningSessions(force: true) } }
+            if discoveryEnabled { monitor.startDiscoveryLoop() }
             // Betik port/token'ı bu dosyadan okur; port değişse de yeniden kurulum gerekmez.
             try? installer.generator.writeConfig(port: port, token: token, showTargets: prefs.agentsShowTargets)
         }
