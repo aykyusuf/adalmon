@@ -7,6 +7,7 @@ struct MemoryPanelModel: Equatable {
         var tint: Color { switch self { case .normal: .green; case .warning: .orange; case .critical: .red } }
         /// Gösterge dolgusu.
         var level: Double { switch self { case .normal: 0.2; case .warning: 0.6; case .critical: 1 } }
+        var thresholdLevel: ThresholdLevel { switch self { case .normal: .normal; case .warning: .warning; case .critical: .critical } }
     }
 
     struct Part: Identifiable, Equatable {
@@ -29,12 +30,21 @@ struct MemoryPanelModel: Equatable {
     var swapFraction: Double
     var series: PanelSeries
     var processes: [TopProcess]
+    /// Kullanıcının bellek seviye renkleri (menü çubuğu ayarlarından); varsayılan bugünkü yeşil / turuncu / kırmızı.
+    var levelColors = ThresholdColors()
+
+    var pressureTint: Color { tint(pressure) }
+
+    func tint(_ pressure: Pressure) -> Color {
+        levelColors.color(pressure.thresholdLevel, automatic: pressure.tint)
+    }
 
     static func make(_ data: PanelData, processes: [TopProcess]) -> MemoryPanelModel {
         guard let m = data.snapshot?.memory else {
             return MemoryPanelModel(hasData: false, bigValue: "—", usedText: "—", freeText: "—", totalText: "—", usedFraction: 0,
                                     pressure: .normal, parts: [], swapText: "—", swapFraction: 0,
-                                    series: .make(values: [], samples: [], format: .percent), processes: processes)
+                                    series: .make(values: [], samples: [], format: .percent), processes: processes,
+                                    levelColors: data.memoryLevelColors)
         }
         let total = max(1, Double(m.totalBytes))
         func part(_ id: String, _ title: String, _ bytes: UInt64, _ help: String) -> Part {
@@ -59,6 +69,18 @@ struct MemoryPanelModel: Equatable {
             swapText: m.swapTotalBytes > 0 ? "\(Format.bytes(m.swapUsedBytes)) / \(Format.bytes(m.swapTotalBytes))" : Format.bytes(m.swapUsedBytes),
             swapFraction: m.swapTotalBytes > 0 ? min(1, Double(m.swapUsedBytes) / Double(m.swapTotalBytes)) : 0,
             series: .make(values: data.memHistory, samples: data.samples, format: .percent, scale: .fitted(minSpan: 0.1)),
-            processes: processes)
+            processes: processes,
+            levelColors: data.memoryLevelColors)
+    }
+}
+
+extension ThresholdColors {
+    /// Panel rengi: `.automatic` görünümün kendi varsayılanı, `.none` birincil yazı rengi (renksiz).
+    func color(_ level: ThresholdLevel, automatic: Color) -> Color {
+        switch self[level] {
+        case .automatic: automatic
+        case .none: .primary
+        case .custom(let rgba): Color(nsColor: rgba.nsColor)
+        }
     }
 }

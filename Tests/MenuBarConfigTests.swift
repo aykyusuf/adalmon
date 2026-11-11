@@ -234,4 +234,44 @@ final class MenuBarConfigTests: XCTestCase {
         _ = MenuBarConfigStore(defaults: d)
         XCTAssertEqual(d.data(forKey: MenuBarConfigStore.unreadableBackupKey), junk)
     }
+
+    // MARK: Seviye renkleri (MEM-COLOR-01)
+
+    func testOldComponentJSONDecodesWithDefaultLevelColors() throws {
+        let json = #"{"components":[{"primary":"memoryFree","colorMode":"threshold","thresholds":{"warning":0.5,"critical":0.9}}]}"#
+        let decoded = try JSONDecoder().decode(MenuBarConfig.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.components.first?.levelColors, ThresholdColors())
+        XCTAssertEqual(decoded.components.first?.thresholds, Thresholds(warning: 0.5, critical: 0.9))
+    }
+
+    func testLevelColorsRoundTripThroughJSON() throws {
+        var config = MenuBarConfig.default
+        config.components[1].levelColors = ThresholdColors(normal: .none, warning: .custom(.blue), critical: .automatic)
+        let decoded = try JSONDecoder().decode(MenuBarConfig.self, from: JSONEncoder().encode(config))
+        XCTAssertEqual(decoded.components[1].levelColors, config.components[1].levelColors)
+        XCTAssertTrue(decoded.isSameLayout(as: config))
+        var plain = config
+        plain.components[1].levelColors = ThresholdColors()
+        XCTAssertFalse(plain.isSameLayout(as: config), "renk farkı düzen farkıdır (kayıtlı düzenler/yedek renkleri kaybetmesin)")
+    }
+
+    func testPartialLevelColorsJSONFallsBackPerLevel() throws {
+        let json = #"{"normal":{"none":{}},"critical":{"bogus":1}}"#
+        let decoded = try JSONDecoder().decode(ThresholdColors.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded, ThresholdColors(normal: .none))
+    }
+
+    func testPaletteUsesLevelColorsAndKeepsDefaultLook() {
+        var c = MenuBarComponent(.memoryPercent, colorMode: .threshold, colorTarget: .value)
+        let low = 0.1, mid = 0.7, high = 0.95
+        // Varsayılan: bugünkü yeşil / turuncu / kırmızı.
+        XCTAssertEqual(WidgetPalette.fill(for: c, field: .memoryPercent, level: low, connection: .online), .systemGreen)
+        XCTAssertEqual(WidgetPalette.fill(for: c, field: .memoryPercent, level: mid, connection: .online), .systemOrange)
+        XCTAssertEqual(WidgetPalette.fill(for: c, field: .memoryPercent, level: high, connection: .online), .systemRed)
+        c.levelColors.normal = .none
+        c.levelColors.critical = .custom(.blue)
+        XCTAssertEqual(WidgetPalette.valueText(for: c, field: .memoryPercent, level: low, connection: .online), .labelColor)
+        XCTAssertEqual(WidgetPalette.fill(for: c, field: .memoryPercent, level: mid, connection: .online), .systemOrange)
+        XCTAssertEqual(RGBAColor(WidgetPalette.fill(for: c, field: .memoryPercent, level: high, connection: .online)), .blue)
+    }
 }

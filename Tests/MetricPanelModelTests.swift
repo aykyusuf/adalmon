@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Adalmon
 
@@ -50,6 +51,25 @@ final class MetricPanelModelTests: XCTestCase {
         d.snapshot?.memory.pressure = .warning
         XCTAssertEqual(MemoryPanelModel.make(d, processes: []).pressure, .warning)
         XCTAssertGreaterThan(MemoryPanelModel.Pressure.critical.level, MemoryPanelModel.Pressure.warning.level)
+    }
+
+    /// MEM-COLOR-01: panel bellek baskısı, menü çubuğundaki bellek bileşeninin seviye renklerini kullanır.
+    func testMemoryPressureUsesMenuBarLevelColors() throws {
+        var d = data
+        XCTAssertEqual(MemoryPanelModel.make(d, processes: []).pressureTint, .green, "varsayılan görünüm değişmez")
+
+        var config = MenuBarConfig.default
+        let i = try XCTUnwrap(config.components.firstIndex { $0.fields.contains { $0.category == .memory } })
+        config.components[i].levelColors = ThresholdColors(normal: .none, critical: .custom(.blue))
+        XCTAssertEqual(ThresholdColors.memory(in: config), ThresholdColors(), "eşik modu kapalıysa panel varsayılanda kalır")
+        config.components[i].colorMode = .threshold
+        d.memoryLevelColors = ThresholdColors.memory(in: config)
+
+        XCTAssertEqual(MemoryPanelModel.make(d, processes: []).pressureTint, .primary, "renksiz")
+        d.snapshot?.memory.pressure = .warning
+        XCTAssertEqual(MemoryPanelModel.make(d, processes: []).pressureTint, .orange)
+        d.snapshot?.memory.pressure = .critical
+        XCTAssertEqual(MemoryPanelModel.make(d, processes: []).pressureTint, Color(nsColor: RGBAColor.blue.nsColor))
     }
 
     func testDiskNetworkAndTemperatureModels() {

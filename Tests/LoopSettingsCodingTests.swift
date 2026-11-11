@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import Adalmon
 
@@ -114,5 +115,46 @@ final class LoopSettingsCodingTests: XCTestCase {
         XCTAssertTrue(after.shuffle)
         XCTAssertFalse(after.hostExitOnStop)
         XCTAssertEqual(after.items, written.items)
+    }
+}
+
+final class LoopFitTests: XCTestCase {
+    func testGravityMapping() {
+        XCTAssertEqual(LoopFit.fit.videoGravity, .resizeAspect)
+        XCTAssertEqual(LoopFit.fill.videoGravity, .resizeAspectFill)
+        XCTAssertEqual(LoopFit.fit.contentsGravity, .resizeAspect)
+        XCTAssertEqual(LoopFit.fill.contentsGravity, .resizeAspectFill)
+    }
+
+    func testLoopSettingsDefaultsToFillAndRoundTrips() throws {
+        XCTAssertEqual(LoopSettings().fit, .fill)
+        let old = try JSONDecoder().decode(LoopSettings.self, from: Data(#"{"trimStart":5}"#.utf8))
+        XCTAssertEqual(old.fit, .fill)
+        let bad = try JSONDecoder().decode(LoopSettings.self, from: Data(#"{"fit":"bogus"}"#.utf8))
+        XCTAssertEqual(bad.fit, .fill)
+        var s = LoopSettings()
+        s.fit = .fit
+        XCTAssertEqual(try JSONDecoder().decode(LoopSettings.self, from: JSONEncoder().encode(s)).fit, .fit)
+    }
+
+    func testPlaylistFitDefaultsAndRoundTrips() throws {
+        var list = SaverPlaylist(appVersion: "t", updatedAt: Date(timeIntervalSince1970: 0), shuffle: false, items: [])
+        XCTAssertEqual(list.videoFit, .fill)
+        var json = try JSONSerialization.jsonObject(with: list.encoded()) as! [String: Any]
+        json.removeValue(forKey: "videoFit")
+        XCTAssertEqual(try SaverPlaylist.decode(JSONSerialization.data(withJSONObject: json)).videoFit, .fill)
+        list.videoFit = .fit
+        XCTAssertEqual(try SaverPlaylist.decode(list.encoded()).videoFit, .fit)
+    }
+
+    func testAutoSyncDetectsFitChange() {
+        var list = SaverPlaylist(appVersion: "t", updatedAt: .now, shuffle: false, items: [])
+        let src = SaverContentStore.Source(id: UUID(), name: "a", url: URL(fileURLWithPath: "/tmp/a.mp4"), byteSize: 1, width: 1, height: 1, duration: 1)
+        list.items = [SaverPlaylistItem(id: src.id, name: "a", file: src.storedName, poster: nil, width: 1, height: 1, duration: 1)]
+        func needs(_ fit: LoopFit) -> Bool {
+            SaverAutoSync.needsSync(playlist: list, selection: [src], shuffle: false, hostExitOnStop: true, loop: .default, fit: fit, needsCopy: false)
+        }
+        XCTAssertFalse(needs(.fill))
+        XCTAssertTrue(needs(.fit))
     }
 }

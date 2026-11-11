@@ -193,3 +193,8 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 **Decisions:** Kullanıcı 45 dk için paralel ajanlarla şunları seçti: MEM-COLOR-01, SAVER-01, araştırmalar (MENUBAR-01, USAGE-01, CLEAN-01 — yalnızca rapor), canlı ekran testleri (kullanıcı yokken; ekran görüntüleri dönüşte onay için). Commit en sonda tek seferde. Menü çubuğu yedekleri: `~/Library/Application Support/Adalmon/MenuBarLayouts.json`; yıkıcı her işlem `MenuBarConfigStore.replaceConfig` üzerinden (yedek + geri al).
 **Ders:** Hazır düzen her uygulandığında bileşenler yeni UUID alır; düzen karşılaştırmasında `MenuBarConfig.isSameLayout(as:)` kullan, `==` değil.
 
+## 2026-11-11 ~23:30 — paralel tur sonucu
+**Now:** MEM-COLOR-01 ve SAVER-01 kodlandı, test edildi, kuruldu (onay bekliyor). Araştırma raporu `docs/ARASTIRMA-2026-11-11.md`. Ekran testi ajanı (ui-tester) ekran görüntüsü alıyor → scratchpad/ui/.
+**Open questions (kullanıcıya):** (1) Sığdır sabit resim duvar kâğıtlarına da uygulansın mı (şu an evet)? (2) Panel bellek basıncı renkleri menü çubuğundaki eşik renklerini mi izlesin (şu an evet, yalnızca eşik modunda) yoksa ayrı ayar mı? (3) USAGE-01: Claude statusLine betiği (kullanıcının kendi statusLine'ı ile çakışma) + Codex yerel belgesiz format kullanılsın mı? (4) MENUBAR-01 "Sırayı menü çubuğundan al" düğmesi yapılsın mı? (5) CLEAN-01 kendi küçük temizleyicimiz mi?
+**Ders:** Tam suite'te `PanelControllerTests/testOpenToggleSwitchAndEscape` ve `SessionProcessSamplerTests/testRealLibprocSeesRealChild` kararsız (tek başına geçer).
+

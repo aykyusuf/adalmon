@@ -119,7 +119,7 @@ final class SaverService {
         await refresh(wallpaper: wallpaper)
         guard !Task.isCancelled, generation == syncGeneration, isInstalled else { return }
         let needsSync = SaverAutoSync.needsSync(playlist: playlist, selection: selection, shuffle: effectiveShuffle(wallpaper),
-                                                hostExitOnStop: settings.hostExitOnStop, loop: wallpaper.settings.loop.timing,
+                                                hostExitOnStop: settings.hostExitOnStop, loop: wallpaper.settings.loop.timing, fit: wallpaper.settings.loop.fit,
                                                 needsCopy: plan?.needsCopy ?? false)
         guard needsSync else { return }
         if let plan, !plan.fits { message = Self.diskMessage(plan); return }
@@ -205,7 +205,7 @@ final class SaverService {
         let loop = wallpaper.settings.loop.timing
         let options = SaverContentStore.SyncOptions(shuffle: effectiveShuffle(wallpaper), hostExitOnStop: settings.hostExitOnStop,
                                                     appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
-                                                    loop: loop)
+                                                    loop: loop, fit: wallpaper.settings.loop.fit)
         let sources = selection
         _ = try await store.sync(sources, options: options, makePoster: { source in
             await WallpaperMedia.frameImage(source.url, kind: .video, maxPixel: 960, loop: loop).flatMap { WallpaperMedia.jpegData($0) }

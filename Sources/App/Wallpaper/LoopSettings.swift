@@ -9,6 +9,8 @@ struct LoopSettings: Codable, Equatable, Hashable, Sendable {
     var transition: LoopTransition = .crossfade
     /// Çapraz geçiş süresi (sn); geçiş kapalıyken de değeri saklanır.
     var crossfadeSeconds: Double = LoopTiming.default.crossfade
+    /// Video ekrana nasıl otursun: Doldur (kırpar, varsayılan) / Sığdır (siyah bar).
+    var fit: LoopFit = .fill
 
     /// Motorun ve oynatma listesi JSON'unun kullandığı biçim (kapalıysa `crossfade == 0`).
     var timing: LoopTiming {
@@ -25,6 +27,7 @@ extension LoopSettings {
         trimEnd = (try? c.decodeIfPresent(Double.self, forKey: .trimEnd)) ?? d.trimEnd
         transition = (try? c.decodeIfPresent(LoopTransition.self, forKey: .transition)) ?? .crossfade
         crossfadeSeconds = (try? c.decodeIfPresent(Double.self, forKey: .crossfadeSeconds)) ?? d.crossfade
+        fit = (try? c.decodeIfPresent(LoopFit.self, forKey: .fit)) ?? .fill
         let clean = LoopTiming(trimStart: trimStart, trimEnd: trimEnd, crossfade: crossfadeSeconds).sanitized
         trimStart = clean.trimStart
         trimEnd = clean.trimEnd

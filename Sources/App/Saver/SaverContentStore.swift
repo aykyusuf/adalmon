@@ -86,6 +86,7 @@ struct SaverContentStore: Sendable {
         var appVersion: String
         /// Baştan atla / sondan kes / çapraz geçiş (duvar kâğıdı ayarlarıyla aynı).
         var loop: LoopTiming = .default
+        var fit: LoopFit = .fill
     }
 
     /// Seçili videoları klasöre getirir (klon/kopya), poster üretir, listeyi atomik yazar, listede olmayan eski dosyaları siler.
@@ -118,7 +119,7 @@ struct SaverContentStore: Sendable {
             items.append(SaverPlaylistItem(id: s.id, name: s.name, file: s.storedName, poster: poster, width: s.width, height: s.height, duration: s.duration))
         }
         let playlist = SaverPlaylist(appVersion: options.appVersion, updatedAt: .now, shuffle: options.shuffle, hostExitOnStop: options.hostExitOnStop,
-                                    trimStart: options.loop.trimStart, trimEnd: options.loop.trimEnd, crossfade: options.loop.crossfade, items: items)
+                                    trimStart: options.loop.trimStart, trimEnd: options.loop.trimEnd, crossfade: options.loop.crossfade, videoFit: options.fit, items: items)
         try playlist.encoded().write(to: playlistURL, options: .atomic)
         prune(keeping: Set(items.flatMap { [$0.file, $0.poster].compactMap { $0 } } + [SaverPaths.playlistFileName]))
         return playlist
@@ -135,11 +136,14 @@ struct SaverContentStore: Sendable {
     }
 
     /// Yalnızca döngü ayarlarını yeniden yazar (video kopyalamaz). Değer aynıysa dosyaya dokunmaz.
-    func rewritePlaylistLoop(_ loop: LoopTiming) throws {
+    /// `fit` verilmezse listedeki mevcut sığdırma korunur (sessizce Doldur'a dönmesin).
+    func rewritePlaylistLoop(_ loop: LoopTiming, fit requestedFit: LoopFit? = nil) throws {
         guard var list = currentPlaylist() else { return }
+        let fit = requestedFit ?? list.videoFit
         let wanted = loop.sanitized
-        guard list.timing != wanted else { return }
+        guard list.timing != wanted || list.videoFit != fit else { return }
         list.timing = wanted
+        list.videoFit = fit
         list.updatedAt = .now
         try list.encoded().write(to: playlistURL, options: .atomic)
     }

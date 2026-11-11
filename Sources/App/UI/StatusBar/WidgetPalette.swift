@@ -17,6 +17,15 @@ enum WidgetPalette {
         }
     }
 
+    /// Seviyenin kullanıcı rengi; `.automatic` bugünkü yeşil / turuncu / kırmızı, `.none` etiket rengi (renksiz).
+    static func threshold(_ level: ThresholdLevel, colors: ThresholdColors) -> NSColor {
+        switch colors[level] {
+        case .automatic: threshold(level)
+        case .none: .labelColor
+        case .custom(let rgba): rgba.nsColor
+        }
+    }
+
     static func connection(_ state: ConnectionState) -> NSColor {
         switch state {
         case .online: .systemGreen
@@ -42,7 +51,7 @@ enum WidgetPalette {
         case .threshold:
             // A card can mix kinds (CPU % and °C): other kinds use their own default thresholds.
             let thresholds = field.kind == component.primary.kind ? component.thresholds : field.defaultThresholds
-            return threshold(thresholds.level(for: level))
+            return threshold(thresholds.level(for: level), colors: component.levelColors)
         default: return .labelColor
         }
     }

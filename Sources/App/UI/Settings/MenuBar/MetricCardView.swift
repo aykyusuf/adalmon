@@ -8,6 +8,7 @@ struct MetricCardView: View {
     let canMoveUp: Bool
     let canMoveDown: Bool
     let onMove: (Int) -> Void
+    @State private var showsColorDetails = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -120,6 +121,11 @@ struct MetricCardView: View {
             Toggle("Etiket", isOn: $card.showLabel)
         }
         .toggleStyle(.checkbox)
+        if card.thresholdColor {
+            DisclosureGroup("Renkler ve eşikler", isExpanded: $showsColorDetails) {
+                ThresholdColorsEditor(thresholds: $card.effectiveThresholds, colors: $card.levelColors, field: card.thresholdField)
+            }
+        }
     }
 
     private func selection(_ field: DataField) -> Binding<Bool> {

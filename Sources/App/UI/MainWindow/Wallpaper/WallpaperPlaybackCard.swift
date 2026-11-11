@@ -12,6 +12,14 @@ struct WallpaperPlaybackCard: View {
             Text("İndirilen videoların başı ve sonu çoğu zaman siyah, kararmalı ya da filigranlıdır. Yalnızca aradaki bölüm döngüye girer. Süre, kırpmalar + 10 sn'den kısa olan videolarda kırpma uygulanmaz.")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
+            Picker("Video sığdırma", selection: $service.settings.loop.fit) {
+                ForEach(LoopFit.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 360)
+            Text("Doldur ekranı kaplar, kenarları kırpabilir; Sığdır videoyu kırpmadan gösterir, kalan yerler siyah olur.")
+                .font(.caption).foregroundStyle(.secondary)
+            Divider()
             Picker("Geçiş", selection: $service.settings.loop.transition) {
                 ForEach(LoopTransition.allCases) { Text($0.title).tag($0) }
             }

@@ -1,5 +1,7 @@
 # Adalmon: progress
 
+**2026-11-11 (gece)** — MENUBAR-02/03: kayıtlı düzenler, otomatik yedek, dışa/içe aktarma, onay + geri al (bbc9ba2). Paralel ajanlarla: MEM-COLOR-01 (seviye başına renk/Renksiz), SAVER-01 (Doldur/Sığdır), araştırma raporu docs/ARASTIRMA-2026-11-11.md (MENUBAR-01, USAGE-01, CLEAN-01). Tam suite 1223/1226 (3 bilinen kararsız). Kuruldu; ekran testleri ve kullanıcı onayları bekliyor.
+
 **2026-11-11** — SETTINGS-BUG-01: menü çubuğunda başka öğe seçilince bellek eşiklerinin varsayılana dönmesi düzeltildi (inspector onChange'i seçim değişimini düzenleme sanıyordu). Ek sağlamlaştırma: tek bozuk bileşen config'i düşürmüyor, çözülemeyen kayıt ezilmeden yedekleniyor. +5 regresyon testi, ilgili 46 test geçti. Canlı doğrulama ve commit bekliyor.
 
 Task status lives in tasks.json. This file is a dated log only, newest first.

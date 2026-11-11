@@ -63,8 +63,8 @@
       "title": "Saver/duvar kagidi: 16:10 ekranda 16:9 video kirpilmasi icin Doldur/Sigdir secenegi",
       "priority": 3,
       "done_when": "Ayarlarda Doldur ve Sigdir secimi var; MacBook Pro 14'te Sigdir secilince video kirpilmadan siyah barlarla gorunur; saver ve duvar kagidinda calisir; kullanici onayladi",
-      "status": "todo",
-      "evidence": "Neden: AspectFill (LoopInstance/LoopingQueueBackend/AdalmonSaverView); henuz kod yok"
+      "status": "in_progress",
+      "evidence": "2026-11-11: Duvar kagidi > Oynatma kartinda 'Video sigdirma' Doldur (varsayilan) / Sigdir; duvar kagidina aninda, ekran koruyucuya playlist.json videoFit + mevcut otomatik esitleme ile gider. Kod: SaverShared/LoopFit.swift, VideoHostLayer, backend'ler, LoopSettings, SaverPlaylist, AdalmonSaverView. Testler: 65 ilgili test + LoopFitTests 4/4, saver hedefi derleniyor. Review: fit verilmezse Doldur'a donme riski duzeltildi (mevcut deger korunur). Kuruldu 23:28. Gercek 16:10 ekranda gozle bakilmadi. KALAN: kullanici onayi; karar: Sigdir sabit resim duvar kagitlarina da uygulaniyor (su an evet)."
     },
     {
       "id": "BROWSER-01",
@@ -127,8 +127,8 @@
       "title": "Claude Code / Codex abonelik limitleri ve API kredisi gostergesi + dusuk uyari",
       "priority": 2,
       "done_when": "Panelde/ofiste Claude Code (5 saatlik ve haftalik pencere), Codex abonelik limiti ve API kredi bakiyesi kalan miktarla gorunuyor; esik altina inince ekranda bildirim/uyari cikiyor (esikler ayarlanabilir, 5 saatlik pencere icin ayri); kullanici onayladi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-10: 'claude code codex gibi subların limitlerini, api kredilerimi gorebileyim, azalinca uyari versin, 5 saatlik vb ozel'. Henuz arastirilmadi: resmi/yerel veri kaynagi (Claude Code statusline rate_limits, Codex CLI, API bakiye endpoint'i) belirlenmeli; belgesiz OAuth API kullanilmamali. Kodlanmadi."
+      "status": "in_progress",
+      "evidence": "2026-11-11 arastirma (docs/ARASTIRMA-2026-11-11.md): Claude limitleri statusline JSON'undaki rate_limits (five_hour/seven_day) ile resmi yoldan alinabilir (plugin'e statusLine betigi -> 127.0.0.1 dinleyici; kullanicinin mevcut statusLine'i ile cakisma karari gerekli). Codex: ~/.codex rollout jsonl token_count.rate_limits (belgesiz, kirilabilir). API kredi bakiyesi icin resmi endpoint yok. Kullanici karari bekleniyor."
     },
     {
       "id": "OFFICE-CTRL-01",
@@ -143,16 +143,16 @@
       "title": "Clean-my-mac benzeri acik kaynak bir projeyi Adalmon'a entegre etme (arastirma + karar)",
       "priority": 3,
       "done_when": "Aday acik kaynak projeler (lisans, bakim durumu, ne yapiyor, guvenlik riski) arastirildi ve karsilastirildi; kullanici ile konusulup entegrasyon yaklasimi (kod kullanma, arac cagirma, kendi yazma) secildi; secilirse ayri gorev olarak planlandi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-10: 'clean my mac gibi open source bir projeyi bu projenin icine entegre etmek, arastirilip konusulacak'. Henuz arastirilmadi. Not: disk %99 dolu (Notability iCloud indirmesi gibi) bu ozelligin ihtiyacini gosteriyor; silme islemleri geri alinamaz, onay/onizleme sart olmali."
+      "status": "in_progress",
+      "evidence": "2026-11-11 arastirma (docs/ARASTIRMA-2026-11-11.md): Mole GPL-3.0 (MIT repo ile uyumsuz), Pearcleaner Apache+Commons Clause ve askida. Oneri: kendi kucuk temizleyicimiz (tara -> onizleme -> onay -> FileManager.trashItem), Mole kurallari yalnizca referans. Kullanici karari bekleniyor."
     },
     {
       "id": "MENUBAR-01",
       "title": "Menu cubugunda ogelerin yeri degisince Adalmon ayarlarindaki siranin da ayni kalmasi (zorsa yapilmaz)",
       "priority": 3,
       "done_when": "macOS menu cubugunda (Cmd+surukle) ogelerin sirasi degisince Adalmon'un kendi siralama ayari bununla tutarli; ya da teknik olarak mumkun degilse nedeni belgelendi ve kullanici 'yapma' dedi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-10. Once fizibilite: macOS statu ogelerinin sirasini uygulamaya bildiren public API var mi arastirilacak. Yoksa yapilmayacak."
+      "status": "in_progress",
+      "evidence": "2026-11-11 arastirma (docs/ARASTIRMA-2026-11-11.md): surukleme icin resmi bildirim yok; kendi ogelerimizin sirasi button.window.frame.minX ile okunabilir. Oneri: Ayarlar'a 'Sirayi menu cubugundan al' dugmesi (tek seferlik okuma, surekli izleme yok). Kullanici karari bekleniyor."
     },
     {
       "id": "MENUBAR-02",
@@ -183,8 +183,8 @@
       "title": "Bellek (memory) renkleri: tum renkler ve esikler ayarlanabilir, renksiz varsayilan secenegi",
       "priority": 2,
       "done_when": "Bellek gostergesinin (menu cubugu ve panel) her seviye rengi (dusuk/orta/yuksek/kritik) ve esikleri ayarlardan degistirilebiliyor; 'renksiz' (sistem rengi) secilebiliyor; varsayilan yesil zorunlu degil; kullanici onayladi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-10. Ekran goruntusu: 'BOS 3322 MB' yesil gorunuyor; kullanici turuncu/kirmizi esiklerini ayarlamis ama alt seviye varsayilan yesile dusuyor, renksiz istiyor. Ayni mantik diger olcumlere (CPU, disk vb.) da yayilabilir."
+      "status": "in_progress",
+      "evidence": "2026-11-11: Her seviye (Normal/Uyari/Kritik) icin Varsayilan / Renksiz / Ozel renk + esikler; basit kartta 'Renkler ve esikler' (Renk: esige gore acikken), gelismis duzenleyicide ayni editor; panel bellek basinci renkleri esik modundaki ilk bellek ogesinin renklerini kullanir. Varsayilan gorunum degismedi (testle sabit). Kod: ThresholdColors.swift, ThresholdColorsEditor.swift, WidgetPalette, MetricCardConfig(+Mapping), Memory panel. Testler: ilgili 87 test + tam suite 1223/1226 (3 dusen bilinen kararsiz, tek basina 42/42 gecti). Bagimsiz review: engelleyici yok. Kuruldu 23:28. Not: gorevde 4 seviye yaziyordu, kodda 3 seviye var -> 3 tutuldu. KALAN: kullanici onayi + panel/menu cubugu baglantisi karari."
     },
     {
       "id": "SETTINGS-BUG-01",

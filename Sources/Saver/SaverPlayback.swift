@@ -19,6 +19,11 @@ final class SaverPlayback {
         engine.hostLayer.backgroundColor = NSColor.clear.cgColor
     }
 
+    var fit: LoopFit {
+        get { engine.fit }
+        set { engine.fit = newValue }
+    }
+
     func start(sources: [LoopSource], timing: LoopTiming) {
         engine.start(sources: sources, timing: timing)
     }

@@ -180,6 +180,7 @@ final class AdalmonSaverView: ScreenSaverView {
         } else if !playback.isActive {
             let order = pendingOrder ?? makeOrder()
             pendingOrder = order            // aynı oturumda (layout → applyMode) sıra değişmesin
+            playback.fit = playlist?.videoFit ?? .fill
             let timing = (playlist ?? SaverPlaylist(appVersion: "", updatedAt: .now, shuffle: false, items: [])).timing
             // Poster zaten init'te görünür (siyah ekran yok); video katmanı ilk kare hazır olunca üstünde belirir.
             showPoster(preferring: order.first)
@@ -201,6 +202,7 @@ final class AdalmonSaverView: ScreenSaverView {
         // Örtük `contents` animasyonu (siyahtan ~0,25 sn solma) olmasın: poster ANINDA görünür.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        rootLayer.contentsGravity = (playlist?.videoFit ?? .fill).contentsGravity
         rootLayer.contents = image
         CATransaction.commit()
         shownPosterURL = url

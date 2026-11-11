@@ -35,6 +35,8 @@ struct SaverPlaylist: Codable, Equatable, Sendable {
     var trimEnd: Double = LoopTiming.default.trimEnd
     /// Çapraz geçiş süresi (sn); 0 = kapalı.
     var crossfade: Double = LoopTiming.default.crossfade
+    /// Doldur / Sığdır. EKLEMELİ anahtar: eski ekran koruyucu yok sayar, eksikse `.fill`.
+    var videoFit: LoopFit = .fill
     var items: [SaverPlaylistItem]
 
     /// Üç alanın birleşik, düzeltilmiş görünümü.
@@ -111,6 +113,7 @@ extension SaverPlaylist {
         trimStart = decoded.trimStart
         trimEnd = decoded.trimEnd
         crossfade = decoded.crossfade
+        videoFit = (try? c.decodeIfPresent(LoopFit.self, forKey: .videoFit)) ?? .fill
         items = try c.decode([SaverPlaylistItem].self, forKey: .items)
     }
 }

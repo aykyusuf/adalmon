@@ -157,7 +157,7 @@ final class WallpaperController {
                 slot = Slot(key: entry.info.key, frame: entry.frame, headless: isHeadless)
                 slots[entry.info.key] = slot
             }
-            slot.update(frame: entry.frame, scale: entry.info.scale, pixelSize: entry.info.pixelSize, timing: config.settings.loop.timing)
+            slot.update(frame: entry.frame, scale: entry.info.scale, pixelSize: entry.info.pixelSize, timing: config.settings.loop.timing, fit: config.settings.loop.fit)
             slot.assign(item)
         }
         for key in slots.keys where !seen.contains(key) {
@@ -543,8 +543,10 @@ private final class Slot {
         content = c
     }
 
-    func update(frame: NSRect, scale: CGFloat, pixelSize: CGSize, timing newTiming: LoopTiming) {
+    func update(frame: NSRect, scale: CGFloat, pixelSize: CGSize, timing newTiming: LoopTiming, fit: LoopFit = .fill) {
         self.scale = scale
+        engine.fit = fit                // çalışan katmanlara hemen uygulanır; yeniden kurma yok
+        content?.setFit(fit)
         self.pixelSize = pixelSize
         if newTiming != timing {
             timing = newTiming

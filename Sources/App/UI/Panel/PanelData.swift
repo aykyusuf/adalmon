@@ -47,6 +47,8 @@ struct PanelData: Equatable {
     var batteryApps: [BatteryEnergyApp] = []
     /// Görünür cihaz pilleri (en düşük üstte).
     var devices: [DeviceBattery] = []
+    /// Menü çubuğundaki bellek bileşeninin (eşik modunda) seviye renkleri; panel bellek baskısını bunlarla boyar.
+    var memoryLevelColors = ThresholdColors()
 
     /// Uygulama bazlı ölçüm yoksa listeler yerine kurulum çağrısı gösterilir.
     var showsFilterCallout: Bool { installerState != .active && !filterConnected }
@@ -93,7 +95,8 @@ extension PanelData {
             opensMainWindow: model.prefs.showInDock,
             battery: model.battery.reading,
             batteryApps: model.battery.energyApps,
-            devices: model.devices.visibleDevices
+            devices: model.devices.visibleDevices,
+            memoryLevelColors: ThresholdColors.memory(in: model.prefs.menuBar.config)
         )
     }
 }

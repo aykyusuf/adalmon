@@ -17,7 +17,7 @@ final class LoopingQueueBackend: LoopBackend {
         let asset = AVURLAsset(url: clip.url)
         let template = AVPlayerItem(asset: asset)
         looper = AVPlayerLooper(player: player, templateItem: template, timeRange: clip.range.isTrimmed ? clip.range.timeRange : .invalid)
-        layer.videoGravity = .resizeAspectFill
+        layer.videoGravity = host.fit.videoGravity
         layer.frame = host.bounds
         layer.opacity = 0                       // poster / sabit görüntü görünür kalır; ilk kare hazır olunca belirir
         layer.player = player

@@ -18,7 +18,7 @@ extension MetricCardConfig {
                                      showLabel: showLabel, showValue: false, layout: .inline)
             c.id = Self.componentID(kind, slot: 0)
             c.enabled = shown
-            return [c]
+            return [applyingColors(to: c)]
         }
         if kind == .battery {
             var c = MenuBarComponent(.batteryLevel, visual: .batteryCapsule, showLabel: showLabel, layout: layout,
@@ -27,7 +27,7 @@ extension MetricCardConfig {
                                                                   fillColor: batteryFill, secondColor: batterySecond))
             c.id = Self.componentID(kind, slot: 0)
             c.enabled = shown
-            return [c]
+            return [applyingColors(to: c)]
         }
         var out: [MenuBarComponent] = []
         let f = renderFields
@@ -37,16 +37,26 @@ extension MetricCardConfig {
                                      colorTarget: .value, showLabel: showLabel, layout: layout)
             c.id = Self.componentID(kind, slot: 0)
             c.enabled = shown
-            out.append(c)
+            out.append(applyingColors(to: c))
         }
         if showGraph, let graph = kind.graphField {
             var c = MenuBarComponent(graph, visual: .sparkline, colorMode: thresholdColor ? .threshold : .monochrome,
                                      showLabel: f.isEmpty && showLabel, showValue: false, layout: layout)
             c.id = Self.componentID(kind, slot: 1)
             c.enabled = shown
-            out.append(c)
+            out.append(applyingColors(to: c))
         }
         return out
+    }
+
+    /// Kartın seviye renklerini ve (aynı ölçekteyse) özel eşiklerini bileşene taşır.
+    private func applyingColors(to component: MenuBarComponent) -> MenuBarComponent {
+        var c = component
+        c.levelColors = levelColors
+        if let thresholds, c.primary.defaultThresholds == thresholdField?.defaultThresholds {
+            c.thresholds = thresholds
+        }
+        return c
     }
 
     static func components(for cards: [MetricCardConfig]) -> [MenuBarComponent] {
@@ -97,6 +107,8 @@ extension MetricCardConfig {
                     consumed = 2
                 }
             }
+            card.levelColors = c.levelColors
+            if c.thresholds != c.primary.defaultThresholds { card.thresholds = c.thresholds }
             let expected = card.components()
             let actual = Array(components[i..<(i + consumed)])
             guard expected.count == actual.count,

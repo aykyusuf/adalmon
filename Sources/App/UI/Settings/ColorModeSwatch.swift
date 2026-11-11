@@ -12,6 +12,11 @@ struct ColorModeSwatch: View {
             .frame(width: 16, height: 16)
     }
 
+    private var thresholdColors: [Color] {
+        guard !component.levelColors.isDefault else { return [.green, .orange, .red] }
+        return ThresholdLevel.allLevels.map { Color(nsColor: WidgetPalette.threshold($0, colors: component.levelColors)) }
+    }
+
     private var fill: AnyShapeStyle {
         switch mode {
         case .monochrome:
@@ -19,7 +24,7 @@ struct ColorModeSwatch: View {
         case .accent:
             AnyShapeStyle(Color.accentColor)
         case .threshold:
-            AnyShapeStyle(AngularGradient(colors: [.green, .orange, .red, .green], center: .center))
+            AnyShapeStyle(AngularGradient(colors: thresholdColors + thresholdColors.prefix(1), center: .center))
         case .custom:
             AnyShapeStyle(component.customSwiftUIColor)
         case .gradient:

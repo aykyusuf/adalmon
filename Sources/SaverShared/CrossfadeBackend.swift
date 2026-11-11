@@ -268,6 +268,7 @@ final class CrossfadeBackend: LoopBackend {
         CATransaction.setDisableActions(true)
         instance.layer.frame = host.bounds
         instance.layer.opacity = opacity
+        instance.layer.videoGravity = host.fit.videoGravity
         host.addSublayer(instance.layer)       // sonradan eklenen üstte: gelen katman eskinin üzerinde belirir
         CATransaction.commit()
     }

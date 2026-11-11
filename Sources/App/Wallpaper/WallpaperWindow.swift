@@ -51,6 +51,11 @@ final class WallpaperContentView: NSView {
         CATransaction.commit()
     }
 
+    func setFit(_ fit: LoopFit) {
+        guard stillLayer.contentsGravity != fit.contentsGravity else { return }
+        stillLayer.contentsGravity = fit.contentsGravity
+    }
+
     func setStill(_ image: CGImage?, scale: CGFloat) {
         stillLayer.contents = image
         stillLayer.contentsScale = scale

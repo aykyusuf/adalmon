@@ -19,6 +19,12 @@ final class LoopingVideoEngine {
     private var resolving: Task<Void, Never>?
 
     /// Oynatıcı var (ya da süre okunurken kuruluyor).
+    /// Doldur / Sığdır; çalışan katmanlara hemen uygulanır.
+    var fit: LoopFit {
+        get { hostLayer.fit }
+        set { hostLayer.fit = newValue }
+    }
+
     var isActive: Bool { backend != nil || resolving != nil }
 
     init(reduceMotion: @escaping @MainActor () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }) {

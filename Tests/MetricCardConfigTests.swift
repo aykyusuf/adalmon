@@ -187,4 +187,50 @@ final class MetricCardConfigTests: XCTestCase {
         XCTAssertEqual(DataField.memoryUsed.compactText(v, showUnits: true, unit: .gb), "12,5GB")
         XCTAssertEqual(DataField.cpuTemp.columnLabel(isFirst: false), "°C")
     }
+
+    // MARK: Seviye renkleri ve eşikler (MEM-COLOR-01)
+
+    func testCardColorsAndThresholdsRoundTrip() throws {
+        var memory = MetricCardConfig(.memory, shown: true, fields: [.memoryFree], layout: .labelAbove, thresholdColor: true)
+        memory.levelColors = ThresholdColors(normal: .none, warning: .custom(.blue), critical: .automatic)
+        memory.effectiveThresholds = Thresholds(warning: 0.45, critical: 0.9)
+        var cpu = MetricCardConfig(.cpu, shown: true, fields: [.cpu, .cpuTemp], showGraph: true)
+        cpu.levelColors.normal = .none
+        cpu.effectiveThresholds = Thresholds(warning: 0.3, critical: 0.5)
+        var cards = MetricCardConfig.defaults
+        cards[1] = cpu
+        cards[2] = memory
+
+        let components = MetricCardConfig.components(for: cards)
+        let mem = try XCTUnwrap(components.first { $0.primary == .memoryFree })
+        XCTAssertEqual(mem.levelColors, memory.levelColors)
+        XCTAssertEqual(mem.thresholds, Thresholds(warning: 0.45, critical: 0.9))
+        XCTAssertEqual(components.first { $0.primary == .cpu && $0.visual == .sparkline }?.thresholds,
+                       Thresholds(warning: 0.3, critical: 0.5), "aynı ölçekteki grafik de özel eşikleri kullanır")
+
+        let parsed = try XCTUnwrap(MetricCardConfig.cards(from: components), "renk/eşik özelleştirmesi basit düzenleyiciden atmamalı")
+        XCTAssertEqual(parsed[1], cpu)
+        XCTAssertEqual(parsed[2], memory)
+    }
+
+    func testCardThresholdsResetWhenScaleChanges() {
+        var cpu = MetricCardConfig(.cpu, shown: true, fields: [.cpu, .cpuTemp])
+        cpu.effectiveThresholds = Thresholds(warning: 0.3, critical: 0.5)
+        cpu.set(.cpuTemp, selected: false)
+        XCTAssertEqual(cpu.thresholds, Thresholds(warning: 0.3, critical: 0.5), "öndeki değer aynı: korunur")
+        cpu.set(.cpuTemp, selected: true)
+        cpu.set(.cpu, selected: false)
+        XCTAssertNil(cpu.thresholds, "% → °C: varsayılana döner")
+        XCTAssertEqual(cpu.effectiveThresholds, DataField.cpuTemp.defaultThresholds)
+        cpu.effectiveThresholds = DataField.cpuTemp.defaultThresholds
+        XCTAssertNil(cpu.thresholds, "varsayılana eşit eşik nil saklanır (gidiş-dönüş için)")
+    }
+
+    func testAdvancedThresholdsOnMonochromeCardStillRoundTrip() throws {
+        var components = MetricCardConfig.components(for: MetricCardConfig.defaults)
+        let i = try XCTUnwrap(components.firstIndex { $0.primary == .memoryUsed })
+        components[i].thresholds = Thresholds(warning: 0.5, critical: 0.9)
+        let cards = try XCTUnwrap(MetricCardConfig.cards(from: components))
+        XCTAssertEqual(cards.first { $0.kind == .memory }?.thresholds, Thresholds(warning: 0.5, critical: 0.9))
+    }
 }

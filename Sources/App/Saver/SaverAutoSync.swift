@@ -8,13 +8,13 @@ enum SaverAutoSync {
     /// Diskteki içerik (videolar + oynatma listesi) istenen duruma uyuyor mu? `false` = eşitleme gerek.
     /// Sıra önemlidir (sırayla oynatmada); döngü ayarı ve karıştırma da listede saklanır.
     static func needsSync(playlist: SaverPlaylist?, selection: [SaverContentStore.Source], shuffle: Bool,
-                          hostExitOnStop: Bool, loop: LoopTiming, needsCopy: Bool) -> Bool {
+                          hostExitOnStop: Bool, loop: LoopTiming, fit: LoopFit = .fill, needsCopy: Bool) -> Bool {
         guard !selection.isEmpty else { return false }   // boş seçimde eldeki listeye dokunulmaz (ör. harici disk takılı değil)
         guard let playlist else { return true }
         if needsCopy { return true }
         if playlist.items.map(\.id) != selection.map(\.id) { return true }
         if playlist.shuffle != shuffle || playlist.hostExitOnStop != hostExitOnStop { return true }
-        return playlist.timing != loop.sanitized
+        return playlist.timing != loop.sanitized || playlist.videoFit != fit
     }
 
     enum UpdateDecision: Equatable, Sendable {

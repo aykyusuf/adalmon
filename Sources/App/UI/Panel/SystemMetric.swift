@@ -32,7 +32,7 @@ struct SystemMetric: Identifiable {
     static func all(_ data: PanelData, showTemperatures: Bool) -> [SystemMetric] {
         let s = data.snapshot
         let temps = showTemperatures ? s?.temperature : nil
-        return [cpu(s, temps, data.cpuHistory), gpu(s, temps, data.gpuHistory), memory(s, data.memHistory), disk(s)]
+        return [cpu(s, temps, data.cpuHistory), gpu(s, temps, data.gpuHistory), memory(s, data.memHistory, data.memoryLevelColors), disk(s)]
     }
 
     private static func degrees(_ t: Double?) -> String? { t.map { "\(Int($0.rounded())) °C" } }
@@ -87,7 +87,7 @@ struct SystemMetric: Identifiable {
         return parts.joined(separator: " · ")
     }
 
-    private static func memory(_ s: SystemSnapshot?, _ history: [Double]) -> SystemMetric {
+    private static func memory(_ s: SystemSnapshot?, _ history: [Double], _ colors: ThresholdColors) -> SystemMetric {
         let m = s?.memory
         let free = m.map { $0.totalBytes > $0.usedBytes ? $0.totalBytes - $0.usedBytes : 0 } ?? 0
         let pressure = switch m?.pressure {
@@ -96,9 +96,9 @@ struct SystemMetric: Identifiable {
         default: "normal"
         }
         let tint: Color = switch m?.pressure {
-        case .critical: .red
-        case .warning: .yellow
-        default: .teal
+        case .critical: colors.color(.critical, automatic: .red)
+        case .warning: colors.color(.warning, automatic: .yellow)
+        default: colors.color(.normal, automatic: .teal)
         }
         var detail: [String] = []
         if let m {

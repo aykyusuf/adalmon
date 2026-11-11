@@ -161,13 +161,7 @@ struct ComponentInspector: View {
             ColorPicker("Düşük değer rengi", selection: $component.gradientStartSwiftUIColor, supportsOpacity: false)
             ColorPicker("Yüksek değer rengi", selection: $component.gradientEndSwiftUIColor, supportsOpacity: false)
         case .threshold:
-            thresholdSlider("Turuncu eşiği", value: $component.thresholds.warning, range: 0.1...0.9)
-            thresholdSlider("Kırmızı eşiği", value: $component.thresholds.critical, range: 0.15...1)
-            if component.primary.isInverted {
-                Text("Boş/kalan değerlerde renk ters işler: az boş alan kırmızı olur.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            ThresholdColorsEditor(thresholds: $component.thresholds, colors: $component.levelColors, field: component.primary)
         case .monochrome, .accent:
             EmptyView()
         }
@@ -176,24 +170,6 @@ struct ComponentInspector: View {
                 ForEach(ColorTarget.allCases) { Text($0.displayName).tag($0) }
             }
             .pickerStyle(.segmented)
-        }
-    }
-
-    private func thresholdSlider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
-        LabeledContent(title) {
-            HStack {
-                Slider(value: value, in: range, step: 0.05)
-                    .onChange(of: value.wrappedValue) { normalizeThresholds() }
-                Text(component.primary.isTemperature ? "\(Int((value.wrappedValue * 100).rounded())) °C" : Format.percent(value.wrappedValue))
-                    .monospacedDigit()
-                    .frame(width: 48, alignment: .trailing)
-            }
-        }
-    }
-
-    private func normalizeThresholds() {
-        if component.thresholds.critical < component.thresholds.warning + 0.05 {
-            component.thresholds.critical = min(1, component.thresholds.warning + 0.05)
         }
     }
 }

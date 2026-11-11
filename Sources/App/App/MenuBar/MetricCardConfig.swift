@@ -10,6 +10,10 @@ struct MetricCardConfig: Equatable, Identifiable, Sendable {
     var showGraph = false
     var layout: MetricLayout = .inline
     var thresholdColor = false
+    /// Özel eşikler; nil = öndeki değerin varsayılanı (ölçek değişince nil'e döner).
+    var thresholds: Thresholds?
+    /// Eşik modunda seviye başına renk.
+    var levelColors = ThresholdColors()
     var showLabel = true
     var networkSource: NetworkCardSource = .speed
     /// Pil kartı: kalan / dolum süresini de göster.
@@ -62,12 +66,32 @@ struct MetricCardConfig: Equatable, Identifiable, Sendable {
         if selected { set.insert(field) } else { set.remove(field) }
         let next = kind.options.filter(set.contains)
         guard !next.isEmpty || showGraph || kind == .connection else { return }
+        let old = thresholdField
         fields = next
+        resetThresholdsIfScaleChanged(from: old)
     }
 
     mutating func setGraph(_ on: Bool) {
         guard on || !fields.isEmpty else { return }
+        let old = thresholdField
         showGraph = on
+        resetThresholdsIfScaleChanged(from: old)
+    }
+
+    /// Özel eşiklerin ölçeğini belirleyen alan: menü çubuğundaki ilk değer (yalnız grafik varsa grafik alanı).
+    var thresholdField: DataField? {
+        renderFields.first ?? (showGraph ? kind.graphField : nil)
+    }
+
+    /// Kartta gösterilen/düzenlenen eşikler.
+    var effectiveThresholds: Thresholds {
+        get { thresholds ?? thresholdField?.defaultThresholds ?? Thresholds() }
+        set { thresholds = newValue == thresholdField?.defaultThresholds ? nil : newValue }
+    }
+
+    /// % → °C gibi ölçek değişince özel eşikler anlamını yitirir; varsayılana döner.
+    private mutating func resetThresholdsIfScaleChanged(from old: DataField?) {
+        if old?.defaultThresholds != thresholdField?.defaultThresholds { thresholds = nil }
     }
 
     func canDeselect(_ field: DataField) -> Bool { fields != [field] || showGraph }

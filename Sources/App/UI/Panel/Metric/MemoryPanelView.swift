@@ -27,9 +27,9 @@ struct MemoryPanelView: View {
                     HStack {
                         Text("Bellek baskısı").font(.callout.weight(.semibold))
                         Spacer()
-                        Text(model.pressure.title).font(.callout.weight(.semibold)).foregroundStyle(model.pressure.tint)
+                        Text(model.pressure.title).font(.callout.weight(.semibold)).foregroundStyle(model.pressureTint)
                     }
-                    PressureGauge(pressure: model.pressure)
+                    PressureGauge(pressure: model.pressure, tint: model.tint)
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -74,18 +74,20 @@ struct MemoryPanelView: View {
 /// Üç bölgeli (normal / uyarı / kritik) baskı göstergesi.
 struct PressureGauge: View {
     let pressure: MemoryPanelModel.Pressure
+    /// Seviye rengi (kullanıcının bellek renkleri); varsayılan yeşil / turuncu / kırmızı.
+    var tint: (MemoryPanelModel.Pressure) -> Color = { $0.tint }
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             ZStack(alignment: .leading) {
                 HStack(spacing: 3) {
-                    zone(.green, active: true)
-                    zone(.orange, active: pressure != .normal)
-                    zone(.red, active: pressure == .critical)
+                    zone(tint(.normal), active: true)
+                    zone(tint(.warning), active: pressure != .normal)
+                    zone(tint(.critical), active: pressure == .critical)
                 }
                 Circle().fill(.white).frame(width: 12, height: 12)
-                    .overlay(Circle().stroke(pressure.tint, lineWidth: 3))
+                    .overlay(Circle().stroke(tint(pressure), lineWidth: 3))
                     .offset(x: max(0, min(w - 12, w * markerPosition - 6)))
             }
         }
