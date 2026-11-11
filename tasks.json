@@ -159,16 +159,16 @@
       "title": "Menu cubugu yerlesim/tasarimini kaydetme, yedekleme ve geri yukleme",
       "priority": 2,
       "done_when": "Menu cubugu siralamasi ve oge tasarimlari adlandirilmis olarak kaydedilebiliyor, otomatik yedek aliniyor, disari/iceri aktarilabiliyor; yanlislikla kaybedilen tasarim yedekten geri getiriliyor; kullanici onayladi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-10. Tetikleyici: kullanici uzun surede yaptigi menu cubugu tasarimini yanlislikla kaybetti. Yedek konumu repoya/kimlige girmemeli."
+      "status": "in_progress",
+      "evidence": "2026-11-11: Kayitli duzenler (ad ile kaydet/ustune yaz/sil), otomatik yedek (acilista, saatte bir, her toptan degisiklikten once; son 20, ayni duzen tekrarlanmaz), JSON disa/ice aktarma, yedekten Geri yukle. Dosya: ~/Library/Application Support/Adalmon/MenuBarLayouts.json (repoya girmez). Kod: MenuBarLayoutArchive.swift, MenuBarLayoutsSection.swift, MenuBarConfigStore.replaceConfig. Testler: MenuBarLayoutArchiveTests 13/13; tam suite 1212 gecti (tek dusen yeni test duzeltildi, ilgili 51/51). Kuruldu; canli: acilista gercek duzen yedege yazildi. Bagimsiz reviewer bulgulari (yedek siniri ozgun tasarimi dusurebiliyordu, yazma hatasi sessizdi, geri al elle duzenlemeyi silebiliyordu) duzeltildi. KALAN: kullanici onayi."
     },
     {
       "id": "MENUBAR-03",
       "title": "Menu cubugu yerlesimi geri yuklenirken/sifirlanirken onay uyarisi",
       "priority": 1,
       "done_when": "Sifirla ve Geri yukle islemleri once ne kaybolacagini yazan bir onay penceresi gosteriyor; onaydan once otomatik yedek aliniyor ve 'geri al' sunuluyor; yanlislikla tiklama veriyi silmiyor; kullanici onayladi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-10. MENUBAR-02 ile birlikte yapilmali. Mevcut Sifirla/Geri yukle akislari kodda taranmali."
+      "status": "in_progress",
+      "evidence": "2026-11-11: Varsayilana don, Basit duzene don, ozel tasarim ustune hazir duzen, Geri yukle ve Sil once onay penceresi gosteriyor (ne kaybolacagi + yedek alinacagi yazili); onaydan once otomatik yedek, sonra ustte 'Geri al' seridi. Testler: testResetToDefaultBacksUpAndCanBeUndone, testPresetAndRestoreGoThroughBackup, testManualEditAfterReplaceClearsUndo. KALAN: kullanici onayi."
     },
     {
       "id": "BATT-02",
@@ -192,7 +192,7 @@
       "priority": 1,
       "done_when": "Kok neden bulunup duzeltildi; menu cubugu ogesi degistirilince bellek (ve diger) esikleri/ayarlari sifirlanmiyor; ayarlarin kaydet/yukle/yeniden yazma yollari taranip benzer hatalar listelendi ve duzeltildi; regresyon testi var",
       "status": "in_progress",
-      "evidence": "2026-11-11: Kok neden (koddan dogrulandi): ComponentInspector'da .onChange(of: component.primary) esikleri varsayilana cekiyordu; view .id'siz oldugu icin baska bilesen secilince ayni view yeni bilesene baglaniyor, primary degismis gorunuyor ve YENI secilen bilesenin esikleri sifirlaniyordu. Duzeltme: ComponentFieldKey(id+alan) ile yalnizca ayni bilesendeki duzenlemeye tepki; MenuBarComponent.applyPrimaryEdit esikleri yalnizca olcek degisince (%->°C) sifirlar; MenuBarSettingsTab'da inspector'a .id. Benzer riskler: MenuBarConfig tek cozulemeyen bilesende tum listeyi dusuruyordu -> Lossy (PanelConfig'teki ortak); MenuBarConfigStore cozulemeyen kaydi varsayilanla eziyordu -> once 'menuBarConfig.unreadableBackup' anahtarina yedek. Testler: MenuBarConfigTests'e 5 regresyon testi; MenuBarConfig/Component/MetricCard/SettingsSnapshot/PanelConfig testleri 46/46 gecti. KALAN: uygulamaya kurup canli dogrulama (Ayarlar > Menu cubugu > Gelismis: bellek esigini degistir, baska bilesen sec, geri don). Commit edilmedi."
+      "evidence": "2026-11-11: Kok neden (koddan dogrulandi): ComponentInspector'da .onChange(of: component.primary) esikleri varsayilana cekiyordu; view .id'siz oldugu icin baska bilesen secilince ayni view yeni bilesene baglaniyor, primary degismis gorunuyor ve YENI secilen bilesenin esikleri sifirlaniyordu. Duzeltme: ComponentFieldKey(id+alan) ile yalnizca ayni bilesendeki duzenlemeye tepki; MenuBarComponent.applyPrimaryEdit esikleri yalnizca olcek degisince (%->°C) sifirlar; MenuBarSettingsTab'da inspector'a .id. Benzer riskler: MenuBarConfig tek cozulemeyen bilesende tum listeyi dusuruyordu -> Lossy (PanelConfig'teki ortak); MenuBarConfigStore cozulemeyen kaydi varsayilanla eziyordu -> once 'menuBarConfig.unreadableBackup' anahtarina yedek. Testler: MenuBarConfigTests'e 5 regresyon testi; MenuBarConfig/Component/MetricCard/SettingsSnapshot/PanelConfig testleri 46/46 gecti. KALAN: uygulamaya kurup canli dogrulama (Ayarlar > Menu cubugu > Gelismis: bellek esigini degistir, baska bilesen sec, geri don). Commit edilmedi. 2026-11-11 23:14: kuruldu (dd53044); tam suite'te ilgili testler gecti. KALAN: kullanicinin canli denemesi."
     },
     {
       "id": "WINTRAY-01",

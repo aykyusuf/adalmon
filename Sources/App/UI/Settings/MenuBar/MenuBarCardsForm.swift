@@ -9,9 +9,12 @@ struct MenuBarCardsForm: View {
     let onOpenAdvanced: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
+    @State private var pending: LayoutConfirmation?
 
     var body: some View {
         Form {
+            MenuBarUndoSection(store: store)
+
             Section {
                 MenuBarMockPreview(config: store.config, values: values, dark: colorScheme == .dark, zoom: 1.5, wallpaperMargin: 8)
                 Picker("Gösterim", selection: $store.config.displayMode) {
@@ -37,7 +40,9 @@ struct MenuBarCardsForm: View {
                     Text("Genişlik: \(Int(totalWidth)) pt")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
-                    Button("Varsayılana dön", systemImage: "arrow.counterclockwise") { store.resetToDefault() }
+                    Button("Varsayılana dön", systemImage: "arrow.counterclockwise") {
+                        pending = .replacing(store, with: "varsayılan düzen", confirmLabel: "Varsayılana dön") { store.resetToDefault() }
+                    }
                         .buttonStyle(.glass)
                         .controlSize(.small)
                         .disabled(store.config == .default)
@@ -66,7 +71,11 @@ struct MenuBarCardsForm: View {
                         .font(.headline)
                     Text("Menü çubuğu, kartlarla gösterilemeyen bileşenlerle ayarlanmış. Basit düzene dönersen varsayılan kartlar uygulanır; gösterim ve aralık korunur.")
                         .foregroundStyle(.secondary)
-                    Button("Basit düzene dön", systemImage: "rectangle.grid.1x2") { store.resetToSimpleLayout() }
+                    Button("Basit düzene dön", systemImage: "rectangle.grid.1x2") {
+                        pending = .replacing(store, with: "varsayılan basit kartlar", confirmLabel: "Basit düzene dön") {
+                            store.resetToSimpleLayout()
+                        }
+                    }
                 }
             }
 
@@ -89,6 +98,8 @@ struct MenuBarCardsForm: View {
                 }
             }
 
+            MenuBarLayoutsSection(store: store, pending: $pending)
+
             Section {
                 Button("Gelişmiş düzenleyici…", systemImage: "slider.horizontal.3", action: onOpenAdvanced)
             } footer: {
@@ -98,6 +109,7 @@ struct MenuBarCardsForm: View {
             }
         }
         .formStyle(.grouped)
+        .layoutConfirmation($pending)
     }
 
     private var pinnedDevices: [MenuBarComponent] { store.config.components.filter { $0.deviceID != nil } }

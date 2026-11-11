@@ -7,6 +7,7 @@ struct MenuBarSettingsTab: View {
     @Bindable var store: MenuBarConfigStore
     @State private var values = WidgetValues.sample
     @State private var selectedID: MenuBarComponent.ID?
+    @State private var pending: LayoutConfirmation?
 
     init(model: AppModel) {
         self.model = model
@@ -15,18 +16,30 @@ struct MenuBarSettingsTab: View {
 
     var body: some View {
         Form {
+            MenuBarUndoSection(store: store)
+
             Section {
                 PresetStrip(config: store.config, values: values, current: store.currentPreset) { preset in
-                    store.apply(preset)
-                    selectedID = store.config.components.first?.id
+                    let apply = {
+                        store.apply(preset)
+                        selectedID = store.config.components.first?.id
+                    }
+                    // Hazır düzenden hazır düzene geçiş kayıpsızdır; özel tasarımın üzerine yazacaksa önce sor.
+                    if store.currentPreset == nil {
+                        pending = .replacing(store, with: "“\(preset.displayName)” hazır düzeni", confirmLabel: "Uygula", action: apply)
+                    } else {
+                        apply()
+                    }
                 }
             } header: {
                 HStack {
                     Text("Hazır düzenler")
                     Spacer()
                     Button("Varsayılana dön", systemImage: "arrow.counterclockwise") {
-                        store.resetToDefault()
-                        selectedID = store.config.components.first?.id
+                        pending = .replacing(store, with: "varsayılan düzen", confirmLabel: "Varsayılana dön") {
+                            store.resetToDefault()
+                            selectedID = store.config.components.first?.id
+                        }
                     }
                     .buttonStyle(.glass)
                     .controlSize(.small)
@@ -98,8 +111,11 @@ struct MenuBarSettingsTab: View {
                 }
                 Toggle("Birimleri göster", isOn: $store.config.showUnits)
             }
+
+            MenuBarLayoutsSection(store: store, pending: $pending)
         }
         .formStyle(.grouped)
+        .layoutConfirmation($pending)
         .liveWidgetValues($values, model: model)
         .onAppear {
             if selectedID == nil { selectedID = store.config.components.first?.id }

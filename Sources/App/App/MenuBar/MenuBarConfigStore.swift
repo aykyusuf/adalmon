@@ -6,12 +6,24 @@ final class MenuBarConfigStore {
     static let defaultsKey = "menuBarConfig"
     static let unreadableBackupKey = "menuBarConfig.unreadableBackup"
 
-    var config: MenuBarConfig { didSet { save() } }
+    var config: MenuBarConfig {
+        didSet {
+            save()
+            // Toptan değişiklikten sonra elle düzenleme yapıldıysa "Geri al" o düzenlemeleri sessizce silmesin.
+            if !isReplacing { undo = nil }
+        }
+    }
+    @ObservationIgnored private var isReplacing = false
 
     @ObservationIgnored private let defaults: UserDefaults
+    /// Kayıtlı düzenler + otomatik yedekler.
+    let archive: MenuBarLayoutArchive
+    /// Son yıkıcı işlemi (sıfırla / hazır düzen / geri yükle) geri almak için önceki düzen.
+    private(set) var undo: MenuBarUndo?
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, archive: MenuBarLayoutArchive? = nil) {
         self.defaults = defaults
+        self.archive = archive ?? MenuBarLayoutArchive()
         let data = defaults.data(forKey: Self.defaultsKey)
         if let data, let decoded = try? JSONDecoder().decode(MenuBarConfig.self, from: data) {
             config = decoded
@@ -20,8 +32,38 @@ final class MenuBarConfigStore {
             if let data { defaults.set(data, forKey: Self.unreadableBackupKey) }
             config = Self.migratedConfig(from: defaults)
         }
+        self.archive.autoBackup(config, reason: "Açılışta")
         save()
     }
+
+    /// Düzeni toptan değiştiren her işlem buradan geçer: önce otomatik yedek, sonra "Geri al" için önceki hâl saklanır.
+    func replaceConfig(_ new: MenuBarConfig, reason: String) {
+        guard new != config else { return }
+        let old = config
+        archive.autoBackup(old, reason: "\(reason) öncesi")
+        isReplacing = true
+        config = new
+        isReplacing = false
+        undo = MenuBarUndo(previous: old, label: reason)
+    }
+
+    /// Son toptan değişikliği geri alır (o andaki düzen de otomatik yedeğe düşer).
+    func undoLastReplace() {
+        guard let undo else { return }
+        archive.autoBackup(config, reason: "Geri al öncesi")
+        self.undo = nil
+        config = undo.previous
+    }
+
+    func dismissUndo() { undo = nil }
+
+    /// Kayıtlı ya da otomatik yedekteki düzeni uygular.
+    func restore(_ entry: MenuBarLayoutEntry) {
+        replaceConfig(entry.config, reason: "“\(entry.name)” geri yüklemesi")
+    }
+
+    @discardableResult
+    func saveCurrentLayout(name: String) -> MenuBarLayoutEntry { archive.save(config, name: name) }
 
     var currentPreset: MenuBarPreset? { MenuBarPreset.matching(config.components.filter { $0.deviceID == nil }) }
 
@@ -39,16 +81,20 @@ final class MenuBarConfigStore {
 
     /// "Basit düzene dön": replaces an advanced component list with the default cards (layout options kept).
     func resetToSimpleLayout() {
-        apply(cards: MetricCardConfig.defaults)
+        var next = config
+        next.components = MetricCardConfig.components(for: MetricCardConfig.defaults) + pinnedDeviceComponents
+        replaceConfig(next, reason: "Basit düzene dönüş")
     }
 
     func apply(_ preset: MenuBarPreset) {
-        config.components = preset.components + pinnedDeviceComponents
+        var next = config
+        next.components = preset.components + pinnedDeviceComponents
+        replaceConfig(next, reason: "“\(preset.displayName)” hazır düzeni")
     }
 
     /// "Varsayılana dön": default components and layout options.
     func resetToDefault() {
-        config = .default
+        replaceConfig(.default, reason: "Varsayılana dönüş")
     }
 
     @discardableResult
@@ -96,6 +142,8 @@ final class MenuBarConfigStore {
     private func save() {
         guard let data = try? JSONEncoder().encode(config) else { return }
         defaults.set(data, forKey: Self.defaultsKey)
+        // Uzun düzenleme oturumlarında da kayıp olmasın: saatte en fazla bir otomatik yedek.
+        archive.autoBackupIfStale(config, interval: 3600, reason: "Saatlik otomatik yedek")
     }
 
     static func migratedConfig(from defaults: UserDefaults) -> MenuBarConfig {
@@ -110,4 +158,10 @@ final class MenuBarConfigStore {
         if compactOn { return MenuBarConfig(components: MenuBarPreset.kompakt.components + components, displayMode: .combined) }
         return MenuBarConfig(components: components, displayMode: .separate)
     }
+}
+
+struct MenuBarUndo: Equatable, Sendable {
+    var previous: MenuBarConfig
+    /// Uygulanan işlemin adı ("Varsayılana dönüş" gibi).
+    var label: String
 }

@@ -188,3 +188,8 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 **Now:** Bellek eşiği sıfırlanma hatası düzeltildi (kök neden: `ComponentInspector` `.onChange(of: component.primary)` seçim değişimini düzenleme sanıyordu). Değişen dosyalar: `MenuBarComponent.swift` (ComponentFieldKey + applyPrimaryEdit), `ComponentInspector.swift`, `MenuBarSettingsTab.swift` (.id), `MenuBarConfig.swift` (Lossy bileşen çözümü), `MenuBarConfigStore.swift` (çözülemeyen kayıt yedeği), `PanelConfig.swift` (Lossy private→internal), `Tests/MenuBarConfigTests.swift` (+5 test). İlgili testler 46/46 geçti.
 **Next:** (1) Uygulamayı kurup canlı doğrula (Gelişmiş düzenleyici: bellek eşiğini değiştir → başka bileşen seç → geri dön, eşik korunmalı). (2) Kullanıcı isterse commit (secret taraması). (3) Sonra MENUBAR-02+03, MEM-COLOR-01.
 **Ders:** SwiftUI'de seçime göre değişen binding'e bağlı `.onChange` seçim değişiminde de tetiklenir; düzenleme tepkisini id+değer anahtarıyla sınırla ya da view'a `.id` ver.
+
+## 2026-11-11 ~23:15 — MENUBAR-02/03 bitti (onay bekliyor); kullanıcı 45 dk yok
+**Decisions:** Kullanıcı 45 dk için paralel ajanlarla şunları seçti: MEM-COLOR-01, SAVER-01, araştırmalar (MENUBAR-01, USAGE-01, CLEAN-01 — yalnızca rapor), canlı ekran testleri (kullanıcı yokken; ekran görüntüleri dönüşte onay için). Commit en sonda tek seferde. Menü çubuğu yedekleri: `~/Library/Application Support/Adalmon/MenuBarLayouts.json`; yıkıcı her işlem `MenuBarConfigStore.replaceConfig` üzerinden (yedek + geri al).
+**Ders:** Hazır düzen her uygulandığında bileşenler yeni UUID alır; düzen karşılaştırmasında `MenuBarConfig.isSameLayout(as:)` kullan, `==` değil.
+
