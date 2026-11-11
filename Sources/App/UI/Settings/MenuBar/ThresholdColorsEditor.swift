@@ -85,8 +85,12 @@ private struct LevelColorRow: View {
 
     private var swiftUIColor: Binding<Color> {
         Binding {
-            if case .custom(let rgba) = color { return Color(nsColor: rgba.nsColor) }
-            return Color(nsColor: WidgetPalette.threshold(level))
+            switch color {
+            case .custom(let rgba): return Color(nsColor: rgba.nsColor)
+            // Renksiz: menü çubuğundaki gibi etiket rengi görünsün (yeşil kalıp yanıltmasın).
+            case .none: return Color(nsColor: .labelColor)
+            case .automatic: return Color(nsColor: WidgetPalette.threshold(level))
+            }
         } set: {
             color = .custom(RGBAColor(NSColor($0)))
         }
