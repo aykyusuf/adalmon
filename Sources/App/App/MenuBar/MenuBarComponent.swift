@@ -133,3 +133,22 @@ struct MenuBarComponent: Codable, Equatable, Identifiable, Sendable {
         return c
     }
 }
+
+/// Inspector'daki "1./2. satır" değişikliğini, seçimin başka bileşene geçmesinden ayırt etmek için izlenen anahtar.
+/// (Seçim değişince aynı view yeni bileşene bağlanır; `primary` değişmiş görünür ama bu kullanıcı düzenlemesi değildir.)
+struct ComponentFieldKey: Equatable, Sendable {
+    var id: MenuBarComponent.ID
+    var field: DataField?
+
+    /// Yalnızca aynı bileşende alan değiştiyse true.
+    func isEdit(from old: ComponentFieldKey) -> Bool { old.id == id && old.field != field }
+}
+
+extension MenuBarComponent {
+    /// Kullanıcı aynı bileşenin 1. satırını `old`'dan `primary`'ye değiştirdi. Eşikler yalnızca ölçek değişince
+    /// (ör. % → °C) varsayılana döner; aynı ölçekteki özel eşikler korunur.
+    mutating func applyPrimaryEdit(from old: DataField) {
+        if old.defaultThresholds != primary.defaultThresholds { thresholds = primary.defaultThresholds }
+        self = normalized()
+    }
+}

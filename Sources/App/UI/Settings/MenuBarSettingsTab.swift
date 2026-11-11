@@ -56,6 +56,7 @@ struct MenuBarSettingsTab: View {
                                        canMoveRight: index < store.config.components.count - 1,
                                        onMove: { store.move(id: store.config.components[index].id, by: $0) },
                                        onDelete: { delete(store.config.components[index].id) })
+                        .id(store.config.components[index].id)
                 }
             }
 

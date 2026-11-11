@@ -13,11 +13,14 @@ struct ComponentInspector: View {
 
     var body: some View {
         header
-            .onChange(of: component.primary) { _, newValue in
-                component.thresholds = newValue.defaultThresholds
-                component = component.normalized()
+            // Seçim başka bileşene geçince de `primary` değişmiş görünür; yalnızca aynı bileşendeki düzenlemeye tepki ver
+            // (aksi halde yeni seçilen bileşenin özel eşikleri varsayılana dönüyordu — SETTINGS-BUG-01).
+            .onChange(of: ComponentFieldKey(id: component.id, field: component.primary)) { old, new in
+                guard new.isEdit(from: old), let oldField = old.field else { return }
+                component.applyPrimaryEdit(from: oldField)
             }
-            .onChange(of: component.secondary) {
+            .onChange(of: ComponentFieldKey(id: component.id, field: component.secondary)) { old, new in
+                guard new.isEdit(from: old) else { return }
                 component = component.normalized()
             }
 

@@ -185,4 +185,53 @@ final class MenuBarConfigTests: XCTestCase {
         XCTAssertEqual(frames.last.map { $0.upperBound + MenuBarComposer.horizontalPadding } ?? 0,
                        MenuBarComposer.width(of: config.components, config: config, values: .sample), accuracy: 0.001)
     }
+
+    // MARK: SETTINGS-BUG-01 — bileşen seçimi değişince eşikler sıfırlanmamalı
+
+    func testSelectingAnotherComponentIsNotAFieldEdit() {
+        let cpu = MenuBarComponent(.cpu)
+        let memory = MenuBarComponent(.memoryUsed)
+        let before = ComponentFieldKey(id: cpu.id, field: cpu.primary)
+        let after = ComponentFieldKey(id: memory.id, field: memory.primary)
+        XCTAssertFalse(after.isEdit(from: before), "seçim değişimi düzenleme sayılmamalı")
+        XCTAssertTrue(ComponentFieldKey(id: cpu.id, field: .cpuTemp).isEdit(from: before))
+        XCTAssertFalse(before.isEdit(from: before))
+    }
+
+    func testPrimaryEditKeepsCustomThresholdsOnSameScale() {
+        var c = MenuBarComponent(.memoryUsed)
+        c.thresholds = Thresholds(warning: 0.3, critical: 0.95)
+        c.primary = .memoryPercent
+        c.applyPrimaryEdit(from: .memoryUsed)
+        XCTAssertEqual(c.thresholds, Thresholds(warning: 0.3, critical: 0.95))
+    }
+
+    func testPrimaryEditResetsThresholdsWhenScaleChanges() {
+        var c = MenuBarComponent(.cpu)
+        c.thresholds = Thresholds(warning: 0.3, critical: 0.95)
+        c.primary = .cpuTemp
+        c.applyPrimaryEdit(from: .cpu)
+        XCTAssertEqual(c.thresholds, DataField.cpuTemp.defaultThresholds)
+    }
+
+    func testOneUndecodableComponentDoesNotDropTheRest() throws {
+        var config = MenuBarConfig.default
+        config.components[1].thresholds = Thresholds(warning: 0.4, critical: 0.7)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as? [String: Any])
+        var comps = try XCTUnwrap(json["components"] as? [[String: Any]])
+        comps.insert(["primary": "noSuchField"], at: 0)
+        json["components"] = comps
+        let decoded = try JSONDecoder().decode(MenuBarConfig.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.components.count, config.components.count)
+        XCTAssertEqual(decoded.components[1].thresholds, Thresholds(warning: 0.4, critical: 0.7))
+    }
+
+    @MainActor
+    func testUnreadableStoredConfigIsBackedUpBeforeReset() {
+        let d = makeDefaults()
+        let junk = Data("{not json".utf8)
+        d.set(junk, forKey: MenuBarConfigStore.defaultsKey)
+        _ = MenuBarConfigStore(defaults: d)
+        XCTAssertEqual(d.data(forKey: MenuBarConfigStore.unreadableBackupKey), junk)
+    }
 }

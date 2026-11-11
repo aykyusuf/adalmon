@@ -1,6 +1,6 @@
 {
   "_rule": "Never delete or reword a task (id, title, done_when); new tasks may be added. Only status and evidence change. status: todo -> in_progress when work on it starts -> done only when every part of done_when is met, including any sign-off it names (passing tests alone do not close a task that also needs the user's approval) -> blocked when it cannot move, with the reason in evidence. evidence: what proves the status, e.g. the command run and its result, a file path, a date.",
-  "updated": "2026-11-09",
+  "updated": "2026-11-10",
   "tasks": [
     {
       "id": "PERM-01",
@@ -112,7 +112,7 @@
       "priority": 2,
       "done_when": "Kullanici 4 karari verdi (sunucu dili, Windows gorunum, cloud kapsami, Windows hook kabugu); Windows'ta hook komutu elle denendi; sunucu olay alip durum tutuyor ve Mac Adalmon uzak oturumlari makine rozetiyle gosteriyor",
       "status": "todo",
-      "evidence": "Sadece analiz: docs/WINDOWS-VE-SUNUCU-ARASTIRMA.md (bolum 8 kararlar, bolum 9 dogrulanmayanlar)"
+      "evidence": "Kararlar 2026-11-10: sunucu Node.js (ofis istemcisi JS, planlayici Faz 2'de ayni dile tasinir, sunucuda node v24 + pm2 + nginx var); Windows gorunum: tarayici/PWA VE tray (ikisi de); cloud oturumlari: ilk asamada hayir; hook: curl.exe. Sunucu (ssh adaltek_legacy, salt okunur bakildi): Ubuntu 24.04, 7.7 GB RAM (kullanilabilir ~5 GB), disk %83 (13 GB bos), Postgres/Redis dahil cok servis var, dolu portlar 22 53 80 443 3001 3002 4000 4100 5432 6379 7071 7072 7080 7081 8100 8101 8200 8787 9000 9001 9443-9445. Kod henuz yok. Kalan: Windows'ta hook'u elle deneme (Faz 0). | Ek kararlar 2026-11-10: adres = Adaltek-1'de yeni alt alan adi + nginx server blogu (alan adi henuz verilmedi, DNS+sertifika gerekir); Windows PC'lerde Claude Code native Windows (PowerShell hook); proje/oturum adlari maskelenmeden gonderilir (maskeleme sonra ayar). Adaltek-1 disk: gorulebilen 17 GB, df 59 GB dolu; kalan ~42 GB root olmadan gorulemedi (muhtemelen Postgres+log), silme yapilmadi."
     },
     {
       "id": "PLAQUE-01",
@@ -121,6 +121,86 @@
       "done_when": "macOS ofisinde (gunduz ve gece) ve web istemcisinde oturum adi serif, model sparkle'li tonlu hap olarak okunakli ve guzel gorunuyor; kullanici onayladi",
       "status": "todo",
       "evidence": "Kodlandi (OfficeRoomNode.layoutPlaqueVector, app.js drawPlaque); gozle bakilmadi"
+    },
+    {
+      "id": "USAGE-01",
+      "title": "Claude Code / Codex abonelik limitleri ve API kredisi gostergesi + dusuk uyari",
+      "priority": 2,
+      "done_when": "Panelde/ofiste Claude Code (5 saatlik ve haftalik pencere), Codex abonelik limiti ve API kredi bakiyesi kalan miktarla gorunuyor; esik altina inince ekranda bildirim/uyari cikiyor (esikler ayarlanabilir, 5 saatlik pencere icin ayri); kullanici onayladi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-10: 'claude code codex gibi subların limitlerini, api kredilerimi gorebileyim, azalinca uyari versin, 5 saatlik vb ozel'. Henuz arastirilmadi: resmi/yerel veri kaynagi (Claude Code statusline rate_limits, Codex CLI, API bakiye endpoint'i) belirlenmeli; belgesiz OAuth API kullanilmamali. Kodlanmadi."
+    },
+    {
+      "id": "OFFICE-CTRL-01",
+      "title": "Ajan ofisinden oturumla mesajlasma ve AskUserQuestion/mod/izin pencerelerini cevaplama-yonetme",
+      "priority": 3,
+      "done_when": "Ajan ofisinden (macOS pencere/pano ve ofis karti) bir Claude oturumuna mesaj gonderilebiliyor; oturumun AskUserQuestion sorulari, izin istekleri ve mod pencereleri ofiste gorunup cevaplanabiliyor; guvenlik modeli (kimin cevaplayabilecegi, token, yerel/uzak) arastirilip kullanici onayladi; kullanici gercek oturumda denedi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-10. Henuz arastirilmadi: Claude Code'un oturuma disaridan girdi verme yollari (hook cevabi, MCP, Agent SDK/remote control, PermissionRequest hook karari) ve guvenlik riskleri belirlenmeli; konusulmadan kodlanmayacak."
+    },
+    {
+      "id": "CLEAN-01",
+      "title": "Clean-my-mac benzeri acik kaynak bir projeyi Adalmon'a entegre etme (arastirma + karar)",
+      "priority": 3,
+      "done_when": "Aday acik kaynak projeler (lisans, bakim durumu, ne yapiyor, guvenlik riski) arastirildi ve karsilastirildi; kullanici ile konusulup entegrasyon yaklasimi (kod kullanma, arac cagirma, kendi yazma) secildi; secilirse ayri gorev olarak planlandi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-10: 'clean my mac gibi open source bir projeyi bu projenin icine entegre etmek, arastirilip konusulacak'. Henuz arastirilmadi. Not: disk %99 dolu (Notability iCloud indirmesi gibi) bu ozelligin ihtiyacini gosteriyor; silme islemleri geri alinamaz, onay/onizleme sart olmali."
+    },
+    {
+      "id": "MENUBAR-01",
+      "title": "Menu cubugunda ogelerin yeri degisince Adalmon ayarlarindaki siranin da ayni kalmasi (zorsa yapilmaz)",
+      "priority": 3,
+      "done_when": "macOS menu cubugunda (Cmd+surukle) ogelerin sirasi degisince Adalmon'un kendi siralama ayari bununla tutarli; ya da teknik olarak mumkun degilse nedeni belgelendi ve kullanici 'yapma' dedi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-10. Once fizibilite: macOS statu ogelerinin sirasini uygulamaya bildiren public API var mi arastirilacak. Yoksa yapilmayacak."
+    },
+    {
+      "id": "MENUBAR-02",
+      "title": "Menu cubugu yerlesim/tasarimini kaydetme, yedekleme ve geri yukleme",
+      "priority": 2,
+      "done_when": "Menu cubugu siralamasi ve oge tasarimlari adlandirilmis olarak kaydedilebiliyor, otomatik yedek aliniyor, disari/iceri aktarilabiliyor; yanlislikla kaybedilen tasarim yedekten geri getiriliyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-10. Tetikleyici: kullanici uzun surede yaptigi menu cubugu tasarimini yanlislikla kaybetti. Yedek konumu repoya/kimlige girmemeli."
+    },
+    {
+      "id": "MENUBAR-03",
+      "title": "Menu cubugu yerlesimi geri yuklenirken/sifirlanirken onay uyarisi",
+      "priority": 1,
+      "done_when": "Sifirla ve Geri yukle islemleri once ne kaybolacagini yazan bir onay penceresi gosteriyor; onaydan once otomatik yedek aliniyor ve 'geri al' sunuluyor; yanlislikla tiklama veriyi silmiyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-10. MENUBAR-02 ile birlikte yapilmali. Mevcut Sifirla/Geri yukle akislari kodda taranmali."
+    },
+    {
+      "id": "BATT-02",
+      "title": "Batarya simsek simgesini animasyonlu yapma; renk ve animasyon alternatifleri",
+      "priority": 3,
+      "done_when": "Sarj simsegi birkac animasyon stilinden (ornegin nabiz, akis, parilti, kapali) ve renkten secilebiliyor, ayarlardan degistirilebiliyor; pil/CPU maliyeti Constraints'e uygun (idle CPU ~<%1); kullanici onayladi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-10. Mevcut BatteryLiquidGlyph yapisi uzerine kurulacak. Animasyon sadece gorunurken ve sarjdayken calismali (pil kuralı)."
+    },
+    {
+      "id": "MEM-COLOR-01",
+      "title": "Bellek (memory) renkleri: tum renkler ve esikler ayarlanabilir, renksiz varsayilan secenegi",
+      "priority": 2,
+      "done_when": "Bellek gostergesinin (menu cubugu ve panel) her seviye rengi (dusuk/orta/yuksek/kritik) ve esikleri ayarlardan degistirilebiliyor; 'renksiz' (sistem rengi) secilebiliyor; varsayilan yesil zorunlu degil; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-10. Ekran goruntusu: 'BOS 3322 MB' yesil gorunuyor; kullanici turuncu/kirmizi esiklerini ayarlamis ama alt seviye varsayilan yesile dusuyor, renksiz istiyor. Ayni mantik diger olcumlere (CPU, disk vb.) da yayilabilir."
+    },
+    {
+      "id": "SETTINGS-BUG-01",
+      "title": "Hata: menu cubugunda bir oge degisince bellek esikleri varsayilana donuyor; benzer ayar-sifirlanma hatalarini tara ve duzelt",
+      "priority": 1,
+      "done_when": "Kok neden bulunup duzeltildi; menu cubugu ogesi degistirilince bellek (ve diger) esikleri/ayarlari sifirlanmiyor; ayarlarin kaydet/yukle/yeniden yazma yollari taranip benzer hatalar listelendi ve duzeltildi; regresyon testi var",
+      "status": "in_progress",
+      "evidence": "2026-11-11: Kok neden (koddan dogrulandi): ComponentInspector'da .onChange(of: component.primary) esikleri varsayilana cekiyordu; view .id'siz oldugu icin baska bilesen secilince ayni view yeni bilesene baglaniyor, primary degismis gorunuyor ve YENI secilen bilesenin esikleri sifirlaniyordu. Duzeltme: ComponentFieldKey(id+alan) ile yalnizca ayni bilesendeki duzenlemeye tepki; MenuBarComponent.applyPrimaryEdit esikleri yalnizca olcek degisince (%->°C) sifirlar; MenuBarSettingsTab'da inspector'a .id. Benzer riskler: MenuBarConfig tek cozulemeyen bilesende tum listeyi dusuruyordu -> Lossy (PanelConfig'teki ortak); MenuBarConfigStore cozulemeyen kaydi varsayilanla eziyordu -> once 'menuBarConfig.unreadableBackup' anahtarina yedek. Testler: MenuBarConfigTests'e 5 regresyon testi; MenuBarConfig/Component/MetricCard/SettingsSnapshot/PanelConfig testleri 46/46 gecti. KALAN: uygulamaya kurup canli dogrulama (Ayarlar > Menu cubugu > Gelismis: bellek esigini degistir, baska bilesen sec, geri don). Commit edilmedi."
+    },
+    {
+      "id": "WINTRAY-01",
+      "title": "Windows tray uygulamasi (Tauri) ve PWA: ajan ofisini Windows'ta gostermek",
+      "priority": 3,
+      "done_when": "Windows'ta ajan ofisi hem tarayici/PWA olarak hem de tray uygulamasi olarak aciliyor ve Mac'teki ofisle ayni gorunumde; planlayici JS'e tasindi; kullanici gercek Windows PC'de denedi",
+      "status": "todo",
+      "evidence": "Karar 2026-11-10: ikisi de istendi. SERVER-01 sonrasi (Faz 2-3). Kod yok."
     }
   ]
 }

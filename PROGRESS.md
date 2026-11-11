@@ -1,5 +1,7 @@
 # Adalmon: progress
 
+**2026-11-11** — SETTINGS-BUG-01: menü çubuğunda başka öğe seçilince bellek eşiklerinin varsayılana dönmesi düzeltildi (inspector onChange'i seçim değişimini düzenleme sanıyordu). Ek sağlamlaştırma: tek bozuk bileşen config'i düşürmüyor, çözülemeyen kayıt ezilmeden yedekleniyor. +5 regresyon testi, ilgili 46 test geçti. Canlı doğrulama ve commit bekliyor.
+
 Task status lives in tasks.json. This file is a dated log only, newest first.
 
 ## Log

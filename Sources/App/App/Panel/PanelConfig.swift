@@ -153,8 +153,8 @@ struct PanelConfig: Codable, Equatable, Sendable {
     }
 }
 
-/// Bilinmeyen değeri hata vermek yerine nil olarak çözen sarmalayıcı.
-private struct Lossy<Value: Decodable>: Decodable {
+/// Bilinmeyen değeri hata vermek yerine nil olarak çözen sarmalayıcı (PanelConfig + MenuBarConfig).
+struct Lossy<Value: Decodable>: Decodable {
     let value: Value?
 
     init(from decoder: Decoder) throws {

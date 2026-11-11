@@ -4,6 +4,7 @@ import Observation
 @MainActor @Observable
 final class MenuBarConfigStore {
     static let defaultsKey = "menuBarConfig"
+    static let unreadableBackupKey = "menuBarConfig.unreadableBackup"
 
     var config: MenuBarConfig { didSet { save() } }
 
@@ -11,10 +12,12 @@ final class MenuBarConfigStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        if let data = defaults.data(forKey: Self.defaultsKey),
-           let decoded = try? JSONDecoder().decode(MenuBarConfig.self, from: data) {
+        let data = defaults.data(forKey: Self.defaultsKey)
+        if let data, let decoded = try? JSONDecoder().decode(MenuBarConfig.self, from: data) {
             config = decoded
         } else {
+            // Kayıt var ama çözülemiyorsa, varsayılanla ezmeden önce ham hâlini sakla (sessiz ayar kaybı olmasın).
+            if let data { defaults.set(data, forKey: Self.unreadableBackupKey) }
             config = Self.migratedConfig(from: defaults)
         }
         save()

@@ -220,6 +220,15 @@ Hook'lar orada çalışır (`CLAUDE_CODE_REMOTE=true`) ama yerel kullanıcı aya
 3. **Cloud oturumları** ilk aşamaya dahil mi? (Önerilen: hayır.)
 4. Windows'ta komut kabuğu: `curl.exe` (PowerShell hook) mı, küçük bir iletici binary mi? (Önerilen: önce `curl.exe`, sorun çıkarsa iletici.)
 
+### Kararlar (2026-11-10)
+
+1. **Sunucu dili: Node.js.** Gerekçe: ofis istemcisi JS, Faz 2'de planlayıcı JS'e taşınınca istemci ve sunucu aynı dili/mantığı paylaşır; kullanıcı "aynı UI/UX, port zor olmasın, ileride eklemek kolay olsun" dedi. Sunucuda node v24, pm2 ve nginx kurulu (Go yok).
+2. **Windows görünüm: tarayıcı/PWA ve tray, ikisi de.**
+3. **Cloud oturumları: ilk aşamada hayır.**
+4. **Hook: `curl.exe`.**
+5. **Adres:** Adaltek-1'de yeni alt alan adı + nginx server bloğu (alan adı kullanıcıdan bekleniyor; DNS ve sertifika gerekir). **Windows:** Claude Code native, hook `shell: powershell` + `curl.exe`. **Gizlilik:** proje/oturum adı olduğu gibi gider, maskeleme sonra ayar olarak.
+6. Sunucu (`adaltek_legacy`, salt okunur bakıldı): Ubuntu 24.04, 7,7 GB RAM, disk %83, Postgres/Redis ve çok sayıda servis çalışıyor, canlı iş sunucusu. Basit API orada yazılabilir ama küçük kalmalı (ayrı pm2 süreci, nginx arkasında, boş bir port).
+
 ## 9. Doğrulanmayanlar (uygulamadan önce denenmeli)
 
 - `http` hook'un async/arka plan çalıştırma desteği (dokümanın ilgili bölümü okunamadı).

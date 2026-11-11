@@ -27,8 +27,9 @@ struct MenuBarConfig: Codable, Equatable, Sendable {
 
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        if let components = try c.decodeIfPresent([MenuBarComponent].self, forKey: .components) {
-            self.components = components
+        if let lossy = try c.decodeIfPresent([Lossy<MenuBarComponent>].self, forKey: .components) {
+            // Çözülemeyen tek bileşen (ör. eski/yeni sürümdeki bilinmeyen alan) bütün listeyi ve ayarları düşürmesin.
+            self.components = lossy.compactMap(\.value)
         } else {
             // Round-2 JSON stored `items`; migrate each one into a component.
             let items = try c.decodeIfPresent([MenuBarItemConfig].self, forKey: .items) ?? []
