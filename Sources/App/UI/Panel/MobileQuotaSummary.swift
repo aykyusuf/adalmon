@@ -17,9 +17,8 @@ struct MobileQuotaSummary: Equatable {
             self.init(usedBytes: data.mobileToday, capBytes: data.dailyCapBytes)
             return
         }
-        // Aylık limit varsa ve dinamik bütçe günlük limitten kısıtlayıcıysa tahmin ona göre.
-        let budgetBinds = (b.dynamicDailyBudgetBytes ?? .max) < data.dailyCapBytes
-        let eta = budgetBinds ? (b.etaBudgetRecentRate ?? b.etaRecentRate) : b.etaRecentRate
+        // Günlük limit esas (aylık tempo yalnızca bilgi): tahmin günlük limite göre.
+        let eta = data.dailyCapBytes > 0 ? b.etaRecentRate : (b.etaBudgetRecentRate ?? b.etaRecentRate)
         self.init(usedBytes: data.mobileToday, capBytes: b.effectiveDailyCapBytes, eta: eta)
     }
 

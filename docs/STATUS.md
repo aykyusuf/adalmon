@@ -223,4 +223,5 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 **Kurulum komutu (yeni kural):** aktif filtre sürümünü oku → `CURRENT_PROJECT_VERSION=<aktif>` ile derle (Sources/Filter|Shared değişmediyse) → kur → `log show ... "bootstrap look-up"` = 0, `curl` 200, `net.cfil.active_count` 2.
 **Next:** kullanıcı onayları (tasks.json in_progress); eski Overview kart dosyalarının temizliği (testlerle birlikte); CPU %4-5 ölçümü (duvar kâğıdı kapalıyken).
 **Open:** Wi-Fi'de engel ağ değişimine göre uygulanır (Adalmon kapalıyken son config kalır); tam çözüm FilterConfig'e yeni liste (uzantı değişikliği → kullanıcı onayı).
+**Decision (2026-11-12, kullanıcı):** Günlük bütçe = günlük limit (örn. 3 GB). "Aylık kalan ÷ kalan gün" yalnızca bilgi/uyarı satırı; artık bugünün bütçesini düşürmez.
 

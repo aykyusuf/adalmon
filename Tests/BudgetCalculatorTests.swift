@@ -167,8 +167,8 @@ final class BudgetCalculatorTests: XCTestCase {
         XCTAssertEqual(s.cycleUsedBytes, 7 * GB)
         XCTAssertEqual(s.remainingBytes, 23 * GB)
         XCTAssertEqual(s.dynamicDailyBudgetBytes, 24 * GB / 24) // (30-6)/24 = 1 GB
-        XCTAssertEqual(s.effectiveDailyCapBytes, 1 * GB)       // dinamik bütçe günlük limitten küçük
-        XCTAssertEqual(s.todayRemainingBytes, 0)
+        XCTAssertEqual(s.effectiveDailyCapBytes, 3 * GB)       // günlük limit esas; tempo yalnızca bilgi
+        XCTAssertEqual(s.todayRemainingBytes, 2 * GB)
         // 6 gün geçti → 6 GB / 6 * 30 gün = 30 GB
         XCTAssertEqual(s.projectedCycleBytes, 30 * GB)
     }
@@ -188,7 +188,7 @@ final class BudgetCalculatorTests: XCTestCase {
         XCTAssertEqual(s.daysLeft, 1)
         XCTAssertEqual(s.remainingBytes, 0)
         XCTAssertEqual(s.dynamicDailyBudgetBytes, 0)
-        XCTAssertEqual(s.effectiveDailyCapBytes, 0)
+        XCTAssertEqual(s.effectiveDailyCapBytes, 3 * GB)
     }
 
     func testFirstDayOfCycleHasNoProjection() {

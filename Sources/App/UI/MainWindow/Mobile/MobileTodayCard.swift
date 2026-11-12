@@ -13,7 +13,8 @@ struct MobileTodayCard: View {
     private var fraction: Double { cap == 0 ? 0 : min(1, Double(used) / Double(cap)) }
     private var tint: Color { fraction >= 1 ? .red : (fraction >= 0.8 ? .orange : .green) }
     /// Aylık dinamik bütçe günlük limitten düşükse etkin limit odur.
-    private var usesDynamicBudget: Bool { cap < dailyCapBytes }
+    /// Aylık tempo günlük limitten düşükse bilgi satırı gösterilir (bütçeyi değiştirmez).
+    private var usesDynamicBudget: Bool { (budget.dynamicDailyBudgetBytes ?? .max) < dailyCapBytes }
 
     var body: some View {
         MobileCard(title: "Bugün", systemImage: "antenna.radiowaves.left.and.right") {
@@ -26,7 +27,7 @@ struct MobileTodayCard: View {
                         .monospacedDigit()
                         .foregroundStyle(fraction >= 0.8 ? tint : .primary)
                         .contentTransition(.numericText())
-                    Text("/ \(Format.bytes(cap)) \(usesDynamicBudget ? "bütçe" : "günlük limit") · \(Format.percent(fraction))")
+                    Text("/ \(Format.bytes(cap)) günlük limit · \(Format.percent(fraction))")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -40,12 +41,12 @@ struct MobileTodayCard: View {
                                tint: budget.todayRemainingBytes == 0 ? .red : .primary)
                     MobileStat(title: "Günlük limit", value: Format.bytes(dailyCapBytes),
                                help: "Ayarlar › Mobil veri bölümünden değiştirilir")
-                    MobileStat(title: "Dinamik günlük bütçe",
+                    MobileStat(title: "Aylık tempo (bilgi)",
                                value: budget.dynamicDailyBudgetBytes.map(Format.bytes) ?? "–",
                                help: "(Aylık limit − bugünden önceki kullanım) ÷ kalan gün")
                 }
                 if usesDynamicBudget {
-                    Label("Aylık limite göre hesaplanan bütçe günlük limitten düşük olduğu için bugün o uygulanıyor.",
+                    Label("Aylık limiti aşmamak için kalan günlerde günde ~\(budget.dynamicDailyBudgetBytes.map(Format.bytes) ?? "–") yeterli; bu yalnızca bilgi, bugünün bütçesi günlük limit.",
                           systemImage: "info.circle")
                         .font(.caption)
                         .foregroundStyle(.secondary)

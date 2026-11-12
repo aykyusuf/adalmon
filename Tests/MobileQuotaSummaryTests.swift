@@ -31,7 +31,8 @@ final class MobileQuotaSummaryTests: XCTestCase {
         XCTAssertFalse(q.isUrgent)
     }
 
-    func testBudgetBindingPicksBudgetETA() {
+    /// Günlük limit esas (2026-11-12): aylık tempo daha düşük olsa da tahmin günlük limite göre.
+    func testDailyCapETAWinsOverMonthlyPace() {
         var b = BudgetSnapshot.sample
         b.dynamicDailyBudgetBytes = 500_000_000
         b.effectiveDailyCapBytes = 500_000_000
@@ -40,7 +41,7 @@ final class MobileQuotaSummaryTests: XCTestCase {
         var data = PanelData()
         data.dailyCapBytes = 3_000_000_000
         data.budget = b
-        XCTAssertEqual(MobileQuotaSummary(data).eta, .reached)
+        XCTAssertEqual(MobileQuotaSummary(data).eta, .notToday)
         b.dynamicDailyBudgetBytes = 5_000_000_000
         data.budget = b
         XCTAssertEqual(MobileQuotaSummary(data).eta, .notToday)

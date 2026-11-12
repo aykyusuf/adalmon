@@ -69,7 +69,8 @@ enum BudgetCalculator {
             let beforeToday = cap > cycleUsedBeforeToday ? cap - cycleUsedBeforeToday : 0
             dynamic = beforeToday / UInt64(daysLeft)
         }
-        let effectiveCap = min(dailyCapBytes, dynamic ?? .max)
+        // Kullanıcı kararı (2026-11-12): günlük limit esas; aylık tempo (dynamic) yalnızca bilgi. Günlük limit yoksa tempo kullanılır.
+        let effectiveCap = dailyCapBytes > 0 ? dailyCapBytes : (dynamic ?? 0)
         let avgRate = Double(todayUsed) / max(60, now.timeIntervalSince(today))
         var projected: UInt64?
         if elapsedDays > 0 {
