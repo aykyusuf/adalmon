@@ -2,7 +2,8 @@ import Foundation
 
 /// Canlı uygulama listesinin zaman aralığı (rawValue = saniye).
 enum LiveRange: Int, CaseIterable, Identifiable, Sendable {
-    case sec60 = 60, min5 = 300, min15 = 900, min30 = 1_800, hour1 = 3_600
+    /// `now`: anlık hız (son `LiveUsageHistory.rateWindow` saniyenin ortalaması, saniye başına).
+    case now = 5, sec60 = 60, min5 = 300, min15 = 900, min30 = 1_800, hour1 = 3_600
 
     var id: Int { rawValue }
     var seconds: Int { rawValue }
@@ -11,6 +12,7 @@ enum LiveRange: Int, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
+        case .now: "Anlık"
         case .sec60: "60 sn"
         case .min5: "5 dk"
         case .min15: "15 dk"
@@ -22,6 +24,7 @@ enum LiveRange: Int, CaseIterable, Identifiable, Sendable {
     /// "son 15 dakikada" gibi cümle içi biçim.
     var phrase: String {
         switch self {
+        case .now: "şu an (saniyede)"
         case .sec60: "son 60 saniyede"
         case .min5: "son 5 dakikada"
         case .min15: "son 15 dakikada"
@@ -138,7 +141,9 @@ struct LiveUsageHistory: Sendable {
     /// (şu anki, henüz dolmamış dakika dahil).
     func totals(range: LiveRange, nowMinute: Int) -> [String: LiveTraffic] {
         var out: [String: LiveTraffic] = [:]
-        if range == .sec60 {
+        if range == .now {
+            return recent()
+        } else if range == .sec60 {
             for slot in seconds { for (app, t) in slot { out[app, default: LiveTraffic()].add(t) } }
         } else {
             let first = nowMinute - range.minutes + 1
@@ -164,10 +169,16 @@ struct LiveUsageHistory: Sendable {
         let recent = recent()
         var rows: [LiveAppUsage] = []
         for (app, t) in totals(range: range, nowMinute: nowMinute) {
-            let (down, up) = t.split(interface)
+            var (down, up) = t.split(interface)
             guard down &+ up > 0 else { continue }
             let r = recent[app].map { $0.split(interface) } ?? (0, 0)
-            rows.append(LiveAppUsage(app: app, down: down, up: up, rate: (r.down &+ r.up) / UInt64(Self.rateWindow)))
+            let rate = (r.down &+ r.up) / UInt64(Self.rateWindow)
+            if range == .now {
+                // Anlık: değerler saniye başına (B/s); toplam = hız.
+                down /= UInt64(Self.rateWindow); up /= UInt64(Self.rateWindow)
+                guard down &+ up > 0 else { continue }
+            }
+            rows.append(LiveAppUsage(app: app, down: down, up: up, rate: rate))
         }
         rows.sort { $0.bytes != $1.bytes ? $0.bytes > $1.bytes : $0.app < $1.app }
         if let limit, rows.count > limit { rows.removeSubrange(limit...) }

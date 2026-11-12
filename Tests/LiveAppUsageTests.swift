@@ -64,6 +64,21 @@ final class LiveAppUsageTests: XCTestCase {
         XCTAssertEqual(h.rows(range: .min15, interface: .all, nowMinute: m0).first?.bytes, 4_040)
     }
 
+    func testNowRangeShowsPerSecondValuesSortedByCurrentRate() {
+        var h = LiveUsageHistory()
+        let safari = "/Applications/Safari.app"
+        h.advance(seconds: 1)
+        h.record(app: chrome, bytesIn: 50_000, bytesOut: 0, mobile: true, minute: m0)   // eski: anlık pencereden düşecek
+        h.advance(seconds: LiveUsageHistory.rateWindow)
+        h.record(app: safari, bytesIn: 10_000, bytesOut: 5_000, mobile: true, minute: m0)
+        let rows = h.rows(range: .now, interface: .all, nowMinute: m0)
+        XCTAssertEqual(rows.map(\.app), [safari], "anlıkta yalnızca son saniyelerde trafiği olanlar")
+        XCTAssertEqual(rows.first?.down, 2_000)   // 10_000 / 5 sn
+        XCTAssertEqual(rows.first?.up, 1_000)
+        XCTAssertEqual(rows.first?.bytes, 3_000)  // B/s
+        XCTAssertEqual(h.rows(range: .sec60, interface: .all, nowMinute: m0).first?.app, chrome, "60 sn toplamında eski trafik önde")
+    }
+
     func testRateIsAverageOfLastFiveSeconds() {
         var h = LiveUsageHistory()
         h.advance(seconds: 1)
@@ -86,7 +101,7 @@ final class LiveAppUsageTests: XCTestCase {
             UsageBucket(app: "/Users/u/spoofdpi", signingID: "", host: "1.2.3.4", kind: .proxyEgress, expensive: true,
                         minute: minute, bytesIn: 4_000, bytesOut: 100),
         ], now: now)
-        for range in LiveRange.allCases {
+        for range in LiveRange.allCases where range != .now {
             let rows = engine.liveRows(range: range, interface: .mobile, now: now)
             XCTAssertEqual(rows.map(\.app), [chrome], "\(range.title)")
             XCTAssertEqual(rows.first?.bytes, 4_100)
@@ -95,7 +110,7 @@ final class LiveAppUsageTests: XCTestCase {
     }
 
     func testRangeTitles() {
-        XCTAssertEqual(LiveRange.allCases.map(\.title), ["60 sn", "5 dk", "15 dk", "30 dk", "1 sa"])
+        XCTAssertEqual(LiveRange.allCases.map(\.title), ["Anlık", "60 sn", "5 dk", "15 dk", "30 dk", "1 sa"])
         XCTAssertEqual(LiveInterface.allCases.map(\.title), ["Tümü", "Wi‑Fi", "Mobil"])
     }
 

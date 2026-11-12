@@ -179,7 +179,7 @@ struct LiveAppUsageList: View {
             .pickerStyle(.menu)
             .fixedSize()
             .controlSize(.small)
-            .help(window == .range(.sec60) ? "Son 60 saniyenin trafiği" : "Adalmon açıkken ölçülen trafik; \(window.phrase).")
+            .help(window == .range(.now) ? "Şu an saniyede ne kadar (son \(LiveUsageHistory.rateWindow) sn ortalaması)" : window == .range(.sec60) ? "Son 60 saniyenin trafiği" : "Adalmon açıkken ölçülen trafik; \(window.phrase).")
         } else {
             Picker("Aralık", selection: $window) {
                 ForEach(windows, id: \.self) { Text($0.title).tag($0) }
@@ -222,7 +222,7 @@ struct LiveAppUsageList: View {
             let peak = Double(max(1, rows.first?.bytes ?? 1))
             VStack(spacing: compact ? 6 : 10) {
                 ForEach(visible) { row in
-                    LiveAppRow(row: row, fraction: Double(row.bytes) / peak, tint: tint, compact: compact, showsSplit: window != .today,
+                    LiveAppRow(row: row, fraction: Double(row.bytes) / peak, tint: tint, compact: compact, showsSplit: window != .today, perSecond: window == .range(.now),
                                limit: controls.limit(row.app), block: controls.blockScope(row.app),
                                allowedScopes: LiveAppActionMapper.allowedScopes(app: row.app), preferredScope: preferredBlockScope,
                                onCommand: { apply($0, app: row.app, confirmed: false) })
@@ -291,6 +291,8 @@ private struct LiveAppRow: View {
     let compact: Bool
     /// ↓/↑ ayrımı biliniyor mu (Bugün toplamlarında yok).
     let showsSplit: Bool
+    /// Anlık pencere: değerler saniye başına (B/s) gösterilir, ayrı hız sütunu gizlenir.
+    var perSecond = false
     let limit: AppLimit?
     let block: BlockScope?
     let allowedScopes: [BlockScope]
@@ -326,11 +328,11 @@ private struct LiveAppRow: View {
             .layoutPriority(1)
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 1) {
-                Text(Format.bytes(row.bytes))
+                Text(perSecond ? Format.rate(Double(row.bytes)) : Format.bytes(row.bytes))
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(tint)
                 if !compact && showsSplit {
-                    Text("↓\(Format.bytes(row.down)) ↑\(Format.bytes(row.up))")
+                    Text(perSecond ? "↓\(Format.rate(Double(row.down))) ↑\(Format.rate(Double(row.up)))" : "↓\(Format.bytes(row.down)) ↑\(Format.bytes(row.up))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -338,12 +340,14 @@ private struct LiveAppRow: View {
             .monospacedDigit()
             .frame(minWidth: compact ? 64 : 110, alignment: .trailing)
             .help(showsSplit ? "İndirme ↓\(Format.bytes(row.down)) · Yükleme ↑\(Format.bytes(row.up))" : "Bugünkü toplam (↓ + ↑)")
+            if !perSecond {
             Text(row.rate > 0 ? Format.rate(Double(row.rate)) : "–")
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .frame(width: compact ? 58 : 70, alignment: .trailing)
                 .help("Anlık hız (son \(LiveUsageHistory.rateWindow) sn ortalaması)")
+            }
             limitMenu
             blockMenu
         }
