@@ -14,6 +14,7 @@ final class PanelControllerTests: XCTestCase {
     private func spin(_ s: TimeInterval = 0.15) { RunLoop.current.run(until: Date(timeIntervalSinceNow: s)) }
 
     func testOpenToggleSwitchAndEscape() throws {
+        try ScreenTests.requireScreen()
         let (controller, model) = makeController()
         let a = NSStatusBar.system.statusItem(withLength: 40)
         let b = NSStatusBar.system.statusItem(withLength: 40)
@@ -69,6 +70,7 @@ final class PanelControllerTests: XCTestCase {
     }
 
     func testEscapeKeyEventClosesPanel() throws {
+        try ScreenTests.requireScreen()
         let (controller, _) = makeController()
         let item = NSStatusBar.system.statusItem(withLength: 40)
         defer { NSStatusBar.system.removeStatusItem(item); controller.close() }

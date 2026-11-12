@@ -32,27 +32,34 @@ struct LimitHeroCard: View {
     var previewTilt: CGSize?
 
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.limitCardWidth) private var cardWidth
 
     var body: some View {
         let brand = LimitBrand.color(section.source)
+        let metrics = LimitCardMetrics(cardWidth: cardWidth, windowCount: section.display?.windows.count ?? 0)
         VStack(alignment: .leading, spacing: 20) {
-            LimitHeroHeader(source: section.source, plan: plan, display: section.display, now: snapshot.now)
+            LimitHeroHeader(source: section.source, plan: plan, display: section.display, now: snapshot.now, metrics: metrics)
             switch section.state {
             case .data(let display):
-                LimitHeroWindows(display: display, snapshot: snapshot, entrance: entrance, delay: delay, previewTilt: previewTilt)
+                LimitHeroWindows(display: display, snapshot: snapshot, metrics: metrics, entrance: entrance, delay: delay, previewTilt: previewTilt)
                     .opacity(display.isStale ? 0.72 : 1)
                 LimitModelUsageSection(source: section.source, usage: snapshot.modelUsage[section.source], kinds: display.windows.map(\.kind),
                                        entrance: entrance, now: snapshot.now)
             case .empty(let reason):
-                LimitEmptyHero(source: section.source, reason: reason, openSettings: openSettings, entrance: entrance)
+                LimitEmptyHero(source: section.source, reason: reason, openSettings: openSettings, entrance: entrance, metrics: metrics)
             }
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(LimitCardMetrics.padding)
+        // Üst hizalı, kardeş kartla eşit yükseklik (satır `fixedSize(vertical:)` ile en uzun kartın yüksekliğini alır).
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background { surface(brand) }
         .clipShape(.rect(cornerRadius: 24))
+        // Gölge yalnızca yüzey şeklinde: kartın (animasyonlu) içeriği her karede yeniden bulanıklaştırılmaz.
+        .background {
+            RoundedRectangle(cornerRadius: 24).fill(brand.opacity(0.1))
+                .shadow(color: brand.opacity(scheme == .dark ? 0.5 : 0.45), radius: 20, y: 10)
+        }
         .tilt3D(4.5, perspective: 0.8, glossRadius: 320, glossOpacity: 0.12, fixed: previewTilt.map { CGSize(width: $0.width * 0.4, height: $0.height * 0.4) })
-        .shadow(color: brand.opacity(scheme == .dark ? 0.22 : 0.2), radius: 20, y: 10)
         .accessibilityElement(children: .contain)
     }
 
@@ -75,18 +82,20 @@ private struct LimitHeroHeader: View {
     let plan: LimitPlan?
     let display: LimitProviderDisplay?
     let now: Date
+    let metrics: LimitCardMetrics
 
     @Environment(\.limitTilt) private var tilt
 
     var body: some View {
         let brand = LimitBrand.color(source)
-        ViewThatFits(in: .horizontal) {
+        if metrics.headerOneRow {
             HStack(alignment: .center, spacing: 14) {
                 glyph(brand)
                 identity
                 Spacer(minLength: 8)
                 trailing
             }
+        } else {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 14) {
                     glyph(brand)
@@ -148,19 +157,18 @@ private struct LimitHeroHeader: View {
 private struct LimitHeroWindows: View {
     let display: LimitProviderDisplay
     let snapshot: LimitsSnapshot
+    let metrics: LimitCardMetrics
     let entrance: Bool
     let delay: Double
     let previewTilt: CGSize?
 
     var body: some View {
-        if display.windows.count > 1 {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 14) { cells }
-                    .fixedSize(horizontal: false, vertical: true)
-                VStack(alignment: .leading, spacing: 14) { cells }
-            }
+        if display.windows.count > 1 && metrics.windowsSideBySide {
+            // Hücreler eşit yükseklikte (HStack en uzun hücrenin yüksekliğini alır).
+            HStack(alignment: .top, spacing: LimitCardMetrics.cellGap) { cells }
+                .fixedSize(horizontal: false, vertical: true)
         } else {
-            cells
+            VStack(alignment: .leading, spacing: LimitCardMetrics.cellGap) { cells }
         }
     }
 
@@ -168,7 +176,8 @@ private struct LimitHeroWindows: View {
         // Verisi hiç gelmeyen pencere (ör. Claude Ultra'da 5 saatlik) çizilmez; kalan kart tüm genişliği kullanır.
         ForEach(Array(display.windows.enumerated()), id: \.element.kind) { index, window in
             LimitHeroWindowCell(source: display.source, window: window, now: snapshot.now, entrance: entrance,
-                                delay: delay + 0.18 + 0.12 * Double(index), previewTilt: previewTilt)
+                                delay: delay + 0.18 + 0.12 * Double(index), previewTilt: previewTilt,
+                                diameter: metrics.ringDiameter, compact: metrics.compactCell)
         }
     }
 }
@@ -181,6 +190,9 @@ struct LimitHeroWindowCell: View {
     var entrance = true
     var delay: Double = 0
     var previewTilt: CGSize?
+    var diameter: CGFloat = 128
+    /// Dar hücre: yazılar küçülür, satırlar kısalır.
+    var compact = false
 
     @Environment(\.colorScheme) private var scheme
 
@@ -189,9 +201,11 @@ struct LimitHeroWindowCell: View {
         VStack(spacing: 12) {
             Text(window.kind.windowTitle.uppercased())
                 .font(.caption.weight(.bold))
-                .tracking(0.6)
+                .tracking(compact ? 0.3 : 0.6)
                 .foregroundStyle(.secondary)
-            LimitRing3D(fraction: window.fraction, tone: window.tone, source: source, diameter: 128, lineWidth: 14,
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            LimitRing3D(fraction: window.fraction, tone: window.tone, source: source, diameter: diameter, lineWidth: (diameter * 0.11).rounded(),
                         label: window.percentText, caption: window.isReset ? nil : "kullanıldı",
                         markers: window.isReset ? [] : [window.warnAt / 100, window.criticalAt / 100], entrance: entrance, delay: delay)
                 .padding(.bottom, 16)
@@ -199,7 +213,7 @@ struct LimitHeroWindowCell: View {
             LimitChip(text: window.statusText, color: window.tone == .muted ? .secondary : color)
             details
         }
-        .padding(14)
+        .padding(compact ? 10 : 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.primary.opacity(scheme == .dark ? 0.06 : 0.045), in: .rect(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(.white.opacity(scheme == .dark ? 0.07 : 0.5), lineWidth: 1))
@@ -211,20 +225,23 @@ struct LimitHeroWindowCell: View {
         VStack(spacing: 6) {
             if window.isReset {
                 Label("Pencere yenilendi; yeni değer bekleniyor", systemImage: "arrow.clockwise")
-                    .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .font(compact ? .caption : .callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if let resetsAt = window.resetsAt, let countdown = window.countdownText(now: now) {
                 Text(countdown)
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .font(.system(size: compact ? 18 : 22, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                     .monospacedDigit()
                     .contentTransition(.numericText())
                     .animation(.smooth, value: countdown)
                 Text("sonra yenilenir · \(LimitForecastFormat.moment(resetsAt, kind: window.kind, now: now))")
-                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit().fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Yenilenme zamanı bilinmiyor").font(.callout).foregroundStyle(.secondary)
+                Text("Yenilenme zamanı bilinmiyor").font(compact ? .caption : .callout).foregroundStyle(.secondary)
             }
             forecastBlock
-            Text(LimitsPresentation.thresholdText(window)).font(.caption2).foregroundStyle(.tertiary)
+            Text(LimitsPresentation.thresholdText(window)).font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
         }
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
@@ -234,7 +251,8 @@ struct LimitHeroWindowCell: View {
         if window.forecast != nil {
             VStack(spacing: 2) {
                 Label(window.forecastText(now: now) ?? "", systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout.weight(.medium)).foregroundStyle(.orange)
+                    .font((compact ? Font.caption : .callout).weight(.medium)).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let rate = window.rateText {
                     Text("Kullanım hızı \(rate)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
@@ -263,13 +281,17 @@ private struct LimitEmptyHero: View {
     let reason: LimitEmptyReason
     let openSettings: () -> Void
     let entrance: Bool
+    let metrics: LimitCardMetrics
 
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 22) { ghost; text }
-            VStack(alignment: .leading, spacing: 14) { ghost; text }
+        Group {
+            if metrics.headerOneRow {
+                HStack(spacing: 22) { ghost; text }
+            } else {
+                VStack(alignment: .leading, spacing: 14) { ghost; text }
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -118,7 +118,7 @@ final class LimitsPreviewTests: XCTestCase {
             // Sayfa (kenar çubuğu sayfası): geniş (1400 pt pencerenin içerik alanı) ve dar (940 pt pencere); eğimsiz, sabit eğimli ve giriş sonrası.
             for (name, providers, connected) in scenarios {
                 let snap = snapshot(providers, connected: connected, usage: name == "weeklyonly" || name == "mixed")
-                for (sizeName, size) in [("wide", NSSize(width: 1180, height: 900)), ("narrow", NSSize(width: 720, height: 640))] {
+                for (sizeName, size) in [("wide", NSSize(width: 1180, height: 1300)), ("narrow", NSSize(width: 720, height: 1500))] {
                     let page = LimitsPageContent(snapshot: snap, openSettings: {}, entrance: false)
                         .background(Color(nsColor: .windowBackgroundColor))
                     try await render(page, name: "limits-page-\(name)-\(sizeName)-\(mode)", dir: dir, size: size, dark: dark, wait: 0.4)

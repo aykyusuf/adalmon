@@ -86,7 +86,7 @@ final class AppModel {
     @ObservationIgnored private var rulesReady = false
 
     init() {
-        usage = UsageEngine(store: store)
+        usage = UsageEngine(store: store, liveStore: LiveUsageSnapshotStore())
         alerts.onBlock = { [weak self] app in self?.setBlocked(app, true, fromNotification: true) }
         alerts.delivery = { [prefs] in prefs.alertDelivery }
         // Önceki davranış: açılışta (sistem bildirimi seçiliyse) izin hiç sorulmadıysa sorulur.

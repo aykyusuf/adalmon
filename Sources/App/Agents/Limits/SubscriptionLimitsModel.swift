@@ -79,6 +79,8 @@ final class SubscriptionLimitsModel {
     /// Model kullanımı taraması: en sık dakikada bir (zorlama hariç); sayfa görünürken döngü 2 dk'da bir dener.
     static let usageMinInterval: TimeInterval = 60
     static let usageLoopInterval: TimeInterval = 120
+    /// Sayfa açıldıktan sonra ilk model kullanımı taramasının gecikmesi (giriş animasyonu süresi).
+    static let usageFirstDelay: Duration = .milliseconds(900)
     /// Değişmeyen Claude değerinde kalıcı zaman damgasının en sık yenilenme aralığı.
     static let unchangedRefresh: TimeInterval = 60
     private enum Key {
@@ -268,12 +270,13 @@ final class SubscriptionLimitsModel {
     func addUsageViewer() {
         usageViewers += 1
         guard live, usageViewers == 1 else { return }
-        refreshModelUsage(force: false)
         usageLoop = Task { [weak self] in
+            // Sayfanın giriş animasyonu (~1 sn) bitsin: ilk tarama (disk okuma + ayrıştırma) animasyonla çekişmesin.
+            // Tarama zaten `.utility` arka plan görevinde; bu bekleme yalnızca ana iş parçacığındaki sonuç atamasını kaydırır.
+            try? await Task.sleep(for: Self.usageFirstDelay)
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(Self.usageLoopInterval), tolerance: .seconds(20))
-                guard !Task.isCancelled else { return }
                 self?.refreshModelUsage(force: false)
+                try? await Task.sleep(for: .seconds(Self.usageLoopInterval), tolerance: .seconds(20))
             }
         }
     }

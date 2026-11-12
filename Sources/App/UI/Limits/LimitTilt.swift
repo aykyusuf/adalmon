@@ -5,11 +5,49 @@ private struct LimitTiltKey: EnvironmentKey {
     static let defaultValue = CGSize.zero
 }
 
+private struct LimitCardWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 560
+}
+
 extension EnvironmentValues {
     var limitTilt: CGSize {
         get { self[LimitTiltKey.self] }
         set { self[LimitTiltKey.self] = newValue }
     }
+
+    /// Kahraman kartının dış genişliği (Limitler sayfası hesaplar). İç düzen (halka boyutu, tek/çift satır) buna göre
+    /// belirlenir; `ViewThatFits` ile alternatifleri ölçmek yerine tek geçişte, belirlenimli.
+    var limitCardWidth: CGFloat {
+        get { self[LimitCardWidthKey.self] }
+        set { self[LimitCardWidthKey.self] = newValue }
+    }
+}
+
+/// Bir kartın iç düzeni: kart genişliğinden ve pencere sayısından türetilir.
+struct LimitCardMetrics: Equatable {
+    static let padding: CGFloat = 20
+    static let cellGap: CGFloat = 14
+    let inner: CGFloat
+    let windowCount: Int
+
+    init(cardWidth: CGFloat, windowCount: Int) {
+        inner = max(120, cardWidth - 2 * Self.padding)
+        self.windowCount = windowCount
+    }
+
+    /// Başlıkta rozetler ve tazelik tek satıra sığar mı?
+    var headerOneRow: Bool { inner >= 440 }
+    /// Model dağılımı başlığı (başlık + sekmeler) tek satıra sığar mı?
+    var usageHeaderOneRow: Bool { inner - 28 >= 370 }
+    /// Model satırında sayılar adın yanında mı, altında mı?
+    var usageRowsInline: Bool { inner - 28 >= 400 }
+    /// Pencere hücreleri yan yana mı (çok dar kartta alt alta)?
+    var windowsSideBySide: Bool { windowCount < 2 || (inner - Self.cellGap) / 2 >= 118 }
+    var cellWidth: CGFloat { windowCount > 1 && windowsSideBySide ? (inner - Self.cellGap) / 2 : inner }
+    /// Halka çapı: hücreye sığar, 76...128.
+    var ringDiameter: CGFloat { min(128, max(76, cellWidth - 28 - 18)) }
+    var ringLine: CGFloat { (ringDiameter * 0.11).rounded() }
+    var compactCell: Bool { cellWidth < 190 }
 }
 
 /// İmleç üzerindeyken perspektifli eğilme + ışık yansıması. Pil kuralı: yalnızca `onContinuousHover` sırasında durum değişir;

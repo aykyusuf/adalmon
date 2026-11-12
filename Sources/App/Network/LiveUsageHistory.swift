@@ -104,7 +104,8 @@ extension LiveAppUsage {
     }
 }
 
-/// Uygulama başına son 60 saniyenin (saniye kovaları) ve son 60 dakikanın (dakika kovaları) trafiği; yalnızca bellekte.
+/// Uygulama başına son 60 saniyenin (saniye kovaları) ve son 60 dakikanın (dakika kovaları) trafiği. Saniye halkası yalnızca bellekte;
+/// dakika kovaları `LiveUsageSnapshotStore` ile diske yedeklenir ve açılışta geri yüklenir.
 /// Yeni zamanlayıcı yok: `UsageEngine.ingest` (ölçüm adımı) besler, görünüm görünürken `rows` ile okunur. Saf, test edilir.
 struct LiveUsageHistory: Sendable {
     /// Anlık hız için ortalaması alınan son saniye sayısı (ölçüm aralığı 2-5 sn olabildiği için birkaç saniye).
@@ -114,6 +115,14 @@ struct LiveUsageHistory: Sendable {
     private var secondIndex = 0
     /// Unix dakikası → uygulama → trafik.
     private var minutes: [Int: [String: LiveTraffic]] = [:]
+
+    /// Kalıcı anlık görüntü için dakika kovalarının tamamı (bkz. `LiveUsageSnapshot`).
+    var allMinutes: [Int: [String: LiveTraffic]] { minutes }
+
+    /// Kaydedilmiş bir dakika kovasına trafik ekler (açılışta geri yükleme).
+    mutating func addMinute(_ minute: Int, app: String, traffic: LiveTraffic) {
+        minutes[minute, default: [:]][app, default: LiveTraffic()].add(traffic)
+    }
 
     /// Saniye halkasını `count` saniye ilerletir (her ölçüm adımının başında, geçen süre kadar).
     mutating func advance(seconds count: Int) {

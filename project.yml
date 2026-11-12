@@ -215,3 +215,4 @@ targets:
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Adalmon.app/Contents/MacOS/Adalmon
         BUNDLE_LOADER: $(TEST_HOST)
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSPrincipalClass: AdalmonTestEnvironment

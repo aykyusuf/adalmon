@@ -51,7 +51,7 @@ struct LimitRing3D: View {
         _shown = State(initialValue: !entrance)
     }
 
-    private static let layers = 7
+    private static let layers = 4
 
     var body: some View {
         let color = LimitBrand.ringColor(tone, source: source)
@@ -78,9 +78,9 @@ struct LimitRing3D: View {
             // Kalınlık: koyu tonlu istiflenmiş yaylar; imleçle birlikte kayarak yan yüzü gösterir.
             ForEach(1...Self.layers, id: \.self) { index in
                 arc(trimEnd: trimEnd)
-                    .stroke(color.mix(with: .black, by: 0.42 - 0.03 * Double(index)),
+                    .stroke(color.mix(with: .black, by: 0.42 - 0.055 * Double(index)),
                             style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                    .offset(x: -tilt.width * 0.9 * Double(index), y: 1.0 * Double(index) - tilt.height * 0.9 * Double(index))
+                    .offset(x: -tilt.width * 1.55 * Double(index), y: 1.75 * Double(index) - tilt.height * 1.55 * Double(index))
             }
             // Üst yüz.
             arc(trimEnd: trimEnd)

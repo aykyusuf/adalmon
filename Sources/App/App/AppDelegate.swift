@@ -87,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Test ana bilgisayarı da Adalmon.app'tir: testte gerçek config.json'a dokunulmaz.
         if !AppEnvironment.isRunningTests { model.agents.prepareForTermination() }
+        model.usage.saveLiveNow() // canlı kullanım listesinin son 1 saati (testte geçici dizine)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

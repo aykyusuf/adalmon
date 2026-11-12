@@ -35,39 +35,56 @@ struct LimitsPageContent: View {
         _appeared = State(initialValue: !entrance)
     }
 
+    private static let sidePadding: CGFloat = 24
+    /// Kaydırma içeriğinin yanlardaki payı (eğilen kartların ve gölgelerin kesilmemesi için).
+    private static let scrollInset: CGFloat = 6
+    static let heroSpacing: CGFloat = 18
+
+    /// Kartlar her zaman yan yana (sağlayıcı başına bir sütun, eşit genişlik); alt alta düşme yok. Genişlik tek geçişte
+    /// hesaplanır, kartların içi buna uyar (halkalar küçülür, satırlar bölünür).
+    static func cardWidth(pageWidth: CGFloat, count: Int) -> CGFloat {
+        let columns = CGFloat(max(1, count))
+        let available = pageWidth - 2 * sidePadding - 2 * scrollInset - heroSpacing * (columns - 1)
+        return max(0, (available / columns).rounded(.down))
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            PageHeader(title: MainSection.limits.title)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .top, spacing: 18) { heroes.frame(minWidth: 420) }
+        GeometryReader { proxy in
+            let cardWidth = Self.cardWidth(pageWidth: proxy.size.width, count: snapshot.sections.count)
+            VStack(alignment: .leading, spacing: 14) {
+                PageHeader(title: MainSection.limits.title)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        // Üst hizalı, eşit yükseklik: HStack en uzun kartın yüksekliğini alır, kartlar maxHeight: .infinity ile uzar.
+                        HStack(alignment: .top, spacing: Self.heroSpacing) { heroes(cardWidth: cardWidth) }
                             .fixedSize(horizontal: false, vertical: true)
-                        VStack(alignment: .leading, spacing: 18) { heroes }
+                        LimitTimelineCard(snapshot: snapshot, entrance: entrance)
+                            .limitEntrance(appeared, index: 2)
+                        LimitThresholdFooter(thresholds: snapshot.thresholds, kinds: snapshot.visibleKinds, openSettings: openSettings)
+                            .limitEntrance(appeared, index: 3)
                     }
-                    LimitTimelineCard(snapshot: snapshot, entrance: entrance)
-                        .limitEntrance(appeared, index: 2)
-                    LimitThresholdFooter(thresholds: snapshot.thresholds, kinds: snapshot.visibleKinds, openSettings: openSettings)
-                        .limitEntrance(appeared, index: 3)
+                    .padding(.horizontal, Self.scrollInset)
+                    .padding(.top, 6)
+                    .padding(.bottom, 26)
                 }
-                // Eğilen kartların ve gölgelerin kesilmemesi için pay.
-                .padding(.horizontal, 6)
-                .padding(.top, 6)
-                .padding(.bottom, 26)
+                .scrollIndicators(.never)
+                .scrollClipDisabled()
             }
-            .scrollIndicators(.never)
-            .scrollClipDisabled()
+            .padding(.horizontal, Self.sidePadding)
+            .padding(.top, 24)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { if !appeared { appeared = true } }
     }
 
-    @ViewBuilder private var heroes: some View {
+    @ViewBuilder private func heroes(cardWidth: CGFloat) -> some View {
         ForEach(Array(snapshot.sections.enumerated()), id: \.element.source) { index, section in
             LimitHeroCard(section: section, plan: snapshot.plans[section.source], snapshot: snapshot, openSettings: openSettings,
                           entrance: entrance, delay: 0.09 * Double(index), previewTilt: previewTilt)
+                .environment(\.limitCardWidth, cardWidth)
+                .frame(width: cardWidth)
+                .frame(maxHeight: .infinity, alignment: .top)
                 .limitEntrance(appeared, index: index)
         }
     }

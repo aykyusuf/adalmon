@@ -49,9 +49,19 @@ final class UsageEngine {
     private let store: UsageStore
     /// Canlı liste (60 sn … 1 sa) için bellek içi geçmiş; gözlem bildirmez, görünüm görünürken `liveRows` ile okunur.
     @ObservationIgnored private var live = LiveUsageHistory()
+    /// Canlı geçmişin diske yedeği (nil = kalıcılık yok; testler/önizlemeler). Yeni zamanlayıcı yok: `flush` (10 sn) kontrol eder.
+    @ObservationIgnored private let liveStore: LiveUsageSnapshotStore?
+    @ObservationIgnored private var liveDirty = false
+    /// Açılış yedeği okunmadan yazılmaz: eski dosya yarım veriyle ezilmesin.
+    @ObservationIgnored private var liveRestored = false
+    /// Son yazma (ya da ilk `flush` anı); nil = henüz ölçüm başlamadı.
+    @ObservationIgnored private var lastLiveSave: Date?
+    /// Çökme/kill -9 için en sık bu aralıkta (sn) ve yalnızca veri değiştiyse yazılır.
+    nonisolated static let liveSaveInterval: TimeInterval = 300
 
-    init(store: UsageStore, calendar: Calendar = UsageStore.keyCalendar) {
+    init(store: UsageStore, calendar: Calendar = UsageStore.keyCalendar, liveStore: LiveUsageSnapshotStore? = nil) {
         self.store = store
+        self.liveStore = liveStore
         self.calendar = calendar
         self.dayKey = UsageStore.dayKey(calendar: calendar)
     }
@@ -69,6 +79,34 @@ final class UsageEngine {
         todayTotals = totals
         attributedMobileToday = mobile
         today = Self.summaries(totals, limit: 30)
+        await restoreLive()
+    }
+
+    /// Açılışta son 1 saatin dakika kovalarını diskten geri yükler (eski/gelecek kovalar atılır, bozuk dosya yok sayılır).
+    /// Zaten ölçülmüş yeni kovalara eklenir.
+    func restoreLive(now: Date = .now) async {
+        guard let liveStore, !liveRestored else { return }
+        let snapshot = await liveStore.load()
+        if let snapshot { live.restore(snapshot, nowMinute: Int(now.timeIntervalSince1970) / 60) }
+        liveRestored = true
+    }
+
+    /// Çıkışta (applicationWillTerminate) değişiklik varsa canlı geçmişi hemen yazar.
+    func saveLiveNow(now: Date = .now) {
+        guard let liveStore, liveRestored, liveDirty else { return }
+        liveStore.saveBlocking(history: live, nowMinute: Int(now.timeIntervalSince1970) / 60, savedAt: Int(now.timeIntervalSince1970))
+        liveDirty = false
+        lastLiveSave = now
+    }
+
+    private func saveLiveIfDue(now: Date) {
+        guard let liveStore, liveRestored, liveDirty else { return }
+        // İlk çağrıda sayaç başlar (açılışta hemen yazma yok). Saat geri gittiyse (now < son yazma) beklemeden yaz.
+        guard let last = lastLiveSave else { lastLiveSave = now; return }
+        guard now < last || now.timeIntervalSince(last) >= Self.liveSaveInterval else { return }
+        liveStore.save(history: live, nowMinute: Int(now.timeIntervalSince1970) / 60, savedAt: Int(now.timeIntervalSince1970))
+        liveDirty = false
+        lastLiveSave = now
     }
 
     /// Her saniye çağrılır; çekilen kovalar o saniyenin trafiği sayılır.
@@ -114,6 +152,7 @@ final class UsageEngine {
             for (isMobile, bIn, bOut) in [(true, mobileIn, mobileOut), (false, b.bytesIn - mobileIn, b.bytesOut - mobileOut)] {
                 guard bIn + bOut > 0 else { continue }
                 live.record(app: b.app, bytesIn: bIn, bytesOut: bOut, mobile: isMobile, minute: b.minute)
+                liveDirty = true
 
                 let key = "\(b.app)\u{1F}\(b.host)\u{1F}\(isMobile)"
                 var row = pending[key] ?? UsageStore.Row(app: b.app, host: b.host, mobile: isMobile, bytesIn: 0, bytesOut: 0)
@@ -164,7 +203,8 @@ final class UsageEngine {
     }
 
     /// Bekleyen satırları diske yazar (birkaç saniyede bir).
-    func flush() async {
+    func flush(now: Date = .now) async {
+        saveLiveIfDue(now: now)
         guard !pending.isEmpty || !pendingHourly.isEmpty else { return }
         let rows = Array(pending.values)
         let hourly = Array(pendingHourly.values)

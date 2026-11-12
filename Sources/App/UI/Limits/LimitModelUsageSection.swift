@@ -29,6 +29,9 @@ struct LimitModelUsageSection: View {
     @State private var selected: LimitWindowKind?
     @State private var shown: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.limitCardWidth) private var cardWidth
+
+    private var metrics: LimitCardMetrics { LimitCardMetrics(cardWidth: cardWidth, windowCount: kinds.count) }
 
     init(source: LimitSource, usage: ProviderModelUsage?, kinds: [LimitWindowKind], entrance: Bool = true, now: Date = .now,
          initialKind: LimitWindowKind? = nil) {
@@ -67,9 +70,10 @@ struct LimitModelUsageSection: View {
         }
     }
 
-    private var header: some View {
-        ViewThatFits(in: .horizontal) {
+    @ViewBuilder private var header: some View {
+        if metrics.usageHeaderOneRow {
             HStack(spacing: 8) { title; Spacer(minLength: 6); picker }
+        } else {
             VStack(alignment: .leading, spacing: 8) { title; picker }
         }
     }
@@ -97,14 +101,14 @@ struct LimitModelUsageSection: View {
 
     private func content(_ window: ModelUsageWindow) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(summary(window)).font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(2)
+            Text(summary(window)).font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(2).fixedSize(horizontal: false, vertical: true)
             ModelUsageBar(shares: window.rows.map(\.costShare),
                           colors: window.rows.enumerated().map { LimitBrand.modelColor(source, index: $0.offset, isOther: $0.element.isOther) },
                           shown: shown)
             VStack(spacing: 8) {
                 ForEach(Array(window.rows.enumerated()), id: \.element.id) { index, row in
                     ModelUsageRowView(row: row, color: LimitBrand.modelColor(source, index: index, isOther: row.isOther),
-                                      showsShare: window.usedPercent != nil)
+                                      showsShare: window.usedPercent != nil, inline: metrics.usageRowsInline)
                 }
             }
             Text(footnote(window)).font(.caption2).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
@@ -156,17 +160,21 @@ private struct ModelUsageRowView: View {
     let row: ModelUsageRow
     let color: Color
     let showsShare: Bool
+    /// Dar kartta sayılar adın altına iner, döküm iki satıra kadar sarılır.
+    var inline = true
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Circle().fill(color).frame(width: 9, height: 9).alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
             VStack(alignment: .leading, spacing: 1) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(row.name).font(.callout.weight(.semibold)).lineLimit(1)
-                    Text("\(ModelUsageFormat.tokens(row.tokens.total)) token · \(ModelUsageFormat.count(row.messages)) mesaj")
-                        .font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                if inline {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) { name; counts }
+                } else {
+                    name
+                    counts
                 }
-                Text(ModelUsageFormat.breakdown(row.tokens)).font(.caption2).foregroundStyle(.tertiary).monospacedDigit().lineLimit(1)
+                Text(ModelUsageFormat.breakdown(row.tokens)).font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                    .lineLimit(inline ? 1 : 2).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 6)
             if showsShare, let text = ModelUsageFormat.approxPercent(row.approxPercent) {
@@ -176,5 +184,12 @@ private struct ModelUsageRowView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.name): \(ModelUsageFormat.tokens(row.tokens.total)) token, \(row.messages) mesaj"
             + (showsShare ? ModelUsageFormat.approxPercent(row.approxPercent).map { ", yaklaşık \($0)" } ?? "" : ""))
+    }
+
+    private var name: some View { Text(row.name).font(.callout.weight(.semibold)).lineLimit(1) }
+
+    private var counts: some View {
+        Text("\(ModelUsageFormat.tokens(row.tokens.total)) token · \(ModelUsageFormat.count(row.messages)) mesaj")
+            .font(.caption).foregroundStyle(.secondary).monospacedDigit().lineLimit(1).minimumScaleFactor(0.85)
     }
 }
