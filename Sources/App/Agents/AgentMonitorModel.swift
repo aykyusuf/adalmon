@@ -21,6 +21,8 @@ final class AgentMonitorModel {
     private(set) var dockOverrides: [String: SessionDockOverride] = [:]
     /// Otomatik küçülme anı gelince artar: görünümler `dock`'u yeniden hesaplasın diye (zamana bağlı karar için tek gözlenen alan).
     private(set) var dockRevision = 0
+    /// Ofiste cevap bekleyen izin/soru kartı olan oturumlar (`PendingDecisionStore`): "dikkat istiyor" sayılır, oda küçülmez.
+    private(set) var attention: Set<String> = []
     @ObservationIgnored private var dormancyTask: Task<Void, Never>?
     @ObservationIgnored private var dormancyDue: Date?
 
@@ -53,7 +55,15 @@ final class AgentMonitorModel {
     /// Açık (oda) ve küçük (sekme) oturumlar. Durum, elle karar ya da `dockRevision` değişince yeniden hesaplanır.
     var dock: (open: [AgentSession], minimized: [AgentSession]) {
         _ = dockRevision
-        return SessionDormancy.partition(state.orderedSessions, overrides: dockOverrides, now: .now)
+        return SessionDormancy.partition(state.orderedSessions, overrides: dockOverrides, now: .now, attention: attention)
+    }
+
+    /// Bekleyen karar kartı olan oturumları günceller (yalnızca değişince); oda hemen açılır/açık kalır.
+    func setAttention(_ ids: Set<String>) {
+        guard ids != attention else { return }
+        attention = ids
+        tidyDockOverrides()
+        dockChanged()
     }
 
     /// Oturumu elle küçültür (çalışmaya başlayınca kendiliğinden açılır).
@@ -81,7 +91,7 @@ final class AgentMonitorModel {
         guard !dockOverrides.isEmpty else { return }
         for (id, o) in dockOverrides {
             guard let s = state.sessions[id] else { dockOverrides[id] = nil; continue }
-            if o == .minimized, SessionDormancy.needsAttention(s) { dockOverrides[id] = nil }  // izin bekliyor: oda açılır ve açık kalır
+            if o == .minimized, SessionDormancy.needsAttention(s, pendingDecision: attention.contains(id)) { dockOverrides[id] = nil }  // izin bekliyor: oda açılır ve açık kalır
         }
     }
 
@@ -289,6 +299,7 @@ final class AgentMonitorModel {
         dormancyTask = nil
         dormancyDue = nil
         dockOverrides = [:]
+        attention = []
         commit(AgentState())
         lookups.removeAll()
         lastEventAt = nil

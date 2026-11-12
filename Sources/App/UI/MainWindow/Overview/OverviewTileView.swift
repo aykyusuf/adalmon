@@ -6,6 +6,9 @@ struct OverviewTileGrid: View {
     let width: CGFloat
     let router: SettingsRouter
     var limits: SubscriptionLimitsModel? = nil
+    var agentsEnabled = true
+    /// Limit karosuna tıklayınca Limitler ayrıntı sayfasını açar.
+    var openLimits: () -> Void = {}
 
     static let minTileWidth: CGFloat = 138
     static let spacing: CGFloat = 10
@@ -24,12 +27,7 @@ struct OverviewTileGrid: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Self.spacing), count: count), spacing: Self.spacing) {
             ForEach(tiles) { tile in
                 if tile.opensDetail, let limits {
-                    OverviewTileView(tile: tile, action: {}, detail: { dismiss in
-                        AnyView(OverviewLimitsDetail(model: limits) {
-                            dismiss()
-                            tile.kind.destination.open(router)
-                        })
-                    })
+                    OverviewLimitsCard(tile: tile, model: limits, agentsEnabled: agentsEnabled, action: openLimits)
                 } else {
                     OverviewTileView(tile: tile) { tile.kind.destination.open(router) }
                 }
@@ -42,13 +40,10 @@ struct OverviewTileGrid: View {
 struct OverviewTileView: View {
     let tile: OverviewTile
     let action: () -> Void
-    /// Verilirse tıklayınca `action` yerine açılan ayrıntı (popover).
-    var detail: ((_ dismiss: @escaping () -> Void) -> AnyView)? = nil
     @State private var hovering = false
-    @State private var showDetail = false
 
     var body: some View {
-        Button(action: { if detail != nil { showDetail.toggle() } else { action() } }) {
+        Button(action: action) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
                     Label(tile.title, systemImage: tile.symbol)
@@ -86,7 +81,6 @@ struct OverviewTileView: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .popover(isPresented: $showDetail, arrowEdge: .bottom) { detail?({ showDetail = false }) }
         .help(tile.help)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(tile.accessibilityLabel)

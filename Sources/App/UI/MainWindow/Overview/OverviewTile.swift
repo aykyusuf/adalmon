@@ -57,7 +57,7 @@ struct OverviewTile: Identifiable {
     let accessory: Accessory
     /// İkincil metnin rengi (ör. dolma tahmini turuncu); nil = ikincil renk.
     var secondaryTint: Color? = nil
-    /// Tıklayınca hedef sayfa yerine ayrıntı açılır (yalnızca limit karosu, veri varken).
+    /// Tıklayınca hedef sayfa yerine Genel bakış içindeki ayrıntı sayfası açılır (yalnızca limit karosu).
     var opensDetail = false
 
     var id: OverviewTileKind { kind }

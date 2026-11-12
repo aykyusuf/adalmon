@@ -11,6 +11,8 @@ import Foundation
 /// env atamaları ve sudo gibi önekler atlanır; yol/argüman/tırnaklı ya da özel karakterli bir şey görülürse hiçbir şey gönderilmez);
 /// Grep/Glob/WebSearch/WebFetch ve diğer araçlar için hedef YOK. Anahtar kapalıyken hedef hiç hesaplanmaz.
 /// `--dry-run`: ağa bağlanmadan süzülmüş yükü stdout'a yazar (testler bunu çalıştırır).
+/// `decide` (ofisten cevapla) ayrı bir betiktir ve yalnızca config.json `controlEnabled: true` iken çalışır; araç girdisi özetini
+/// yalnızca `/v1/decision` gövdesinde (Adalmon belleği) taşır, olay akışına (forward) ASLA.
 enum AgentPluginScripts {
     /// Birincil betik: /usr/bin/python3 (3.9 uyumlu, yalnızca standart kitaplık). Hata = sessiz çıkış (exit 0).
     static let python = #"""
@@ -135,6 +137,33 @@ enum AgentPluginScripts {
         return None
 
 
+    HASH_EVENTS = ("PostToolUse", "PostToolUseFailure", "PermissionDenied")
+
+
+    def control_enabled():
+        # Yalnızca config.json'daki controlEnabled === true ("Ofisten cevapla" açık); okunamazsa kapalı.
+        try:
+            with open(CONFIG, "r") as handle:
+                return json.load(handle).get("controlEnabled") is True
+        except Exception:
+            return False
+
+
+    def input_digest(data):
+        # Araç girdisinin KISA ÖZETİ (SHA-256'nın ilk 16 hex'i); içerik değil. Yalnızca bekleyen ofis kararını araç sonucuyla eşlemek için.
+        if data.get("hook_event_name") not in HASH_EVENTS:
+            return None
+        tool_input = data.get("tool_input")
+        if not isinstance(tool_input, dict):
+            return None
+        try:
+            import hashlib
+            text = json.dumps(tool_input, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            return hashlib.sha256(text.encode("ascii")).hexdigest()[:16]
+        except Exception:
+            return None
+
+
     def build(data):
         out = {}
 
@@ -155,6 +184,12 @@ enum AgentPluginScripts {
         put("notification_type", data.get("notification_type"))
         put("reason", data.get("reason"))
         put("permission_mode", data.get("permission_mode"))
+        # prompt_id ve input_hash YALNIZCA "Ofisten cevapla" açıkken (ve yalnızca araç sonuç olaylarında) gönderilir.
+        if data.get("hook_event_name") in HASH_EVENTS and control_enabled():
+            put("prompt_id", data.get("prompt_id"))
+            digest = input_digest(data)
+            if digest:
+                out["input_hash"] = digest
         title = clean_title(data.get("session_title"))
         if title is not None:
             out["session_title"] = title
@@ -344,5 +379,349 @@ enum AgentPluginScripts {
     printf 'url = "http://127.0.0.1:%s/v1/event"\nheader = "X-Adalmon-Token: %s"\nheader = "Content-Type: application/json"\ndata-binary = "%s"\n' \
       "$PORT" "$TOKEN" "$ESCAPED" | /usr/bin/curl -s -o /dev/null --max-time 1 -K - >/dev/null 2>&1
     exit 0
+    """#
+
+    /// Ofisten cevaplama betiği (OFFICE-CTRL-01, yalnızca Python): PermissionRequest hook'u. Ayrıntı betiğin başlık yorumunda.
+    static let decide = #"""
+    #!/usr/bin/python3
+    # Adalmon "Ofisten cevapla" (OFFICE-CTRL-01): Claude Code PermissionRequest hook'u (izinler VE AskUserQuestion).
+    # Kapalıyken (config.json controlEnabled !== true) ağa bağlanmadan, çıktısız çıkar. Açıkken isteği 127.0.0.1'deki Adalmon'a yollar
+    # ve kullanıcının tıklamasını TUTULAN bağlantıdan bekler; terminaldeki diyalog bu sırada paralel çalışır. Sonucu, kendi girdisine
+    # karşı doğrulayarak hook çıktısına çevirir. Her hata/zaman aşımı/geçersiz karar = çıktısız exit 0 (normal terminal diyaloğu).
+    # GİZLİLİK: araç girdisi özeti ve soru metni YALNIZCA /v1/decision gövdesinde gider (Adalmon belleği); olay akışına girmez.
+    # `--dry-run` ağa bağlanmaz: istek gövdesini yazar; `--verdict '<json>'` ile verilen kararın hook çıktısını yazar.
+    import copy
+    import json
+    import os
+    import sys
+    import time
+
+    CONFIG = os.environ.get("ADALMON_AGENTS_CONFIG") or os.path.expanduser(
+        "~/Library/Application Support/Adalmon/ClaudePlugin/config.json")
+    MAX_HOLD = 590.0
+    MODES = ("default", "acceptEdits", "plan")
+    DESTINATIONS = {"user": "userSettings", "session": "session"}
+    DENY_MESSAGE = "Kullanıcı Adalmon ofisinden reddetti."
+    ID_MAX = 200
+    LABEL_MAX = 200
+    QUESTION_MAX = 500
+    DESCRIPTION_MAX = 300
+    HEADER_MAX = 60
+    PREVIEW_MAX = 1500
+
+
+    def clean(value, limit, multiline=False):
+        # Kontrol karakterleri atılır (çok satırda \n ve \t kalır), uçlar kırpılır, kısaltılır. Adalmon aynı süzmeyi uygular.
+        if not isinstance(value, str):
+            return None
+        kept = []
+        for c in value:
+            o = ord(c)
+            if o < 32 or 0x7F <= o <= 0x9F:
+                if multiline and c in "\n\t":
+                    kept.append(c)
+            elif 0xD800 <= o <= 0xDFFF:
+                continue
+            else:
+                kept.append(c)
+        text = "".join(kept).strip()
+        return text[:limit] if text else None
+
+
+    def load_config():
+        try:
+            with open(CONFIG, "r") as handle:
+                config = json.load(handle)
+        except Exception:
+            return None
+        if not isinstance(config, dict) or config.get("controlEnabled") is not True:
+            return None
+        port = config.get("port")
+        token = config.get("token")
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port < 65536:
+            return None
+        if not isinstance(token, str) or not token:
+            return None
+        hold = config.get("holdSeconds")
+        if isinstance(hold, bool) or not isinstance(hold, (int, float)) or hold <= 0:
+            hold = MAX_HOLD
+        return {"port": port, "token": token, "hold": min(float(hold), MAX_HOLD)}
+
+
+    def input_digest(tool_input):
+        # forward.py ile AYNI özet (SHA-256'nın ilk 16 hex'i): araç sonuç olayıyla eşleştirme için.
+        try:
+            import hashlib
+            text = json.dumps(tool_input, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+            return hashlib.sha256(text.encode("ascii")).hexdigest()[:16]
+        except Exception:
+            return None
+
+
+    def preview(tool, tool_input):
+        if not isinstance(tool_input, dict):
+            return None
+        if tool == "Bash":
+            text = tool_input.get("command")
+        elif tool in ("Edit", "Write", "MultiEdit", "Read", "NotebookEdit"):
+            text = tool_input.get("file_path") or tool_input.get("notebook_path")
+        elif tool == "WebFetch":
+            text = tool_input.get("url")
+        elif tool in ("Grep", "Glob"):
+            text = tool_input.get("pattern")
+        elif tool == "ExitPlanMode":
+            text = tool_input.get("plan")
+        else:
+            text = None
+        if not isinstance(text, str):
+            try:
+                text = json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
+            except Exception:
+                return None
+        return clean(text, PREVIEW_MAX, multiline=True)
+
+
+    def suggestion_label(entry):
+        # Yalnızca "izin ver" kuralı ve dizin eklemeleri sunulur (mod değiştirenler ve reddetme kuralları değil).
+        # Etiket, kalıcı izne dönüşecek şeyin TAMAMINI göstermelidir: kural/dizin sayısı 6'yı aşıyorsa, bir kural geçersizse ya da
+        # etiket süzme/200 karakter sınırı yüzünden değişiyorsa öneri hiç sunulmaz (kullanıcının görmediği kural kalıcı olmasın).
+        if not isinstance(entry, dict):
+            return None
+        kind = entry.get("type")
+        if kind == "addRules":
+            rules = entry.get("rules")
+            if entry.get("behavior") != "allow" or not isinstance(rules, list) or not 1 <= len(rules) <= 6:
+                return None
+            parts = []
+            for rule in rules:
+                if not isinstance(rule, dict) or not isinstance(rule.get("toolName"), str) or not rule["toolName"]:
+                    return None
+                content = rule.get("ruleContent")
+                parts.append(rule["toolName"] + ("(" + content + ")" if isinstance(content, str) and content else ""))
+            full = ", ".join(parts)
+        elif kind == "addDirectories":
+            directories = entry.get("directories")
+            if not isinstance(directories, list) or not 1 <= len(directories) <= 6:
+                return None
+            if any(not isinstance(d, str) or not d for d in directories):
+                return None
+            full = "Dizin: " + ", ".join(directories)
+        else:
+            return None
+        label = clean(full, LABEL_MAX)
+        return label if label == full else None
+
+
+    def parse_questions(tool_input):
+        # AskUserQuestion girdisi: her soru ve seçenek geçerli olmalı; bir tanesi bozuksa None (terminal yanıtlasın).
+        if not isinstance(tool_input, dict) or not isinstance(tool_input.get("questions"), list):
+            return None
+        questions = tool_input["questions"]
+        if not 1 <= len(questions) <= 4:
+            return None
+        parsed = []
+        for item in questions:
+            if not isinstance(item, dict):
+                return None
+            text = clean(item.get("question"), QUESTION_MAX)
+            options = item.get("options")
+            if text is None or not isinstance(options, list) or not 1 <= len(options) <= 8:
+                return None
+            labels = []
+            for option in options:
+                label = clean(option.get("label") if isinstance(option, dict) else None, LABEL_MAX)
+                if label is None:
+                    return None
+                labels.append(label)
+            # Yinelenen etiket (ya da aynı soru metni) cevap anahtarını belirsiz kılar: ofise sunulmaz, terminal yanıtlar.
+            if len(set(labels)) != len(labels) or text in [p["text"] for p in parsed]:
+                return None
+            parsed.append({"raw": item, "text": text, "labels": labels, "multi": item.get("multiSelect") is True})
+        return parsed
+
+
+    def build_request(data, hold):
+        tool = clean(data.get("tool_name"), ID_MAX)
+        session = clean(data.get("session_id"), ID_MAX)
+        if tool is None or session is None:
+            return None
+        tool_input = data.get("tool_input")
+        request = {"session_id": session, "tool_name": tool, "hold": hold, "ts": time.time()}
+        for key in ("agent_id", "agent_type", "permission_mode", "prompt_id"):
+            value = clean(data.get(key), ID_MAX)
+            if value is not None:
+                request[key] = value
+        cwd = data.get("cwd")
+        if isinstance(cwd, str) and cwd.strip():
+            project = clean(os.path.basename(cwd.rstrip("/")), ID_MAX)
+            if project is not None:
+                request["project"] = project
+        if isinstance(tool_input, dict):
+            digest = input_digest(tool_input)
+            if digest:
+                request["input_hash"] = digest
+        if tool == "AskUserQuestion":
+            parsed = parse_questions(tool_input)
+            if parsed is None:
+                return None
+            request["kind"] = "question"
+            request["questions"] = [{
+                "question": q["text"],
+                "header": clean(q["raw"].get("header"), HEADER_MAX),
+                "multiSelect": q["multi"],
+                "options": [{"label": label, "description": clean(option.get("description"), DESCRIPTION_MAX)}
+                            for label, option in zip(q["labels"], q["raw"]["options"])],
+            } for q in parsed]
+        else:
+            request["kind"] = "permission"
+            text = preview(tool, tool_input)
+            if text:
+                request["preview"] = text
+            suggestions = data.get("permission_suggestions")
+            offered = []
+            if isinstance(suggestions, list):
+                for index, entry in enumerate(suggestions[:50]):
+                    label = suggestion_label(entry)
+                    if label is not None and len(offered) < 6:
+                        offered.append({"index": index, "label": label})
+            if offered:
+                request["suggestions"] = offered
+        return request
+
+
+    def build_answers(tool_input, answers):
+        # Her soru için cevap geçerli etiketlerden oluşmalı; tek seçimde tam bir etiket, çoklu seçimde en az bir. Çıktı: özgün soru metni
+        # → özgün etiket(ler) (", " ile birleşik). Eksik/fazla/bilinmeyen herhangi bir şey = None.
+        parsed = parse_questions(tool_input)
+        if parsed is None or not isinstance(answers, dict) or len(answers) != len(parsed):
+            return None
+        result = {}
+        for q in parsed:
+            chosen = answers.get(q["text"])
+            if isinstance(chosen, str):
+                chosen = [chosen]
+            if not isinstance(chosen, list) or not chosen or len(set(chosen)) != len(chosen):
+                return None
+            if not q["multi"] and len(chosen) != 1:
+                return None
+            if any(not isinstance(label, str) or label not in q["labels"] for label in chosen):
+                return None
+            originals = [option["label"] for option in q["raw"]["options"]]
+            ordered = [originals[i] for i, label in enumerate(q["labels"]) if label in chosen]
+            result[q["raw"]["question"]] = ", ".join(ordered)
+        return result
+
+
+    def wrap(decision):
+        return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}
+
+
+    def hook_output(data, verdict):
+        # Karar → hook çıktısı. Doğrulanamayan her şey None (çıktısız çıkış).
+        if not isinstance(verdict, dict):
+            return None
+        kind = verdict.get("verdict")
+        tool = data.get("tool_name")
+        tool_input = data.get("tool_input")
+        if tool == "AskUserQuestion":
+            if kind != "answer":
+                return None
+            answers = build_answers(tool_input, verdict.get("answers"))
+            if answers is None:
+                return None
+            updated = dict(tool_input)
+            updated["answers"] = answers
+            return wrap({"behavior": "allow", "updatedInput": updated})
+        if kind == "deny":
+            return wrap({"behavior": "deny", "message": DENY_MESSAGE})
+        if kind != "allow":
+            return None
+        permissions = []
+        index = verdict.get("suggestion")
+        if index is not None:
+            suggestions = data.get("permission_suggestions")
+            if isinstance(index, bool) or not isinstance(index, int) or not isinstance(suggestions, list) or not 0 <= index < len(suggestions):
+                return None
+            if suggestion_label(suggestions[index]) is None:
+                return None
+            destination = DESTINATIONS.get(verdict.get("scope"))
+            if destination is None:
+                return None
+            entry = copy.deepcopy(suggestions[index])
+            entry["destination"] = destination
+            permissions.append(entry)
+        mode = verdict.get("mode")
+        if mode is not None:
+            if mode not in MODES:  # bypassPermissions (ve auto/dontAsk) asla
+                return None
+            permissions.append({"type": "setMode", "mode": mode, "destination": "session"})
+        decision = {"behavior": "allow"}
+        if permissions:
+            decision["updatedPermissions"] = permissions
+        if tool == "ExitPlanMode" and isinstance(tool_input, dict):
+            decision["updatedInput"] = tool_input
+        return wrap(decision)
+
+
+    def emit(value):
+        sys.stdout.write(json.dumps(value, sort_keys=True))
+        sys.stdout.flush()
+
+
+    def main():
+        raw = sys.stdin.read(4000000)
+        config = load_config()
+        if config is None:
+            return 0
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return 0
+        if not isinstance(data, dict) or data.get("hook_event_name") != "PermissionRequest":
+            return 0
+        if data.get("permission_mode") == "bypassPermissions":
+            return 0
+        request = build_request(data, config["hold"])
+        if request is None:
+            return 0
+        if "--dry-run" in sys.argv:
+            if "--verdict" in sys.argv:
+                try:
+                    verdict = json.loads(sys.argv[sys.argv.index("--verdict") + 1])
+                except Exception:
+                    return 0
+                output = hook_output(data, verdict)
+                if output is not None:
+                    emit(output)
+            else:
+                request.pop("ts", None)
+                emit(request)
+            return 0
+        try:
+            import http.client
+            connection = http.client.HTTPConnection("127.0.0.1", config["port"], timeout=config["hold"])
+            connection.request("POST", "/v1/decision", body=json.dumps(request).encode("utf-8"), headers={
+                "Content-Type": "application/json",
+                "X-Adalmon-Token": config["token"],
+            })
+            response = connection.getresponse()
+            body = response.read(65536)
+            connection.close()
+            if response.status != 200:
+                return 0
+            output = hook_output(data, json.loads(body.decode("utf-8")))
+        except Exception:
+            return 0  # Adalmon kapalı/kapattı/zaman aşımı: terminal diyaloğu karar versin.
+        if output is not None:
+            emit(output)
+        return 0
+
+
+    if __name__ == "__main__":
+        try:
+            main()
+        except BaseException:
+            pass
+        sys.exit(0)
     """#
 }

@@ -13,6 +13,8 @@ final class AgentService {
     let monitor = AgentMonitorModel(modelResolver: TranscriptModelResolver())
     /// Abonelik limitleri (Claude statusLine sarmalayıcısı → `/v1/limits`, Codex yerel dosya). Dinleyiciden bağımsız yaşar.
     let limits = SubscriptionLimitsModel()
+    /// Ofiste cevap bekleyen izin/soru kartları (YALNIZCA bellek; içerik başka hiçbir yere yazılmaz).
+    let decisions: PendingDecisionStore
     private(set) var listener: ListenerState = .off
     private(set) var pluginStatus: AgentPluginInstaller.PluginStatus = .unknown
     /// Kurulu plugin'in sürümü (`claude plugin list --json`); bilinmiyorsa nil.
@@ -44,7 +46,43 @@ final class AgentService {
     init(prefs: Preferences, installer: AgentPluginInstaller = AgentPluginInstaller()) {
         self.prefs = prefs
         self.installer = installer
+        self.decisions = PendingDecisionStore(auditURL: installer.generator.auditLogURL)
         monitor.onStateChange = { [weak self] _ in self?.publishWeb() }
+        decisions.onChange = { [weak self] in
+            guard let self else { return }
+            self.monitor.setAttention(self.decisions.sessionIDs)
+        }
+    }
+
+    // MARK: Ofisten cevapla (OFFICE-CTRL-01)
+
+    /// decide.py Python gerektirir (kabuk yedeği yok); Python yoksa özellik kapalıdır ve ayarlar nedenini söyler.
+    var controlAvailable: Bool { installer.generator.usesPython }
+    /// Etkin: kullanıcı açtı VE Python var. config.json `controlEnabled` bunun aynasıdır (betik oradan okur).
+    var isControlEnabled: Bool { prefs.agentsControlEnabled && controlAvailable }
+
+    /// Denetim kaydı (JSONL, yalnızca üst veri); ayarlar "göster" düğmesi bunu Finder'da açar.
+    var auditLogURL: URL { installer.generator.auditLogURL }
+
+    func setControlEnabled(_ on: Bool) {
+        prefs.agentsControlEnabled = on
+        // Dinleyici çalışmıyorsa true yazılmaz (betik ölü porta bağlanmaya çalışmasın); `.running` olunca tercih yazılır.
+        try? installer.generator.setControlEnabled(on && controlAvailable && port != nil)
+        if !on { decisions.dismissAll() }
+    }
+
+    /// Kullanıcının tıklaması: karar tutulan bağlantıya yazılır (betik doğrulayıp Claude Code'a döndürür).
+    func respond(_ id: UUID, _ verdict: DecisionVerdict) {
+        decisions.resolve(id, verdict)
+    }
+
+    /// Dinleyiciden gelen karar isteği (ana aktörde). Kapalıysa ya da oturum bilinen/canlı değilse reddedilir (betik terminale bırakır).
+    private func receiveDecision(_ request: DecisionRequest, id: UUID) {
+        guard isControlEnabled, let session = monitor.state.sessions[request.sessionID], session.status != .ended,
+              decisions.add(PendingDecision(id: id, request: request)) else {
+            server?.respondHeld(id, response: AgentDecisionParser.response(status: 403))
+            return
+        }
     }
 
     var isEnabled: Bool { prefs.agentsEnabled }
@@ -119,6 +157,7 @@ final class AgentService {
         let monitor = monitor
         let prefs = prefs
         let limits = limits
+        let decisions = decisions
         let server = AgentEventServer(
             token: token,
             web: web,
@@ -128,11 +167,17 @@ final class AgentService {
                     var event = event
                     if !prefs.agentsShowTargets { event.target = nil }
                     monitor.ingest(event)
+                    // Aynı oturum/ajanın sonraki olayı bekleyen kartı düşürür (terminalde cevaplanmış olabilir).
+                    decisions.dismiss(matching: event)
                 }
             },
             onState: { [weak self] state in Task { @MainActor in self?.handle(state) } },
-            onLimits: { value in Task { @MainActor in limits.ingestClaude(value) } })
+            onLimits: { value in Task { @MainActor in limits.ingestClaude(value) } },
+            onDecision: { [weak self] request, id in Task { @MainActor in self?.receiveDecision(request, id: id) } },
+            onHeldClosed: { id in Task { @MainActor in decisions.serverClosed(id) } })
         server.onStreamCount = { [weak self] count in Task { @MainActor in self?.setWebObserving(count > 0) } }
+        decisions.responder = { [weak server] id, verdict in server?.respondHeld(id, response: AgentDecisionParser.response(for: verdict)) }
+        decisions.releaser = { [weak server] id in server?.respondHeld(id, response: AgentDecisionParser.response(status: 204)) }
         self.server = server
         let saved = prefs.agentsPort
         server.start(preferredPort: UInt16(exactly: saved).flatMap { AgentEventServer.portRange.contains($0) ? $0 : nil })
@@ -185,7 +230,7 @@ final class AgentService {
         guard case .running(let port) = listener, !token.isEmpty else { return false }
         let current = installer.generator.readConfig()
         guard current?.port != port || current?.token != token else { return false }
-        try? installer.generator.writeConfig(port: port, token: token, showTargets: prefs.agentsShowTargets)
+        try? installer.generator.writeConfig(port: port, token: token, showTargets: prefs.agentsShowTargets, controlEnabled: isControlEnabled)
         return true
     }
 
@@ -201,23 +246,36 @@ final class AgentService {
         activationObserver = nil
         setWebObserving(false)
         web.setEnabled(false)
+        decisions.dismissAll()
+        decisions.responder = nil
+        decisions.releaser = nil
         server?.stop()
         server = nil
         listener = .off
+        installer.generator.clearControlEnabled()
         monitor.reset()
+    }
+
+    /// Uygulama kapanırken: betik ölü bir dinleyiciye karar isteği göndermesin diye config.json `controlEnabled` kapatılır.
+    func prepareForTermination() {
+        installer.generator.clearControlEnabled()
     }
 
     private func handle(_ state: AgentEventServer.State) {
         guard server != nil else { return }
         switch state {
-        case .stopped: listener = .off
-        case .failed(let reason): listener = .failed(reason)
+        case .stopped:
+            listener = .off
+            installer.generator.clearControlEnabled()
+        case .failed(let reason):
+            listener = .failed(reason)
+            installer.generator.clearControlEnabled()
         case .running(let port):
             listener = .running(port)
             if prefs.agentsPort != Int(port) { prefs.agentsPort = Int(port) }
             if discoveryEnabled { monitor.startDiscoveryLoop() }
             // Betik port/token'ı bu dosyadan okur; port değişse de yeniden kurulum gerekmez.
-            try? installer.generator.writeConfig(port: port, token: token, showTargets: prefs.agentsShowTargets)
+            try? installer.generator.writeConfig(port: port, token: token, showTargets: prefs.agentsShowTargets, controlEnabled: isControlEnabled)
         }
     }
 

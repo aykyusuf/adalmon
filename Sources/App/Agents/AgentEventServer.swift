@@ -5,6 +5,9 @@ import Network
 /// bağlantı başına 5 sn'lik tek seferlik zaman aşımı vardır. Token loga yazılmaz.
 /// Tarayıcı görünümü (`AgentWebStore` verilmişse): aynı dinleyicide GET/HEAD (sayfa, varlık, durum, SSE). SSE bağlantıları zaman
 /// aşımından muaftır; yalnızca istemci varken 15 sn'lik bir keep-alive zamanlayıcısı çalışır (istemci yoksa zamanlayıcı yok).
+/// Ofisten cevapla (`POST /v1/decision`): bağlantı kullanıcı karar verene dek TUTULUR; tutulan bağlantılar `maxConnections`'a sayılmaz,
+/// kendi üst sınırları (`maxHeld`) vardır ve 5 sn'lik zaman aşımından muaftır (olay iletici bu yüzden aç kalmaz). Zamanlayıcı yok:
+/// bağlantı kapanışı yalnızca okuma geri çağrısıyla fark edilir.
 final class AgentEventServer: @unchecked Sendable {
     enum State: Equatable, Sendable {
         case stopped
@@ -14,6 +17,7 @@ final class AgentEventServer: @unchecked Sendable {
 
     static let portRange: ClosedRange<UInt16> = 49152...65000
     private static let maxConnections = 16
+    static let maxHeld = PendingDecisionStore.maxPending
     private static let connectionTimeout: TimeInterval = 5
 
     private let queue = DispatchQueue(label: "adalmon.agents.server", qos: .utility)
@@ -23,6 +27,8 @@ final class AgentEventServer: @unchecked Sendable {
     private let onEvent: @Sendable (AgentEvent) -> Void
     private let onState: @Sendable (State) -> Void
     private let onLimits: @Sendable (ProviderLimits) -> Void
+    private let onDecision: @Sendable (DecisionRequest, UUID) -> Void
+    private let onHeldClosed: @Sendable (UUID) -> Void
     // Aşağıdakilere yalnızca `queue` üzerinden erişilir.
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
@@ -30,6 +36,8 @@ final class AgentEventServer: @unchecked Sendable {
     private var port: UInt16 = 0
     private var sseClients: [ObjectIdentifier: NWConnection] = [:]
     private var keepAlive: DispatchSourceTimer?
+    private var held: [UUID: NWConnection] = [:]
+    private var heldIDs: [ObjectIdentifier: UUID] = [:]
     /// SSE istemci sayısı değişince (queue üzerinden) çağrılır: arka plan işlemi gözlemci sayacını sürer. Başlatmadan önce atanır.
     var onStreamCount: (@Sendable (Int) -> Void)?
     private var reportedStreams = 0
@@ -42,13 +50,17 @@ final class AgentEventServer: @unchecked Sendable {
 
     init(token: String, web: AgentWebStore? = nil, keepAliveInterval: TimeInterval = 15,
          onEvent: @escaping @Sendable (AgentEvent) -> Void, onState: @escaping @Sendable (State) -> Void,
-         onLimits: @escaping @Sendable (ProviderLimits) -> Void = { _ in }) {
+         onLimits: @escaping @Sendable (ProviderLimits) -> Void = { _ in },
+         onDecision: @escaping @Sendable (DecisionRequest, UUID) -> Void = { _, _ in },
+         onHeldClosed: @escaping @Sendable (UUID) -> Void = { _ in }) {
         self.token = token
         self.web = web
         self.keepAliveInterval = keepAliveInterval
         self.onEvent = onEvent
         self.onState = onState
         self.onLimits = onLimits
+        self.onDecision = onDecision
+        self.onHeldClosed = onHeldClosed
     }
 
     static func randomPort() -> UInt16 { UInt16.random(in: portRange) }
@@ -75,6 +87,9 @@ final class AgentEventServer: @unchecked Sendable {
         listener = nil
         for connection in connections.values { connection.cancel() }
         connections = [:]
+        for connection in held.values { connection.cancel() }
+        held = [:]
+        heldIDs = [:]
         sseClients = [:]
         reportStreams()
         keepAlive?.cancel()
@@ -98,6 +113,21 @@ final class AgentEventServer: @unchecked Sendable {
             reportStreams()
             updateKeepAlive()
         }
+    }
+
+    /// Tutulan karar bağlantısına yanıt yazar ve kapatır (betik hemen çıkar). Kimlik yoksa (bağlantı zaten kapandı) hiçbir şey yapmaz.
+    /// `response`: `AgentDecisionParser.response(for:)` / `response(status:)`.
+    func respondHeld(_ id: UUID, response: Data) {
+        queue.async { [self] in
+            guard let connection = held.removeValue(forKey: id) else { return }
+            heldIDs[ObjectIdentifier(connection)] = nil
+            connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+        }
+    }
+
+    /// Test/teşhis: tutulan karar bağlantısı sayısı.
+    func heldCount() async -> Int {
+        await withCheckedContinuation { continuation in queue.async { [self] in continuation.resume(returning: held.count) } }
     }
 
     /// Test/teşhis: bağlı SSE istemcisi sayısı.
@@ -173,6 +203,10 @@ final class AgentEventServer: @unchecked Sendable {
                 self?.queue.async {
                     self?.connections[id] = nil
                     if self?.sseClients.removeValue(forKey: id) != nil { self?.updateKeepAlive(); self?.reportStreams() }
+                    if let self, let held = self.heldIDs.removeValue(forKey: id) {
+                        self.held[held] = nil
+                        self.onHeldClosed(held)
+                    }
                 }
             default: break
             }
@@ -180,7 +214,7 @@ final class AgentEventServer: @unchecked Sendable {
         connection.start(queue: queue)
         // SSE'ye çevrilen bağlantı zaman aşımından muaftır.
         queue.asyncAfter(deadline: .now() + Self.connectionTimeout) { [weak self] in
-            if self?.sseClients[id] == nil { connection.cancel() }
+            if self?.sseClients[id] == nil, self?.heldIDs[id] == nil { connection.cancel() }
         }
         receive(on: connection, buffer: Data())
     }
@@ -190,6 +224,10 @@ final class AgentEventServer: @unchecked Sendable {
             guard let self else { return }
             var buffer = buffer
             if let data { buffer.append(data) }
+            if AgentDecisionParser.isDecisionRequest(buffer) {
+                self.receiveDecision(on: connection, buffer: buffer, closed: error != nil || isComplete)
+                return
+            }
             if self.web != nil, AgentWebRouter.isWebRequest(buffer) {
                 self.receiveWeb(on: connection, buffer: buffer, closed: error != nil || isComplete)
                 return
@@ -207,6 +245,27 @@ final class AgentEventServer: @unchecked Sendable {
             case .reject:
                 self.reply(outcome, on: connection)
             }
+        }
+    }
+
+    private func receiveDecision(on connection: NWConnection, buffer: Data, closed: Bool) {
+        switch AgentDecisionParser.parse(buffer, token: token, port: port == 0 ? nil : port) {
+        case .needMore:
+            if closed { connection.cancel() } else { receive(on: connection, buffer: buffer) }
+        case .reject(let status):
+            connection.send(content: AgentDecisionParser.response(status: status), completion: .contentProcessed { _ in connection.cancel() })
+        case .request(let request):
+            guard held.count < Self.maxHeld else {
+                connection.send(content: AgentDecisionParser.response(status: 429), completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+            let id = UUID()
+            let key = ObjectIdentifier(connection)
+            connections[key] = nil // olay iletici bağlantı payından düşer; kapanış aşağıda stateUpdateHandler'dan izlenir
+            held[id] = connection
+            heldIDs[key] = id
+            drain(connection)
+            onDecision(request, id)
         }
     }
 

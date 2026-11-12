@@ -30,6 +30,9 @@ final class StartupItemsModel {
         self.scanBackground = scanBackground
     }
 
+    /// Programı bulunamayan (bozuk) ajanlar.
+    var brokenItems: [StartupItem] { items.filter(\.isBroken) }
+
     func load() async {
         async let background: Void = loadBackground()
         await reload()

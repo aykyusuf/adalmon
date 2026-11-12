@@ -11,10 +11,10 @@ struct AgentPluginGenerator: Sendable {
     static let pluginID = "adalmon-agents@adalmon-local"
     /// Betikler her değiştiğinde artırılır: Claude plugin'i kendi önbelleğine kopyalar ve yalnızca `version` değişince yeniler.
     /// `AgentPluginTests.testScriptDigestPinsVersion` betik özetini bu sürüme kilitler (sürümsüz betik değişikliği testi kırar).
-    static let version = "1.3.0"
-    /// Her iki betiğin birleşik SHA-256 özeti (ilk 16 hex); yalnızca sürüm kilidi testi içindir.
+    static let version = "1.5.0"
+    /// Tüm betiklerin birleşik SHA-256 özeti (ilk 16 hex); yalnızca sürüm kilidi testi içindir.
     static var scriptsDigest: String {
-        let data = Data((AgentPluginScripts.python + "\n--\n" + AgentPluginScripts.shell).utf8)
+        let data = Data((AgentPluginScripts.python + "\n--\n" + AgentPluginScripts.shell + "\n--\n" + AgentPluginScripts.decide).utf8)
         return SHA256.hash(data: data).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
     static let hookEvents = AgentEvent.Name.allCases.map(\.rawValue)
@@ -47,6 +47,15 @@ struct AgentPluginGenerator: Sendable {
     var hooksURL: URL { pluginDirectory.appending(path: "hooks/hooks.json") }
     var pythonScriptURL: URL { pluginDirectory.appending(path: "scripts/forward.py") }
     var shellScriptURL: URL { pluginDirectory.appending(path: "scripts/forward.sh") }
+    var decideScriptURL: URL { pluginDirectory.appending(path: "scripts/decide.py") }
+
+    /// Ofisten cevapla denetim kaydı (JSONL, yalnızca üst veri). Varsayılan kökte `ClaudePlugin`un yanında durur (eklenti kaldırılsa da
+    /// silinmez); başka bir kökte (testler) o kökün içindedir.
+    var auditLogURL: URL {
+        root.standardizedFileURL == Self.defaultRoot.standardizedFileURL
+            ? root.deletingLastPathComponent().appending(path: "agent-control-audit.jsonl")
+            : root.appending(path: "control-audit.jsonl")
+    }
 
     /// Bu makinede kullanılan betik (Python varsa forward.py, yoksa forward.sh).
     var activeScriptURL: URL { usesPython ? pythonScriptURL : shellScriptURL }
@@ -55,6 +64,10 @@ struct AgentPluginGenerator: Sendable {
     var hookCommand: String {
         usesPython ? "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/forward.py\"" : "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/forward.sh\""
     }
+
+    /// Ofisten cevapla hook komutu (yalnızca Python). Zaman aşımı 600 sn; betik 590 sn'de kendi çıkar.
+    var decideCommand: String { "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/decide.py\"" }
+    static let decideTimeout = 600
 
     var marketplaceJSON: [String: Any] {
         [
@@ -74,7 +87,7 @@ struct AgentPluginGenerator: Sendable {
         [
             "name": Self.pluginName,
             "version": Self.version,
-            "description": "Adalmon: Claude Code oturum ve alt ajan durumunu yerel olarak izler. İstem, araç girdisi/çıktısı ve yanıt metni iletilmez.",
+            "description": "Adalmon: Claude Code oturum ve alt ajan durumunu yerel olarak izler. Olay akışında istem, araç girdisi/çıktısı ve yanıt metni iletilmez. İsteğe bağlı \"ofisten cevapla\" (varsayılan kapalı) açıksa izin/soru ayrıntısı yalnızca bu Mac'teki Adalmon'a, bellekte tutulmak üzere gönderilir.",
             "author": ["name": "Adalmon"],
         ]
     }
@@ -83,6 +96,13 @@ struct AgentPluginGenerator: Sendable {
         var hooks: [String: Any] = [:]
         for event in Self.hookEvents {
             hooks[event] = [["hooks": [["type": "command", "command": hookCommand, "async": true, "timeout": 5] as [String: Any]]]]
+        }
+        // Ofisten cevapla: senkron (async DEĞİL) PermissionRequest hook'u; terminal diyaloğu paralel açılır (spike). Hata = çıktısız çıkış.
+        // PreToolUse KULLANILMAZ (terminali bloklar). Python yoksa eklenmez.
+        if usesPython {
+            var groups = hooks["PermissionRequest"] as? [[String: Any]] ?? []
+            groups.append(["hooks": [["type": "command", "command": decideCommand, "timeout": Self.decideTimeout] as [String: Any]]])
+            hooks["PermissionRequest"] = groups
         }
         return ["hooks": hooks]
     }
@@ -94,16 +114,18 @@ struct AgentPluginGenerator: Sendable {
         try writeJSON(hooksJSON, to: hooksURL)
         try writeText(AgentPluginScripts.python, to: pythonScriptURL, mode: 0o755)
         try writeText(AgentPluginScripts.shell, to: shellScriptURL, mode: 0o755)
+        try writeText(AgentPluginScripts.decide, to: decideScriptURL, mode: 0o755)
         try writeConfig(port: port, token: token)
     }
 
     /// Yalnızca port/token yenilenir (betikler ve manifest dokunulmaz). `showTargets` verilirse o da yazılır; verilmezse var olan
     /// değer ve dosyadaki diğer anahtarlar korunur.
-    func writeConfig(port: UInt16, token: String, showTargets: Bool? = nil) throws {
+    func writeConfig(port: UInt16, token: String, showTargets: Bool? = nil, controlEnabled: Bool? = nil) throws {
         var object = existingConfigObject()
         object["port"] = Int(port)
         object["token"] = token
         if let showTargets { object["showTargets"] = showTargets }
+        if let controlEnabled { object["controlEnabled"] = controlEnabled }
         try writeConfigObject(object)
     }
 
@@ -115,6 +137,25 @@ struct AgentPluginGenerator: Sendable {
         var object = existingConfigObject()
         object["showTargets"] = on
         try writeConfigObject(object)
+    }
+
+    /// decide.py'nin okuduğu "Ofisten cevapla" anahtarı (config.json `controlEnabled`); yoksa/okunamazsa false (kapalı).
+    func readControlEnabled() -> Bool { existingConfigObject()["controlEnabled"] as? Bool ?? false }
+
+    /// Yalnızca `controlEnabled` yazılır (port/token ve diğer anahtarlar korunur). Betik değişmez.
+    func setControlEnabled(_ on: Bool) throws {
+        var object = existingConfigObject()
+        object["controlEnabled"] = on
+        try writeConfigObject(object)
+    }
+
+    /// Dinleyici durunca/düşünce/uygulama kapanırken: `controlEnabled` true ise false yapar (yalnızca dosya varsa ve true ise yazar).
+    /// Böylece ölü porta ya da başka bir sürece gidecek karar isteği oluşmaz; dinleyici yeniden `.running` olunca tercih geri yazılır.
+    func clearControlEnabled() {
+        var object = existingConfigObject()
+        guard object["controlEnabled"] as? Bool == true else { return }
+        object["controlEnabled"] = false
+        try? writeConfigObject(object)
     }
 
     private func existingConfigObject() -> [String: Any] {

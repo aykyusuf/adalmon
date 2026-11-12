@@ -2,7 +2,7 @@ import SwiftUI
 
 extension OverviewTile {
     /// Abonelik limitleri karosu: en kritik pencere (en yüksek kullanım). Ajanlar kapalıysa yalnızca Codex verisi sayılır;
-    /// hiç veri yoksa ve ajanlar kapalıysa karo gizlenir (nil).
+    /// hiç veri yoksa ve ajanlar kapalıysa karo gizlenir (nil). Karoya tıklayınca (veri olsun olmasın) Limitler ayrıntı sayfası açılır.
     static func limits(providers: [ProviderLimits], claudeConnected: Bool, agentsEnabled: Bool, thresholds: LimitAlertThresholds,
                        now: Date, forecast: (ProviderLimits, LimitWindowKind) -> LimitForecast?) -> OverviewTile? {
         let shown = providers.filter { agentsEnabled || $0.source != .claude }
@@ -14,7 +14,7 @@ extension OverviewTile {
                                 help: claudeConnected
                                     ? "Claude limitleri bağlı; Claude Code ilk yanıtını verince değerler görünür."
                                     : "Claude 5 saatlik ve haftalık limitlerini görmek için tıklayıp Ayarlar'dan bağlayın.",
-                                tint: .secondary, accessory: .bar(0))
+                                tint: .secondary, accessory: .bar(0), opensDetail: true)
         }
 
         struct Entry { var provider: ProviderLimits; var kind: LimitWindowKind; var window: LimitWindow; var stale: Bool }
@@ -69,24 +69,5 @@ extension OverviewTile {
                 return line
             }
         }
-    }
-}
-
-/// Karoya tıklayınca açılan ayrıntı: panelin "Abonelik limitleri" kartı + ayarlara kısayol.
-struct OverviewLimitsDetail: View {
-    let model: SubscriptionLimitsModel
-    let openSettings: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SubscriptionLimitsCard(model: model)
-            Button(action: openSettings) {
-                Label("Ayarlar › Claude ajanları › Abonelik limitleri", systemImage: "gearshape")
-                    .font(.caption)
-            }
-            .buttonStyle(.link)
-        }
-        .padding(12)
-        .frame(width: 320, alignment: .leading)
     }
 }

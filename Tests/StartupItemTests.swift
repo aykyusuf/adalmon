@@ -91,6 +91,79 @@ final class StartupItemTests: XCTestCase {
         XCTAssertFalse(LaunchctlCommand.isValidLabel("a\nb"))
     }
 
+    // MARK: bozuk ajan
+
+    private func parsed(_ dict: [String: Any], missing: Set<String> = [], scope: StartupItem.Scope = .user) throws -> StartupItem {
+        try XCTUnwrap(StartupItemScanner.parse(data: plist(dict), path: "/Users/u/Library/LaunchAgents/x.plist", scope: scope,
+                                               isMissing: { missing.contains($0) }))
+    }
+
+    func testBrokenWhenProgramPathIsMissing() throws {
+        let item = try parsed(["Label": "com.example.gone", "ProgramArguments": ["/Applications/Gone.app/Contents/MacOS/gone"]],
+                              missing: ["/Applications/Gone.app/Contents/MacOS/gone"])
+        XCTAssertTrue(item.isBroken)
+        XCTAssertEqual(item.problem, .programMissing("/Applications/Gone.app/Contents/MacOS/gone"))
+        let direct = try parsed(["Label": "com.example.gone2", "Program": "/opt/x/bin/x"], missing: ["/opt/x/bin/x"])
+        XCTAssertEqual(direct.problem, .programMissing("/opt/x/bin/x"))
+    }
+
+    func testBrokenWhenNoProgramKeys() throws {
+        XCTAssertEqual(try parsed(["Label": "com.example.empty"]).problem, .noProgram)
+        XCTAssertEqual(try parsed(["Label": "com.example.empty2", "ProgramArguments": [String]()]).problem, .noProgram)
+    }
+
+    func testNotBrokenWhenProgramExistsOrUnverifiable() throws {
+        XCTAssertFalse(try parsed(["Label": "com.example.ok", "Program": "/bin/ls"]).isBroken)
+        XCTAssertFalse(try parsed(["Label": "com.example.rel", "ProgramArguments": ["sh", "-c", "true"]], missing: ["sh"]).isBroken)
+        XCTAssertFalse(try parsed(["Label": "com.example.vol", "Program": "/Volumes/Ext/tool"], missing: ["/Volumes/Ext/tool"]).isBroken)
+        XCTAssertFalse(try parsed(["Label": "com.example.bundle", "BundleProgram": "Contents/MacOS/x"]).isBroken)
+        XCTAssertFalse(try parsed(["Label": "com.apple.thing", "Program": "/nope"], missing: ["/nope"]).isBroken)
+        XCTAssertFalse(try XCTUnwrap(StartupItemScanner.parse(data: Data("not a plist".utf8), path: "/x/org.foo.plist", scope: .user)).isBroken)
+    }
+
+    func testDefaultMissingCheckUsesRealFilesOnlyInFixture() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "startup-broken-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let present = dir.appending(path: "tool")
+        try Data("#!/bin/sh\n".utf8).write(to: present)
+        let absent = dir.appending(path: "gone").path
+
+        XCTAssertFalse(StartupItemScanner.isDefinitelyMissing(present.path))
+        XCTAssertTrue(StartupItemScanner.isDefinitelyMissing(absent))
+        XCTAssertTrue(StartupItemScanner.isDefinitelyMissing(present.path + "/child")) // ENOTDIR
+
+        let agents = dir.appending(path: "LaunchAgents", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+        for (name, program) in [("com.ok", present.path), ("com.bad", absent)] {
+            let data = try plist(["Label": name, "ProgramArguments": [program]])
+            try data.write(to: agents.appending(path: "\(name).plist"))
+        }
+        let items = StartupItemScanner.readPlists(in: [(agents, .user)])
+        XCTAssertEqual(items.filter(\.isBroken).map(\.label), ["com.bad"])
+    }
+
+    // MARK: yönetici komutu (yalnızca metin)
+
+    func testAdminCommandForGlobalItemsOnly() throws {
+        let daemon = try parsed(["Label": "com.example.daemon", "Program": "/bin/ls"], scope: .daemon)
+        XCTAssertEqual(StartupItemCommands.adminCommand(for: daemon, uid: 501),
+                       "sudo launchctl bootout system/com.example.daemon; sudo launchctl disable system/com.example.daemon")
+        let agent = try parsed(["Label": "com.example.agent", "Program": "/bin/ls"], scope: .allUsers)
+        XCTAssertEqual(StartupItemCommands.adminCommand(for: agent, uid: 501),
+                       "sudo launchctl bootout gui/501/com.example.agent; sudo launchctl disable gui/501/com.example.agent")
+        XCTAssertNil(StartupItemCommands.adminCommand(for: try parsed(["Label": "com.example.user", "Program": "/bin/ls"]), uid: 501))
+        XCTAssertNil(StartupItemCommands.adminCommand(for: try parsed(["Label": "com.apple.x", "Program": "/bin/ls"], scope: .daemon), uid: 501))
+    }
+
+    func testAdminCommandQuotesUnsafeLabels() throws {
+        let item = try parsed(["Label": "com.ex ample;rm", "Program": "/bin/ls"], scope: .daemon)
+        XCTAssertNil(StartupItemCommands.adminCommand(for: item), "boşluklu etiket geçersiz sayılır")
+        XCTAssertEqual(StartupItemCommands.shellQuoted("a;b"), "'a;b'")
+        XCTAssertEqual(StartupItemCommands.shellQuoted("it's"), "'it'\\''s'")
+        XCTAssertEqual(StartupItemCommands.shellQuoted("gui/501/com.x-y_z"), "gui/501/com.x-y_z")
+    }
+
     // MARK: yetki
 
     func testPermissionGating() {

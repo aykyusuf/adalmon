@@ -17,14 +17,19 @@ final class CleanupViewModel {
     /// Yalnızca sonraki işlem için; işlem bitince `.trash`a döner.
     var deleteMode: DeleteMode = .trash
     let access: CleanupAccessMonitor
+    /// Kullanıcının seçtiği proje klasörleri (`.projectArtifacts` kökleri).
+    private(set) var projectFolders: [String] = []
+    @ObservationIgnored let folderStore: ProjectFoldersStore
     var scannedCategories: Set<CleanupCategory> = []
     var trashState: (state: CleanupRootState, bytes: UInt64)?
     var log: [CleanupLogEntry] = []
     @ObservationIgnored private var scanTask: Task<Void, Never>?
 
-    init(home: String = NSHomeDirectory(), probe: PathProbe = .live) {
+    init(home: String = NSHomeDirectory(), probe: PathProbe = .live, folderStore: ProjectFoldersStore? = nil) {
         self.home = home
+        self.folderStore = folderStore ?? ProjectFoldersStore(home: home)
         access = CleanupAccessMonitor(home: home, probe: probe)
+        projectFolders = self.folderStore.folders
         access.onUnblocked = { [weak self] paths in self?.rescanUnblocked(paths) }
     }
 
@@ -34,9 +39,14 @@ final class CleanupViewModel {
 
     func items(in category: CleanupCategory) -> [CleanupItem] { items.filter { $0.category == category } }
 
+    /// Kategorinin kök yolları (proje artıklarında kullanıcının seçtiği klasörler).
+    func rootPaths(for category: CleanupCategory) -> [String] {
+        category == .projectArtifacts ? projectFolders : CleanupCatalog.roots(home: home).filter { $0.category == category }.map(\.path)
+    }
+
     /// Kategorinin köklerinden türetilen durum (biri tarandıysa taranmış sayılır).
     func state(of category: CleanupCategory) -> CleanupRootState? {
-        let states = CleanupCatalog.roots(home: home).filter { $0.category == category }.compactMap { rootStates[$0.path] }
+        let states = rootPaths(for: category).compactMap { rootStates[$0] }
         if states.isEmpty { return nil }
         if states.contains(.scanned) { return .scanned }
         if states.contains(.noAccess) { return .noAccess }
@@ -51,10 +61,11 @@ final class CleanupViewModel {
         guard !isBusy else { return }
         let running = Self.runningBundleIDs()
         let home = home
+        let projects = projectFolders
         phase = .scanning(categories.first)
         lastResult = nil
         scanTask = Task.detached(priority: .utility) { [weak self] in
-            let out = CleanupScanner.scan(categories: categories, home: home, runningBundleIDs: running,
+            let out = CleanupScanner.scan(categories: categories, home: home, runningBundleIDs: running, projectRoots: projects,
                                           isCancelled: { Task.isCancelled },
                                           progress: { c in Task { @MainActor [weak self] in
                                               if case .scanning = self?.phase { self?.phase = .scanning(c) }
@@ -66,7 +77,8 @@ final class CleanupViewModel {
     /// Erişimi açılan kökleri yeniden tarar (Çöp Sepeti için yeniden ölçüm).
     func rescanUnblocked(_ paths: [String]) {
         let freed = Set(paths)
-        let categories = CleanupCatalog.roots(home: home).filter { freed.contains($0.path) }.map(\.category)
+        var categories = CleanupCatalog.roots(home: home).filter { freed.contains($0.path) }.map(\.category)
+        if projectFolders.contains(where: freed.contains) { categories.append(.projectArtifacts) }
         var seen = Set<CleanupCategory>()
         let ordered = categories.filter { seen.insert($0).inserted }
         let trashFreed = freed.contains(CleanupCatalog.trashPath(home: home))
@@ -76,7 +88,25 @@ final class CleanupViewModel {
 
     /// Kategorinin erişilemeyen ilk kökünün nedeni.
     func accessReason(for category: CleanupCategory) -> AccessReason? {
-        CleanupCatalog.roots(home: home).filter { $0.category == category }.lazy.compactMap { self.access.reason(for: $0.path) }.first
+        rootPaths(for: category).lazy.compactMap { self.access.reason(for: $0) }.first
+    }
+
+    /// Proje klasörü ekler (örn. NSOpenPanel seçimi); reddedilirse kullanıcıya gösterilecek metin döner.
+    @discardableResult
+    func addProjectFolder(_ path: String) -> String? {
+        if let error = folderStore.add(path) { return error.message }
+        projectFolders = folderStore.folders
+        return nil
+    }
+
+    func removeProjectFolder(_ path: String) {
+        folderStore.remove(path)
+        projectFolders = folderStore.folders
+        let removedIDs = Set(items.filter { $0.category == .projectArtifacts && $0.rootPath == path }.map(\.id))
+        items.removeAll { removedIDs.contains($0.id) }
+        selection.subtract(removedIDs)
+        rootStates[path] = nil
+        access.setBlocked(path, false)
     }
 
     func measureTrash() {
@@ -159,6 +189,7 @@ final class CleanupViewModel {
 }
 
 struct CleanupView: View {
+    let group: CleanupGroup
     @State private var vm = CleanupViewModel()
     @State private var confirmSummary: DeleteSummary?
     /// Onay penceresinde özetlenen öğelerin kendisi.
@@ -166,6 +197,8 @@ struct CleanupView: View {
     @State private var helpReason: AccessReason?
     @State private var showDetails = false
     @State private var logExpanded = false
+
+    init(group: CleanupGroup = .junk) { self.group = group }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -178,17 +211,18 @@ struct CleanupView: View {
                         .font(.caption).foregroundStyle(vm.deleteMode == .trash ? Color.secondary : Color.red)
                     if !vm.access.blocked.isEmpty { accessBanner }
                     if let result = vm.lastResult { banner(result) }
-                    if vm.scannedCategories.isDisjoint(with: CleanupCategory.defaultScan) {
-                        ResourceEmptyNote(text: "Önbellekleri ve geliştirici artıklarını görmek için Tara'ya basın. Tarama yalnızca siz isteyince yapılır.")
+                    if vm.scannedCategories.isDisjoint(with: group.scanCategories) {
+                        ResourceEmptyNote(text: group.emptyNote)
                     }
-                    ForEach(CleanupCategory.defaultScan) { category in
-                        if vm.scannedCategories.contains(category), let state = vm.state(of: category), state != .missing,
-                           state == .noAccess || !vm.items(in: category).isEmpty {
+                    ForEach(group.categories) { category in
+                        if category.needsExplicitScan {
+                            CleanupCategoryCard(vm: vm, category: category, state: vm.state(of: category), onHelp: { helpReason = $0 })
+                        } else if vm.scannedCategories.contains(category), let state = vm.state(of: category), state != .missing,
+                                  state == .noAccess || !vm.items(in: category).isEmpty {
                             CleanupCategoryCard(vm: vm, category: category, state: state, onHelp: { helpReason = $0 })
                         }
                     }
-                    CleanupCategoryCard(vm: vm, category: .downloads, state: vm.state(of: .downloads), onHelp: { helpReason = $0 })
-                    CleanupCategoryCard(vm: vm, category: .iosBackups, state: vm.state(of: .iosBackups), onHelp: { helpReason = $0 })
+                    if group == .dev { ToolCommandCards() }
                     logCard
                 }
                 .padding(.bottom, 8)
@@ -280,17 +314,19 @@ struct CleanupView: View {
                 Text("Taranıyor: \(category?.title ?? "")…").foregroundStyle(.secondary).lineLimit(1)
                 Button("Durdur") { vm.cancel() }
             } else {
-                Button("Tara", systemImage: "magnifyingglass") { vm.scan(CleanupCategory.defaultScan) }
+                Button("Tara", systemImage: "magnifyingglass") { vm.scan(group.scanCategories) }
                     .buttonStyle(.borderedProminent)
                     .disabled(vm.isBusy)
             }
             Spacer(minLength: 8)
             fullDiskAccessBadge
-            trashSummary
-            Button("Çöpü Finder'da aç", systemImage: "trash") {
-                NSWorkspace.shared.open(URL(fileURLWithPath: CleanupCatalog.trashPath(home: vm.home)))
+            if group == .junk {
+                trashSummary
+                Button("Çöpü Finder'da aç", systemImage: "trash") {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: CleanupCatalog.trashPath(home: vm.home)))
+                }
+                .buttonStyle(.borderless)
             }
-            .buttonStyle(.borderless)
         }
     }
 

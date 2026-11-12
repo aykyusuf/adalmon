@@ -27,16 +27,18 @@ enum SessionDormancy {
     }
 
     /// Kullanıcının dikkatini gerektiriyor mu (izin bekliyor)? Elle küçültülmüş olsa da oda bu durumda öne çıkar.
-    static func needsAttention(_ s: AgentSession) -> Bool {
-        s.status == .waitingPermission || s.subagents.contains { $0.status == .waitingPermission }
+    /// `pendingDecision`: ofiste cevap bekleyen bir izin/soru kartı var (OFFICE-CTRL-01); oturum dikkat istiyor sayılır.
+    static func needsAttention(_ s: AgentSession, pendingDecision: Bool = false) -> Bool {
+        pendingDecision || s.status == .waitingPermission || s.subagents.contains { $0.status == .waitingPermission }
     }
 
     /// Oturum şu an küçük (sekme) olarak mı gösterilmeli?
     /// - Elle küçültülen oturum, çalışıyor ya da arka plan işlemi olsa bile küçük KALIR (kullanıcı bilerek küçülttü); yalnızca izin
     ///   beklerken geri açılır. Çalışma durumu şeritteki kartta (nokta + durum) görünür.
     /// - Otomatik (30 dk boşta) küçülme yalnızca gerçekten boşta oturumlar içindir; çalışmaya başlayınca kendiliğinden açılır.
-    static func isMinimized(_ s: AgentSession, override: SessionDockOverride?, now: Date) -> Bool {
+    static func isMinimized(_ s: AgentSession, override: SessionDockOverride?, now: Date, pendingDecision: Bool = false) -> Bool {
         guard s.status != .ended else { return false }
+        if pendingDecision { return false }
         if case .minimized? = override { return !needsAttention(s) }
         if isBusy(s) { return false }
         guard let due = dormantDate(s, override: override) else { return false }
@@ -44,11 +46,11 @@ enum SessionDormancy {
     }
 
     /// Küçük oturumlar ve açık oturumlar (sıra korunur). `overrides` anahtarı oturum kimliğidir.
-    static func partition(_ sessions: [AgentSession], overrides: [String: SessionDockOverride], now: Date)
+    static func partition(_ sessions: [AgentSession], overrides: [String: SessionDockOverride], now: Date, attention: Set<String> = [])
         -> (open: [AgentSession], minimized: [AgentSession]) {
         var open: [AgentSession] = [], minimized: [AgentSession] = []
         for s in sessions {
-            if isMinimized(s, override: overrides[s.id], now: now) { minimized.append(s) } else { open.append(s) }
+            if isMinimized(s, override: overrides[s.id], now: now, pendingDecision: attention.contains(s.id)) { minimized.append(s) } else { open.append(s) }
         }
         return (open, minimized)
     }

@@ -244,3 +244,8 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 **Kurulum rutini:** Release + `CURRENT_PROJECT_VERSION=<aktif filtre sürümü>` → killall → ditto → open → kontroller: tek kopya, curl 200, bootstrap look-up 0, config port == dinleyici portu.
 **Paralel ajan kuralları:** ayrı DerivedData `/private/tmp/claude-501/adalmon-dd-<ad>` (bitince sil), commit/kurulum yok, gerçek settings.json/config.json'a dokunma, filtre koduna dokunma, Firefox yok.
 
+
+### 2026-11-12 öğleden sonra
+**Now:** CLEAN-02 Phase 1–7 bitti (Temizlik'te hiçbir bölüm "Yakında" demiyor), OFFICE-CTRL-01 MVP uygulandı (varsayılan kapalı, plugin 1.5.0), Limitler detay sayfası + animasyonlu Genel bakış kartı + panel kartı. Bağımsız inceleme (silme + hook) kritik bulgu yok, 4 nit düzeltildi. Tam suite 1581 test, 3 bilinen kararsız (OfficeLiveArrival, SessionProcessSampler, AgentRealScriptEndToEnd yük altında; tek başına geçer). Release kuruldu (filtre 1794457926 korundu), kontroller temiz.
+**Next:** (1) Kullanıcı onayları tek tek (AskUserQuestion): CLEAN-02, USAGE-03, OFFICE-CTRL-01 (önce gerçek oturumda: Ayarlar > Claude ajanları > Ofisten cevapla aç → plugin Güncelle → YENİ claude oturumu aç → izin/soru dene) + önceki in_progress'ler. (2) Açık küçük kararlar: Docker için yalnız `builder prune` mı yoksa `system prune` mı; Akıllı tarama riskli kartlarda sayı göstersin mi.
+**Dersler (doğrulandı):** (a) `CODE_SIGNING_ALLOWED=NO` ile tam suite'te BundledLibraryTests çöküyor ve testlerin bir kısmı koşmuyor → tam suite imzalı (`-allowProvisioningUpdates`) koşulmalı. (b) `ditto` eski paketin üstüne kurunca widget appex'te silinmiş dosya kalıp imza bozuluyor → kurulumda eski paketi kenara al (mv), sonra ditto, sonra `codesign --verify --deep --strict`.

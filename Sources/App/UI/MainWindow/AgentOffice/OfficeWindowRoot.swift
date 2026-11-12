@@ -19,7 +19,8 @@ struct OfficeWindowRoot: View {
                                  sleeping: dock.minimized, onRestore: { model.agents.monitor.restore($0) }, commands: sceneCommands,
                                  // Tam ekranda hareketsizken (imleç ve şerit gizliyken) küçült düğmesi de çıkmaz; kart şeridin altına iner.
                                  hoverControlsEnabled: state.stripShown,
-                                 cardTopInset: state.isFullScreen && state.stripShown ? stripHeight : 0)
+                                 cardTopInset: state.isFullScreen && state.stripShown ? stripHeight : 0,
+                                 decisions: model.agents.decisions, onDecide: { model.agents.respond($0, $1) })
                 .padding(.top, state.isFullScreen ? 0 : stripHeight)
                 .overlay { if sessions.isEmpty { emptyHint } }
                 .accessibilityLabel("Ajan ofisi: \(sessions.count) oturum" + (dock.minimized.isEmpty ? "" : ", \(dock.minimized.count) uykuda"))

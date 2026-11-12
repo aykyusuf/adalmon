@@ -34,7 +34,7 @@ struct CleanupPage: View {
     @ViewBuilder
     private var content: some View {
         switch router.cleanupSubsection {
-        case .smartScan: SmartScanSection()
+        case .smartScan: SmartScanSection(onReview: { router.cleanupSubsection = $0 })
         case .junk: CleanupJunkSection()
         case .dev: CleanupDevSection()
         case .uninstaller: UninstallerSection()

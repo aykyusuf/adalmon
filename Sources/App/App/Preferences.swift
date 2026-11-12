@@ -55,6 +55,8 @@ final class Preferences {
     var agentsInMenuBar: Bool { didSet { d.set(agentsInMenuBar, forKey: "agentsInMenuBar") } }
     /// Ajan balonlarında hedefi de göster (dosya adı / komut adı; içerik ve argüman asla). Varsayılan kapalı.
     var agentsShowTargets: Bool { didSet { d.set(agentsShowTargets, forKey: "agentsShowTargets") } }
+    /// Ofisten izin/soru cevapla (OFFICE-CTRL-01): decide.py yalnızca bu açıkken (config.json `controlEnabled`) Adalmon'a bağlanır. Varsayılan kapalı.
+    var agentsControlEnabled: Bool { didSet { d.set(agentsControlEnabled, forKey: "agentsControlEnabled") } }
     /// Tarayıcıda canlı ofis (aynı yerel dinleyicide GET yolları). Varsayılan kapalı; kapalıyken GET'ler 404.
     var agentsWebEnabled: Bool { didSet { d.set(agentsWebEnabled, forKey: "agentsWebEnabled") } }
     /// Dinleyicinin kalıcı rastgele portu; 0 = henüz seçilmedi.
@@ -108,6 +110,7 @@ final class Preferences {
         agentsInMenuBar = d.bool(forKey: "agentsInMenuBar")
         agentsShowTargets = d.bool(forKey: "agentsShowTargets")
         agentsWebEnabled = d.bool(forKey: "agentsWebEnabled")
+        agentsControlEnabled = d.bool(forKey: "agentsControlEnabled")
         agentsPort = d.integer(forKey: "agentsPort")
         alertDelivery = d.string(forKey: "alertDelivery").flatMap(AlertDelivery.init(rawValue:)) ?? .system // önceki davranış: uyarılar sistem bildirimiydi
         menuBar = MenuBarConfigStore(defaults: d)

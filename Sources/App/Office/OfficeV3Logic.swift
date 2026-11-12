@@ -225,6 +225,8 @@ struct OfficeDetailCard: Equatable, Sendable {
     /// Oturum kartında: arka plan işlemleri (pid bilinmiyorsa `shellsKnown` false). Alt ajan kartında boş.
     var shells: SessionShells = .empty
     var shellsKnown = false
+    /// Ofiste cevap bekleyen izin/soru sayısı (içerik değil; yalnızca sayı kartı güncel tutar). Sahne doldurmaz, kapsayıcı yazar.
+    var pendingDecisions = 0
 
     /// Tek tıkla açılan kart: oturum adı/rol, model, durum, araç (+hedef), süre, üst oturum adı, alt ajan sayısı/listesi.
     static func make(member: OfficeMember, members: [OfficeMember], spawnedAt: Date?) -> OfficeDetailCard {
@@ -252,6 +254,7 @@ struct OfficeDetailCard: Equatable, Sendable {
 
     func rows(now: Date) -> [Row] {
         var out: [Row] = [Row(title: "Durum", value: status)]
+        if pendingDecisions > 0 { out.append(Row(title: "Bekleyen istek", value: "\(pendingDecisions)")) }
         if let tool { out.append(Row(title: "Araç", value: tool)) }
         if let startedAt { out.append(Row(title: "Süre", value: Self.duration(now.timeIntervalSince(startedAt)))) }
         if let parentTitle { out.append(Row(title: "Üst oturum", value: parentTitle)) }

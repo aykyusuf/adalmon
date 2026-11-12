@@ -334,4 +334,37 @@ final class CleanupTests: XCTestCase {
         XCTAssertTrue(lines.last?.contains("/nonexistent-cleanup-test/last") == true)
         XCTAssertFalse(lines.contains { $0.contains("/nonexistent-cleanup-test/g0\"") })
     }
+
+    // MARK: Bölümler ve proje klasörleri (görünüm modeli)
+
+    @MainActor
+    func testViewModelProjectFoldersAddRemoveAndScan() async throws {
+        let suite = "cleanup-\(UUID().uuidString)"
+        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        let store = ProjectFoldersStore(defaults: UserDefaults(suiteName: suite)!, home: home)
+        try write("Projects/web/node_modules/a.bin", bytes: 2 * mb)
+        let vm = CleanupViewModel(home: home, folderStore: store)
+        XCTAssertTrue(vm.projectFolders.isEmpty)
+        XCTAssertNotNil(vm.addProjectFolder(home), "ev klasörünün kendisi reddedilir")
+        XCTAssertNil(vm.addProjectFolder(home + "/Projects"))
+        let folder = try XCTUnwrap(vm.projectFolders.first)
+        XCTAssertEqual(vm.rootPaths(for: .projectArtifacts), [folder])
+        XCTAssertNil(vm.state(of: .projectArtifacts))
+
+        vm.scan([.projectArtifacts])
+        for _ in 0..<100 where vm.isBusy { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(vm.state(of: .projectArtifacts), .scanned)
+        XCTAssertEqual(vm.items(in: .projectArtifacts).map(\.name), ["node_modules"])
+        XCTAssertTrue(vm.selection.isEmpty, "proje artıkları kendiliğinden seçilmez")
+
+        vm.removeProjectFolder(folder)
+        XCTAssertTrue(vm.projectFolders.isEmpty)
+        XCTAssertTrue(vm.items(in: .projectArtifacts).isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home + "/Projects/web/node_modules/a.bin"), "klasöre dokunulmaz")
+    }
+
+    func testGroupsSplitScanCategories() {
+        XCTAssertEqual(Set(CleanupGroup.junk.scanCategories), [.appCaches, .browserCaches, .logs])
+        XCTAssertEqual(Set(CleanupGroup.dev.scanCategories), [.derivedData, .archives, .deviceSupport, .simCaches, .pkgCaches])
+    }
 }

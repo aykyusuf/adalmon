@@ -21,10 +21,10 @@ struct BackgroundItemRow: View {
                 .accessibilityLabel("Durum: \(item.isEnabled ? "Açık" : "Kapalı")")
         }
         .padding(.vertical, 3)
-        .help("Sistem Ayarları › Genel › Giriş Öğeleri'nden yönetilir")
+        .help("\(item.identifier) · Sistem Ayarları › Genel › Giriş Öğeleri'nden yönetilir")
     }
 
     private var subtitle: String {
-        [item.detail, item.kind.title, item.developer].compactMap { $0 }.joined(separator: " · ")
+        [item.detail, item.kind.title, item.developer ?? "Geliştirici bilgisi yok"].compactMap { $0 }.joined(separator: " · ")
     }
 }

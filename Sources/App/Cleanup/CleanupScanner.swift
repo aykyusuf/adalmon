@@ -22,8 +22,10 @@ enum CleanupScanner {
         }
     }
 
+    /// - Parameter projectRoots: `.projectArtifacts` için kullanıcının seçtiği proje klasörleri (katalog kökü değildir).
     static func scan(categories: [CleanupCategory], home: String, runningBundleIDs: Set<String>,
                      ownBundleID: String? = Bundle.main.bundleIdentifier, now: Date = Date(),
+                     projectRoots: [String] = [], probe pathProbe: PathProbe = .live,
                      isCancelled: @escaping () -> Bool = { false }, progress: (CleanupCategory) -> Void = { _ in }) -> Output {
         var out = Output()
         let wanted = Set(categories)
@@ -34,7 +36,7 @@ enum CleanupScanner {
                 lastCategory = root.category
                 progress(root.category)
             }
-            switch probe(root.path) {
+            switch probe(root.path, home: home, using: pathProbe) {
             case .missing: out.states[root.path] = .missing
             case .noAccess: out.states[root.path] = .noAccess
             case .ok:
@@ -46,7 +48,31 @@ enum CleanupScanner {
                 out.items += items
             }
         }
+        if wanted.contains(.projectArtifacts), !isCancelled() {
+            progress(.projectArtifacts)
+            scanProjects(projectRoots, home: home, runningBundleIDs: runningBundleIDs, probe: pathProbe, isCancelled: isCancelled, into: &out)
+        }
         return out
+    }
+
+    /// Proje klasörleri: kök başına durum; sembolik bağ olan kök `.missing` olur (O_NOFOLLOW), iç içe kökler aynı yolu iki kez listelemez.
+    private static func scanProjects(_ roots: [String], home: String, runningBundleIDs: Set<String>, probe pathProbe: PathProbe,
+                                     isCancelled: @escaping () -> Bool, into out: inout Output) {
+        var seen = Set<String>()
+        for root in roots {
+            if isCancelled() { break }
+            switch probe(root, home: home, using: pathProbe) {
+            case .missing: out.states[root] = .missing
+            case .noAccess: out.states[root] = .noAccess
+            case .ok:
+                guard let items = ProjectArtifactScanner.scan(root: root, runningBundleIDs: runningBundleIDs, isCancelled: isCancelled) else {
+                    out.states[root] = .missing
+                    continue
+                }
+                out.states[root] = .scanned
+                out.items += items.filter { seen.insert($0.path).inserted }
+            }
+        }
     }
 
     /// Çöp Sepeti'nin toplam boyutu (öğe listelenmez, işlem yapılmaz).
@@ -110,6 +136,8 @@ enum CleanupScanner {
                 path: child, rootPath: root.path, category: root.category, bytes: bytes, isDirectory: type == S_IFDIR,
                 modified: modified, dev: st.st_dev, ino: st.st_ino,
                 blockedReason: CleanupCatalog.blockedReason(category: root.category, name: name, runningBundleIDs: runningBundleIDs)
+                    ?? (root.blockingBundleIDs.isDisjoint(with: runningBundleIDs) ? nil : CleanupCatalog.runningBadge),
+                blockingBundleIDs: root.blockingBundleIDs
             ))
         }
         return items.sorted { $0.bytes > $1.bytes }

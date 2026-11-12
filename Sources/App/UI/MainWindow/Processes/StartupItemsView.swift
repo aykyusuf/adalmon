@@ -6,6 +6,7 @@ struct StartupItemsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if !model.brokenItems.isEmpty { brokenBanner }
             if !model.loaded {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity, alignment: .center)
                 Spacer(minLength: 0)
@@ -26,6 +27,14 @@ struct StartupItemsView: View {
         }
     }
 
+    private var brokenBanner: some View {
+        Label("\(model.brokenItems.count) bozuk ajan: programı artık yok, her açılışta başarısız olur. Kullanıcı ajanlarını \"Kaldır\" ile Çöp Kutusu'na taşıyabilirsiniz.",
+              systemImage: "exclamationmark.triangle.fill")
+            .font(.caption).foregroundStyle(.orange)
+            .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.12), in: .rect(cornerRadius: 8))
+    }
+
     private var removalPresented: Binding<Bool> {
         Binding(get: { model.pendingRemoval != nil }, set: { if !$0 { model.pendingRemoval = nil } })
     }
@@ -33,8 +42,8 @@ struct StartupItemsView: View {
     private var list: some View {
         List {
             itemSection("Kullanıcı ajanları", scope: .user, subtitle: "~/Library/LaunchAgents")
-            itemSection("Tüm kullanıcılar için ajanlar", scope: .allUsers, subtitle: "/Library/LaunchAgents · Yönetici izni gerekir")
-            itemSection("Sistem hizmetleri", scope: .daemon, subtitle: "/Library/LaunchDaemons · Yönetici izni gerekir")
+            itemSection("Tüm kullanıcılar için ajanlar", scope: .allUsers, subtitle: "/Library/LaunchAgents · Salt okunur · sudo komutu kopyalanabilir")
+            itemSection("Sistem hizmetleri", scope: .daemon, subtitle: "/Library/LaunchDaemons · Salt okunur · sudo komutu kopyalanabilir")
             Section {
                 if !model.backgroundLoaded {
                     HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Giriş öğeleri okunuyor…").foregroundStyle(.secondary) }
@@ -90,7 +99,7 @@ struct StartupItemsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Giriş Öğeleri ayarlarını aç", systemImage: "gearshape", action: Self.openLoginItemsSettings)
+            Button("Giriş Öğeleri'ni aç", systemImage: "gearshape", action: Self.openLoginItemsSettings)
         }
         .padding(.bottom, 10)
     }

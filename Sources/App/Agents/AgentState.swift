@@ -231,6 +231,10 @@ struct AgentState: Equatable, Sendable {
             Self.retire(id, in: &s)
         case .postModelSwitch:
             if let model = e.toModel { s.model = model }
+        case .permissionDenied:
+            // Otomatik mod bir aracı reddetti: Claude devam eder (izin beklemiyor).
+            Self.adoptIfUnknown(e, in: &s, now: now)
+            Self.setStatus(.thinking, for: e.agentID, in: &s, now: now)
         }
         sessions[e.sessionID] = s
         return true

@@ -16,12 +16,18 @@ struct OfficeSceneContainer: View {
     var hoverControlsEnabled = true
     /// Bilgi kartının üst boşluğu (tam ekranda görünür araç şeridinin altında kalması için).
     var cardTopInset: CGFloat = 0
+    /// Ofisten cevapla (OFFICE-CTRL-01): bekleyen izin/soru kartları ve kullanıcının kararı. nil ise (demo, testler) hiçbir şey çıkmaz.
+    var decisions: PendingDecisionStore?
+    var onDecide: ((UUID, DecisionVerdict) -> Void)?
+    @Environment(\.controlActiveState) private var controlState
     @AppStorage(OfficeLighting.defaultsKey) private var lightingRaw = OfficeLightingMode.auto.rawValue
     @AppStorage(OfficeTheme.defaultsKey) private var themeRaw = OfficeTheme.default.rawValue
     @State private var card: OfficeDetailCard?
     @State private var hoveredRoom: OfficeRoomHover?
     @State private var overButton = false
     @State private var clearTask: Task<Void, Never>?
+    /// Bekleyen karar için kendiliğinden açılan kartın üyesi (sahne seçimi değildir; üyeden her seferinde taze üretilir).
+    @State private var decisionMemberID: String?
 
     var body: some View {
         OfficeSceneView(members: members, selectedRoom: $selectedRoom, lightingMode: OfficeLightingMode(rawValue: lightingRaw) ?? .auto,
@@ -33,13 +39,79 @@ struct OfficeSceneContainer: View {
                 if let onRestore { OfficeSleepRail(sessions: sleeping, onRestore: onRestore) }
             }
             .overlay(alignment: .topTrailing) {
-                if let card {
-                    OfficeCardView(card: card, onMinimize: onMinimize.map { f in { f(card.memberID); self.card = nil } }) { self.card = nil }
+                if let shown = shownCard {
+                    let pending = pendingDecisions(for: shown)
+                    OfficeCardView(card: shown, decisions: pending, onDecide: onDecide,
+                                   onMinimize: onMinimize.map { f in { f(shown.memberID); closeCard() } }) { closeCard() }
                         .padding(10)
                         .padding(.top, cardTopInset)
                         .transition(.opacity)
                 }
             }
+            .overlay(alignment: .bottomTrailing) { decisionBadge }
+            .onChange(of: pendingIDs) { old, new in decisionsChanged(old: old, new: new) }
+    }
+
+    // MARK: Bekleyen kararlar
+
+    private var pendingIDs: [UUID] { decisions?.items.map(\.id) ?? [] }
+
+    /// Sahnede seçili kart; yoksa bekleyen karar için kendiliğinden açılan üyenin (güncel) kartı.
+    private var shownCard: OfficeDetailCard? {
+        var base = card
+        if base == nil, let id = decisionMemberID, let member = members.first(where: { $0.id == id }) {
+            base = OfficeDetailCard.make(member: member, members: members, spawnedAt: nil)
+        }
+        guard var shown = base else { return nil }
+        shown.pendingDecisions = pendingDecisions(for: shown).count
+        return shown
+    }
+
+    private func pendingDecisions(for shown: OfficeDetailCard) -> [PendingDecision] {
+        guard let items = decisions?.items else { return [] }
+        return items.filter { shown.isSession ? $0.sessionID == shown.memberID : memberID(of: $0) == shown.memberID }
+    }
+
+    /// Kararın ofis üyesi: alt ajan odada yoksa oturum.
+    private func memberID(of decision: PendingDecision) -> String {
+        members.contains { $0.id == decision.memberID } ? decision.memberID : decision.sessionID
+    }
+
+    private func closeCard() {
+        card = nil
+        decisionMemberID = nil
+    }
+
+    private func decisionsChanged(old: [UUID], new: [UUID]) {
+        guard onDecide != nil, let items = decisions?.items else { decisionMemberID = nil; return }
+        // Yeni karar geldi ve ofis penceresi önde: kart kendiliğinden açılır. Önde değilse yalnızca rozet görünür.
+        if let added = items.first(where: { !old.contains($0.id) }), controlState != .inactive {
+            card = nil
+            decisionMemberID = memberID(of: added)
+        }
+        if let id = decisionMemberID, !items.contains(where: { memberID(of: $0) == id || $0.sessionID == id }) { decisionMemberID = nil }
+    }
+
+    /// Açık kartta görünmeyen bekleyen istekler için rozet: tıklayınca ilgili kart açılır.
+    @ViewBuilder
+    private var decisionBadge: some View {
+        if onDecide != nil, let items = decisions?.items {
+            let shownIDs = Set(shownCard.map { pendingDecisions(for: $0).map(\.id) } ?? [])
+            let hidden = items.filter { !shownIDs.contains($0.id) }
+            if let first = hidden.first {
+                Button { card = nil; decisionMemberID = memberID(of: first) } label: {
+                    Label("\(hidden.count) bekleyen istek", systemImage: "hand.raised.fill")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(.orange, in: .capsule)
+                        .foregroundStyle(.black)
+                }
+                .buttonStyle(.plain)
+                .padding(12)
+                .help("Claude Code bir izin ya da soru için sizi bekliyor")
+                .accessibilityLabel("\(hidden.count) bekleyen izin ya da soru isteği")
+            }
+        }
     }
 
     /// Fare bir odanın üstündeyken köşesinde "küçült" düğmesi. Oda dışına çıkınca kısa gecikmeyle söner (düğmeye ulaşmak için).
@@ -112,6 +184,9 @@ struct OfficeThemeMenu: View {
 /// Karakter detay kartı: oturum adı/rol, model rozeti, durum, araç, çalışma süresi sayacı, üst oturum ve alt ajan bilgisi.
 struct OfficeCardView: View {
     let card: OfficeDetailCard
+    /// Bu kartın oturumu/ajanı için ofiste bekleyen izin/soru istekleri (ilki gösterilir).
+    var decisions: [PendingDecision] = []
+    var onDecide: ((UUID, DecisionVerdict) -> Void)?
     var onMinimize: (() -> Void)?
     let close: () -> Void
 
@@ -132,6 +207,11 @@ struct OfficeCardView: View {
                     .keyboardShortcut(.cancelAction)
                     .accessibilityLabel("Kartı kapat")
                     .help("Kapat (Esc)")
+            }
+            if let first = decisions.first, let onDecide {
+                OfficeDecisionView(decision: first, queued: decisions.count - 1, onDecide: onDecide)
+                    .id(first.id)
+                Divider()
             }
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 VStack(alignment: .leading, spacing: 3) {
@@ -173,7 +253,7 @@ struct OfficeCardView: View {
             }
         }
         .padding(12)
-        .frame(width: 250)
+        .frame(width: decisions.isEmpty ? 250 : 300)
         .background(.regularMaterial, in: .rect(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.12)))
         .accessibilityElement(children: .contain)

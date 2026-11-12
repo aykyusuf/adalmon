@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import XCTest
 @testable import Adalmon
@@ -45,7 +46,7 @@ final class OverviewLimitsTileTests: XCTestCase {
     func testNotConnectedAndHidden() throws {
         let t = try XCTUnwrap(tile([], connected: false))
         XCTAssertEqual(t.value, "Bağlı değil")
-        XCTAssertFalse(t.opensDetail)
+        XCTAssertTrue(t.opensDetail, "veri yokken de Limitler sayfası açılır (Bağla eylemi orada)")
         XCTAssertEqual(try XCTUnwrap(tile([], connected: true)).value, "Bekleniyor")
         XCTAssertNil(tile([], agents: false), "ajanlar kapalı ve veri yok: gizli")
         let codex = ProviderLimits(source: .codex, fiveHour: LimitWindow(usedPercent: 20, resetsAt: nil), weekly: nil, observedAt: now)
@@ -62,5 +63,64 @@ final class OverviewLimitsTileTests: XCTestCase {
         let router = SettingsRouter(isDockModeOn: { true })
         OverviewTileKind.limits.destination.open(router)
         XCTAssertEqual(router.selectedSettingsSection, .agents)
+    }
+
+    // MARK: Tıklama → ayrıntı sayfası (gerçek fare olayıyla)
+
+    private func click(_ view: some View, size: NSSize, at point: NSPoint) async throws {
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
+        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -4000, y: -4000), size: size),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(400))
+        // Pencere koordinatı: sol alt köşe başlangıç; `point` sol üstten verilir.
+        let location = NSPoint(x: point.x, y: host.frame.height - point.y)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                         windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            window.sendEvent(event)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        window.close()
+    }
+
+    func testClickingLimitsTileOpensDetailNotSettings() async throws {
+        let suite = "adalmon.limits.tile.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let temp = FileManager.default.temporaryDirectory.appending(path: "adalmon-limits-tile-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let binder = ClaudeStatusLineBinder(settingsURL: temp.appending(path: "claude/settings.json"),
+                                            supportDirectory: temp.appending(path: "support", directoryHint: .isDirectory),
+                                            configURL: temp.appending(path: "config.json"))
+        let model = SubscriptionLimitsModel(defaults: defaults, binder: binder, codexReader: CodexRolloutReader(root: temp), live: false)
+        let at = Date.now
+        model.ingestClaude(ProviderLimits(source: .claude, fiveHour: LimitWindow(usedPercent: 62, resetsAt: at.addingTimeInterval(7_800)),
+                                          weekly: LimitWindow(usedPercent: 35, resetsAt: at.addingTimeInterval(300_000)), observedAt: at), now: at)
+        let limitsTile = try XCTUnwrap(OverviewTile.limits(providers: model.providers, claudeConnected: true, agentsEnabled: true,
+                                                           thresholds: model.thresholds, now: at, forecast: { _, _ in nil }))
+        let router = SettingsRouter(isDockModeOn: { true })
+        router.selectedMainSection = .overview
+        var opened = 0
+        let grid = OverviewTileGrid(tiles: [limitsTile], width: 200, router: router, limits: model, agentsEnabled: true, openLimits: { opened += 1 })
+            .padding(10)
+        try await click(grid, size: NSSize(width: 220, height: 140), at: NSPoint(x: 110, y: 60))
+        XCTAssertEqual(opened, 1, "karta tıklayınca Limitler sayfası açılır")
+        XCTAssertEqual(router.selectedMainSection, .overview, "Ayarlar'a ya da başka sayfaya gidilmez")
+        XCTAssertNotEqual(router.selectedSettingsSection, .agents)
+    }
+
+    func testDetailBackButtonCallsBack() async throws {
+        var backed = 0
+        let snapshot = LimitsSnapshot(sections: [LimitSection(source: .claude, state: .empty(.claudeNotConnected)),
+                                                 LimitSection(source: .codex, state: .empty(.codexNoData))],
+                                      thresholds: LimitAlertThresholds(), now: now)
+        let page = LimitsDetailContent(snapshot: snapshot, onBack: { backed += 1 }, openSettings: {})
+        try await click(page, size: NSSize(width: 900, height: 700), at: NSPoint(x: 60, y: 36))
+        XCTAssertEqual(backed, 1, "geri düğmesi Genel bakışa döner")
     }
 }

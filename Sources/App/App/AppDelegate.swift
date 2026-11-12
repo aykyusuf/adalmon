@@ -81,6 +81,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if model.prefs.showInDock { mainWindow.show() }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // Test ana bilgisayarı da Adalmon.app'tir: testte gerçek config.json'a dokunulmaz.
+        if !AppEnvironment.isRunningTests { model.agents.prepareForTermination() }
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard model.prefs.showInDock else { return true }
         mainWindow?.show()

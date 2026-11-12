@@ -19,6 +19,21 @@ struct StartupItem: Identifiable, Sendable, Equatable {
         }
     }
 
+    /// Plist'in gösterdiği program çalıştırılamaz durumda (bozuk ajan).
+    enum Problem: Sendable, Equatable {
+        /// `Program`/`ProgramArguments[0]` (ve `BundleProgram`) yok.
+        case noProgram
+        /// Program yolu diskte yok (uygulama silinmiş).
+        case programMissing(String)
+
+        var title: String {
+            switch self {
+            case .noProgram: "Program tanımsız"
+            case .programMissing: "Program bulunamıyor"
+            }
+        }
+    }
+
     var id: String { plistPath }
     var label: String
     var name: String
@@ -27,4 +42,7 @@ struct StartupItem: Identifiable, Sendable, Equatable {
     var scope: Scope
     var status: Status
     var runsAtLoad: Bool
+    var problem: Problem? = nil
+
+    var isBroken: Bool { problem != nil }
 }

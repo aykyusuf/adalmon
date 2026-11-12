@@ -10,6 +10,8 @@ struct StartupItemRow: View {
 
     private var permissions: StartupItemPermissions { .evaluate(item) }
     private var isOn: Bool { item.status != .disabled }
+    private var adminCommand: String? { StartupItemCommands.adminCommand(for: item) }
+    @State private var copied = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -17,6 +19,11 @@ struct StartupItemRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.name).lineLimit(1)
                 Text(item.program ?? item.plistPath).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                if let problem = item.problem {
+                    Label(problem.title, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange).lineLimit(1)
+                        .help("Bu ajan her açılışta başarısız olur; kaldırmak güvenlidir")
+                }
             }
             Spacer(minLength: 8)
             if let reason = permissions.reason {
@@ -25,6 +32,7 @@ struct StartupItemRow: View {
                     .help(reason)
                     .accessibilityLabel(reason)
             }
+            if item.isBroken { brokenBadge }
             statusBadge
             if isBusy { ProgressView().controlSize(.small) }
             actionButtons
@@ -38,8 +46,11 @@ struct StartupItemRow: View {
             Divider()
             Button("Finder'da göster", systemImage: "folder") { ProcessActions.reveal(path: item.plistPath) }
             Button("Yolu kopyala", systemImage: "doc.on.doc") { ProcessActions.copy(item.program ?? item.plistPath) }
+            if let adminCommand {
+                Button("sudo komutunu kopyala", systemImage: "terminal") { copy(adminCommand) }
+            }
             if permissions.needsAdmin {
-                Button("Giriş Öğeleri ayarlarını aç", systemImage: "gearshape", action: onOpenSettings)
+                Button("Giriş Öğeleri'ni aç", systemImage: "gearshape", action: onOpenSettings)
             }
         }
     }
@@ -49,8 +60,13 @@ struct StartupItemRow: View {
             Button(isOn ? "Devre dışı bırak" : "Etkinleştir", systemImage: isOn ? "pause.circle" : "play.circle", action: onToggle)
                 .disabled(isBusy || !permissions.canModify)
                 .help(permissions.reason ?? (isOn ? "Devre dışı bırak: durdurur ve oturum açınca başlamasını engeller" : "Etkinleştir: yeniden başlatır"))
+            if let adminCommand {
+                Button(copied ? "Kopyalandı" : "sudo komutunu kopyala", systemImage: copied ? "checkmark" : "terminal") { copy(adminCommand) }
+                    .help("Salt okunur. Terminal'de yönetici parolasıyla çalıştırın:\n\(adminCommand)")
+            }
             Button("Kaldır", systemImage: "trash", role: .destructive, action: onRemove)
                 .disabled(isBusy || !permissions.canModify)
+                .foregroundStyle(item.isBroken && permissions.canModify ? Color.red : Color.primary)
                 .help(permissions.reason ?? "Kaldır: plist dosyasını Çöp Kutusu'na taşır")
             Button("Finder'da göster", systemImage: "folder") { ProcessActions.reveal(path: item.plistPath) }
                 .help("Finder'da göster")
@@ -58,6 +74,24 @@ struct StartupItemRow: View {
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
         .controlSize(.regular)
+    }
+
+    private func copy(_ text: String) {
+        ProcessActions.copy(text)
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+        }
+    }
+
+    private var brokenBadge: some View {
+        Text("Bozuk")
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 8).padding(.vertical, 2)
+            .background(Color.orange.opacity(0.18), in: .capsule)
+            .foregroundStyle(Color.orange)
+            .accessibilityLabel("Bozuk ajan: \(item.problem?.title ?? "")")
     }
 
     private var statusBadge: some View {

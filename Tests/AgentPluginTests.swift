@@ -34,8 +34,9 @@ final class AgentPluginTests: XCTestCase {
 
         let hooks = try XCTUnwrap(try json(g.hooksURL)["hooks"] as? [String: Any])
         XCTAssertEqual(Set(hooks.keys), Set(["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
-                                             "PermissionRequest", "Notification", "Stop", "SubagentStart", "SubagentStop", "PostModelSwitch"]))
-        for (_, value) in hooks {
+                                             "PermissionRequest", "Notification", "Stop", "SubagentStart", "SubagentStop", "PostModelSwitch", "PermissionDenied"]))
+        for (name, value) in hooks {
+            XCTAssertEqual((value as? [[String: Any]])?.count, name == "PermissionRequest" ? 2 : 1, "yalnızca PermissionRequest'te ek senkron decide grubu var")
             let entry = try XCTUnwrap((value as? [[String: Any]])?.first)
             let command = try XCTUnwrap((entry["hooks"] as? [[String: Any]])?.first)
             XCTAssertEqual(command["type"] as? String, "command")
@@ -308,7 +309,7 @@ final class AgentPluginTests: XCTestCase {
     /// Betikler değişince özet değişir ve bu test kırılır: `AgentPluginGenerator.version` artırılıp buradaki eşleme güncellenmeli
     /// (aksi halde kullanıcıdaki Claude önbelleği eski betiği çalıştırmaya devam eder).
     func testScriptDigestPinsVersion() {
-        let pinned = ["1.3.0": "d6042c9f478a14e4"]
+        let pinned = ["1.3.0": "d6042c9f478a14e4", "1.4.0": "1d2dcb2e5a5bb969", "1.5.0": "0d2bcde54665f227"]
         XCTAssertEqual(pinned[AgentPluginGenerator.version], AgentPluginGenerator.scriptsDigest,
                        "betik değişti: version'ı artır ve özeti güncelle (\(AgentPluginGenerator.scriptsDigest))")
         let g = generator()

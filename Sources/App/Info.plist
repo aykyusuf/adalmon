@@ -43,6 +43,10 @@
 	<array>
 		<string>_apple-mobdev2._tcp</string>
 	</array>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Adalmon, Masaüstü'ndeki büyük, eski ve kopya dosyaları yalnızca siz Temizlik'te taramayı başlattığınızda listelemek için erişir.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Adalmon, Belgeler'deki büyük, eski ve kopya dosyaları yalnızca siz Temizlik'te taramayı başlattığınızda listelemek için erişir.</string>
 	<key>NSDownloadsFolderUsageDescription</key>
 	<string>Adalmon, İndirilenler'deki büyük ve eski dosyaları yalnızca siz 'İndirilenleri tara' dediğinizde listelemek için erişir.</string>
 	<key>NSLocalNetworkUsageDescription</key>

@@ -8,6 +8,7 @@ struct CleanupCategoryCard: View {
     let state: CleanupRootState?
     var onHelp: (AccessReason) -> Void = { _ in }
     @State private var expanded = false
+    @State private var folderError: String?
 
     private static let rowCap = 200
 
@@ -19,15 +20,19 @@ struct CleanupCategoryCard: View {
         ResourceCard(title: category.title, systemImage: category.systemImage) {
             if category.needsExplicitScan {
                 HStack(spacing: 8) {
-                    Button(category == .downloads ? "İndirilenleri tara" : "Yedekleri tara", systemImage: "magnifyingglass") {
+                    Button(category.scanButtonTitle, systemImage: "magnifyingglass") {
                         vm.scan([category])
                     }
-                    .disabled(vm.isBusy)
+                    .disabled(vm.isBusy || (category == .projectArtifacts && vm.projectFolders.isEmpty))
                     Text("Yalnızca listelenir, otomatik seçilmez.").font(.caption).foregroundStyle(.secondary)
                 }
-                if category == .iosBackups {
-                    Text("Yedeği silmek o cihazın geri yükleme noktasını kaldırır.").font(.caption).foregroundStyle(.orange)
-                }
+            }
+            if category == .projectArtifacts { projectFolderEditor }
+            if let note = category.note {
+                Text(note).font(.caption).foregroundStyle(category == .iosBackups ? Color.orange : Color.secondary)
+            }
+            if category == .browserCaches, items.contains(where: { $0.blockedReason != nil }) {
+                Label("Önce tarayıcıyı kapatın", systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange)
             }
             if state == .noAccess {
                 let reason = vm.accessReason(for: category) ?? .fullDiskAccess
@@ -38,7 +43,7 @@ struct CleanupCategoryCard: View {
                     }
                     Button("Nasıl?") { onHelp(reason) }.buttonStyle(.borderless)
                 }
-            } else if state == .missing, vm.scannedCategories.contains(category) {
+            } else if state == .missing, vm.scannedCategories.contains(category), category != .projectArtifacts {
                 ResourceEmptyNote(text: "Bulunamadı.")
             } else if vm.scannedCategories.contains(category), items.isEmpty {
                 ResourceEmptyNote(text: "Listelenecek öğe yok.")
@@ -67,6 +72,49 @@ struct CleanupCategoryCard: View {
         }
     }
 
+    /// Proje klasörleri listesi: ekle (NSOpenPanel) ve çıkar. Seçim yalnızca bu uygulamanın küçük listesine yazılır.
+    private var projectFolderEditor: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(vm.projectFolders, id: \.self) { folder in
+                HStack(spacing: 8) {
+                    Image(systemName: "folder").foregroundStyle(.secondary).accessibilityHidden(true)
+                    Text(FolderWatchList.displayPath(folder, home: vm.home)).lineLimit(1).truncationMode(.middle)
+                    if vm.state(of: .projectArtifacts) != nil, vm.rootStates[folder] == .missing {
+                        Text("Bulunamadı").font(.caption2).foregroundStyle(.orange)
+                    }
+                    Spacer(minLength: 8)
+                    Button { vm.removeProjectFolder(folder) } label: { Image(systemName: "minus.circle") }
+                        .buttonStyle(.borderless)
+                        .disabled(vm.isBusy)
+                        .help("Listeden çıkar (klasöre dokunulmaz)")
+                        .accessibilityLabel("Listeden çıkar: \(folder)")
+                }
+                .font(.callout)
+            }
+            HStack(spacing: 8) {
+                Button("Klasör ekle…", systemImage: "plus") { chooseFolders() }.disabled(vm.isBusy)
+                if vm.projectFolders.isEmpty {
+                    Text("Henüz proje klasörü yok.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if let folderError { Text(folderError).font(.caption).foregroundStyle(.red) }
+        }
+    }
+
+    private func chooseFolders() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.resolvesAliases = false
+        panel.prompt = "Ekle"
+        panel.message = "Taranacak proje klasörlerini seçin (ev klasörünün kendisi seçilemez)."
+        panel.begin { response in
+            guard response == .OK else { return }
+            folderError = panel.urls.compactMap { vm.addProjectFolder($0.path) }.first
+        }
+    }
+
     private func row(_ item: CleanupItem) -> some View {
         let shown = FolderWatchList.displayPath(item.path, home: vm.home)
         return HStack(spacing: 8) {
@@ -81,7 +129,7 @@ struct CleanupCategoryCard: View {
                     .background(Color.orange.opacity(0.2), in: .capsule)
             }
             Spacer(minLength: 8)
-            if category == .downloads, let modified = item.modified {
+            if category == .downloads || category == .projectArtifacts, let modified = item.modified {
                 Text(modified.formatted(date: .abbreviated, time: .omitted)).font(.caption).foregroundStyle(.secondary)
             }
             Text(Format.bytes(item.bytes)).monospacedDigit().foregroundStyle(.secondary)

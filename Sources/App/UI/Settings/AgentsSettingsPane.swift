@@ -92,17 +92,57 @@ struct AgentsSettingsPane: View {
                 }
             }
 
+            controlSection
+
             SubscriptionLimitsSettingsSection(model: agents.limits, listenerRunning: agents.port != nil)
 
             Section("Gizlilik") {
                 Text("İletilir: olay adı, oturum ve ajan kimliği, ajan türü, araç adı, model adı, bildirim türü, proje klasörünün adı (yolun son parçası), oturum adı (session_title; /rename ile verdiğiniz ya da otomatik başlık), izin modu ve zaman. \"Hedefi de göster\" açıkken ek olarak yalnızca dosya adı (yolun son parçası) ya da komutun ilk kelimesi iletilir; içerik ve argüman asla.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("İletilmez: istem/komut argümanları/dosya içeriği (istemleriniz, araç girdi ve çıktıları, Claude'un yanıtları, dosya içerikleri), transkript. Dinleyici yalnızca bu Mac'ten, rastgele bir token ile erişilebilir; özellik kapalıyken hiç çalışmaz. Eski oturumların modeli, konuşma dosyasının yalnızca model alanı okunarak bulunur; içerik okunmaz/saklanmaz.")
+                Text("İletilmez: istem/komut argümanları/dosya içeriği (istemleriniz, araç girdi ve çıktıları, Claude'un yanıtları, dosya içerikleri), transkript. (\"Ofisten cevapla\" açıkken tek istisna: bekleyen izin/soru ayrıntısı yalnızca ofis kartı için bellekte tutulur; ayrıca araç sonuç olaylarında istem kimliği ve araç girdisinin kısa bir SHA-256 özeti iletilir, kartı eşlemek için.) Dinleyici yalnızca bu Mac'ten, rastgele bir token ile erişilebilir; özellik kapalıyken hiç çalışmaz. Eski oturumların modeli, konuşma dosyasının yalnızca model alanı okunarak bulunur; içerik okunmaz/saklanmaz.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .task { await agents.refreshPluginStatus() }
+    }
+
+    /// Ofisten izin/soru cevapla (OFFICE-CTRL-01). Varsayılan KAPALI; Python gerekir.
+    private var controlSection: some View {
+        Section("Ofisten cevapla (deneysel)") {
+            Toggle("Ofisten izin isteklerini ve soruları cevapla", isOn: Binding(
+                get: { agents.isControlEnabled },
+                set: { agents.setControlEnabled($0) }))
+                .disabled(!prefs.agentsEnabled || !agents.controlAvailable)
+            if !agents.controlAvailable {
+                Text("Python 3 bulunamadı (Komut Satırı Araçları kurulu değil): bu özellik kapalı kalır. Terminal komutu: xcode-select --install")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            Text("Açıkken Claude Code'un izin istekleri ve AskUserQuestion soruları ofis kartında görünür; İzin ver, Reddet, Hep izin ver ya da cevap seçeneğine tıklayarak cevaplarsınız. Terminaldeki diyalog yine açılır; ikisinden hangisini önce cevaplarsanız o geçerlidir.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("Dikkat: bu özellik Claude Code'a vereceğiniz izinleri uygulamadan verebilmenizi sağlar. Kartta komut, dosya yolu, plan ve soru metni gösterilir (yalnızca bu Mac'te, bellekte; olay akışına, tarayıcı görünümüne ve loglara yazılmaz). \"Tüm oturumlarda (kalıcı)\" seçeneği kuralı Claude Code'un kendisine ~/.claude/settings.json içine yazdırır; Adalmon o dosyaya yazmaz. Tüm izinleri atlayan mod sunulmaz. Adalmon kapalıyken ya da hata olursa normal terminal diyaloğu çalışır.")
+                .font(.caption).foregroundStyle(.secondary)
+            if agents.isControlEnabled, agents.pluginStatus != .installed || agents.scriptsOutdated {
+                Text("Bu özellik için eklentiyi kurun ya da güncelleyin (sürüm \(AgentPluginGenerator.version)); ardından açık Claude Code oturumlarını yeniden başlatın.")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            HStack {
+                Button("Denetim kaydını göster") { revealAuditLog() }
+                    .help("Verilen kararların kaydı (zaman, oturum, proje, araç adı, karar). İçerik yazılmaz.")
+                if agents.decisions.items.count > 0 {
+                    Text("\(agents.decisions.items.count) bekleyen istek").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func revealAuditLog() {
+        let url = agents.auditLogURL
+        if FileManager.default.fileExists(atPath: url.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            NSWorkspace.shared.open(url.deletingLastPathComponent())
+        }
     }
 
     private var listenerText: String {

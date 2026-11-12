@@ -79,6 +79,9 @@ extension CleanupCategory {
         case .iosBackups: "junk.iosBackups"
         case .downloads: "files.downloads"
         case .trash: "junk.trash"
+        case .browserCaches: "junk.browserCaches"
+        case .logs: "junk.logs"
+        case .projectArtifacts: "dev.projectArtifacts"
         }
     }
 
@@ -105,7 +108,8 @@ extension DeletionCandidate {
         let own = item.category == .trash ? [] : roots.filter { $0.category == item.category }.map(\.deletionRoot)
         self.init(
             path: item.path, dev: item.dev, ino: item.ino, bytes: item.bytes, kind: item.category.kind,
-            scope: .directChild(roots: own), blockingBundleIDs: item.category.blockingBundleIDs(forName: item.name),
+            scope: item.category == .projectArtifacts ? ProjectArtifactScanner.scope(root: item.rootPath) : .directChild(roots: own),
+            blockingBundleIDs: item.category.blockingBundleIDs(forName: item.name).union(item.blockingBundleIDs),
             displayName: item.name
         )
     }

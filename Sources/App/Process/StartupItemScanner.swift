@@ -32,8 +32,26 @@ enum StartupItemScanner {
         parse(data: try? Data(contentsOf: url), path: url.path, scope: scope)
     }
 
+    /// Yol kesin olarak yok mu? Yalnızca ENOENT/ENOTDIR "yok" sayılır; izin hataları (ör. TCC korumalı klasörler) "bilinmiyor".
+    static func isDefinitelyMissing(_ path: String) -> Bool {
+        var info = stat()
+        return stat(path, &info) != 0 && (errno == ENOENT || errno == ENOTDIR)
+    }
+
+    /// Bozuk ajan tespiti (saf). Yanlış alarmı önlemek için: Apple/Adalmon etiketleri, `BundleProgram` (uygulama paketine göreli)
+    /// ve göreli ya da `/Volumes` (takılı olmayabilir) yolları işaretlenmez.
+    static func problem(label: String, plist: [String: Any], program: String?,
+                        isMissing: (String) -> Bool = isDefinitelyMissing) -> StartupItem.Problem? {
+        if StartupItemPermissions.protectedPrefixes.contains(where: { label.hasPrefix($0) }) { return nil }
+        if plist["BundleProgram"] != nil { return nil }
+        guard let program, !program.isEmpty else { return .noProgram }
+        guard program.hasPrefix("/"), !program.hasPrefix("/Volumes/") else { return nil }
+        return isMissing(program) ? .programMissing(program) : nil
+    }
+
     /// Saf ayrıştırma: `data` nil/bozuksa etiket dosya adından alınır ve durum `.unknown` olur.
-    static func parse(data: Data?, path: String, scope: StartupItem.Scope) -> StartupItem? {
+    static func parse(data: Data?, path: String, scope: StartupItem.Scope,
+                      isMissing: (String) -> Bool = isDefinitelyMissing) -> StartupItem? {
         let fileLabel = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
         guard let data,
               let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
@@ -45,7 +63,8 @@ enum StartupItemScanner {
         let disabled = (plist["Disabled"] as? Bool) ?? false
         let runsAtLoad = (plist["RunAtLoad"] as? Bool) ?? false
         return StartupItem(label: label, name: name(program: program, label: label), plistPath: path, program: program,
-                           scope: scope, status: disabled ? .disabled : .enabled, runsAtLoad: runsAtLoad)
+                           scope: scope, status: disabled ? .disabled : .enabled, runsAtLoad: runsAtLoad,
+                           problem: problem(label: label, plist: plist, program: program, isMissing: isMissing))
     }
 
     /// launchd'nin geçersiz kılma veritabanı plist'teki `Disabled` anahtarından önceliklidir.

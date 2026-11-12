@@ -8,12 +8,14 @@ struct AgentEvent: Equatable, Sendable {
         case preToolUse = "PreToolUse", postToolUse = "PostToolUse", postToolUseFailure = "PostToolUseFailure"
         case permissionRequest = "PermissionRequest", notification = "Notification", stop = "Stop"
         case subagentStart = "SubagentStart", subagentStop = "SubagentStop", postModelSwitch = "PostModelSwitch"
+        case permissionDenied = "PermissionDenied"
     }
 
     /// Betiğin ilettiği tüm anahtarlar; başka anahtar asla okunmaz.
     static let allowedKeys: Set<String> = [
         "event", "session_id", "agent_id", "agent_type", "tool_name", "source", "model", "from_model", "to_model",
         "notification_type", "reason", "project", "permission_mode", "ts", "resolved_model", "resolved_agent_id", "session_title", "pid", "target",
+        "prompt_id", "input_hash",
     ]
     static let maxValueLength = 200
 
@@ -42,6 +44,10 @@ struct AgentEvent: Equatable, Sendable {
     /// PreToolUse için isteğe bağlı kısa hedef (yalnızca "Hedefi de göster" açıkken betik ekler): dosya adı ya da komutun ilk kelimesi.
     /// Kontrol karakterleri atılmış, en çok `maxTargetLength` karakter; içerik/argüman/yol asla.
     var target: String?
+    /// İstem kimliği (Claude Code'un opak `prompt_id`'si) ve araç girdisinin KISA ÖZETİ (SHA-256'nın ilk 16 hex'i; içerik değil).
+    /// Yalnızca bekleyen ofis kararlarını araç sonuç olaylarıyla eşleştirmek içindir (`PendingDecisionStore.matches`).
+    var promptID: String?
+    var inputHash: String?
 
     var name: Name? { Name(rawValue: event) }
 
@@ -49,7 +55,7 @@ struct AgentEvent: Equatable, Sendable {
          source: String? = nil, model: String? = nil, fromModel: String? = nil, toModel: String? = nil,
          notificationType: String? = nil, reason: String? = nil, project: String? = nil, permissionMode: String? = nil,
          timestamp: Date? = nil, resolvedModel: String? = nil, resolvedAgentID: String? = nil, sessionTitle: String? = nil,
-         pid: Int32? = nil, target: String? = nil) {
+         pid: Int32? = nil, target: String? = nil, promptID: String? = nil, inputHash: String? = nil) {
         self.event = event
         self.sessionID = sessionID
         self.agentID = agentID
@@ -69,6 +75,8 @@ struct AgentEvent: Equatable, Sendable {
         self.sessionTitle = sessionTitle.flatMap(Self.cleanTitle)
         self.pid = pid.flatMap { $0 > 1 ? $0 : nil }
         self.target = target.flatMap(Self.cleanTarget)
+        self.promptID = promptID
+        self.inputHash = inputHash
     }
 
     static let maxTargetLength = 40
@@ -111,6 +119,6 @@ struct AgentEvent: Equatable, Sendable {
                   timestamp: (object["ts"] as? Double).map { Date(timeIntervalSince1970: $0) },
                   resolvedModel: string("resolved_model"), resolvedAgentID: string("resolved_agent_id"),
                   sessionTitle: object["session_title"] as? String, pid: allowed("pid").flatMap(Self.parsePID),
-                  target: object["target"] as? String)
+                  target: object["target"] as? String, promptID: string("prompt_id"), inputHash: string("input_hash"))
     }
 }

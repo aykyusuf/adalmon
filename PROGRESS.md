@@ -1,5 +1,7 @@
 # Adalmon: progress
 
+**2026-11-12 (öğleden sonra)** — Temizlik tamamlandı (Sistem çöpü, Geliştirici, Kaldırıcı, Büyük & eski, Kopyalar, Gizlilik, Yer kaplayanlar, Başlangıç, Bakım, Akıllı tarama); ofisten izin/soru cevaplama (varsayılan kapalı); Limitler detay sayfası + animasyonlu kart. 1581 test (3 bilinen kararsız), Release kuruldu.
+
 **2026-11-12 (compact)** — Handoff güncellendi; çalışma ağacı temiz (ef50e76 + bu commit); sıradaki: CLEAN-02 Phase 1-6, OFFICE-CTRL-01.
 
 **2026-11-12 (öğleden sonra)** — Onay turu: 12 görev kapandı. Release kuruluma geçildi (Debug'du). CPU düzeltmeleri, proxy fazla sayım düzeltmesi, ofis metinleri/etiket önceliği, şimşek seçenekleri, Genel bakışta Limitler karosu, Temizlik ⌘0 sayfası + güvenli silici + erişim akışı. Ofis kontrolü spike'ı: PermissionRequest hook terminali bloklamıyor → uygulanabilir. Tam suite 1394/1395.

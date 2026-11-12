@@ -45,7 +45,9 @@ struct AgentOfficePage: View {
             OfficeSceneContainer(members: OfficeMember.members(from: sessions), selectedRoom: $selectedRoom,
                                  onMinimize: demoSessions == nil ? { minimize($0) } : nil,
                                  sleeping: sleeping, onRestore: demoSessions == nil ? { model.agents.monitor.restore($0) } : nil,
-                                 commands: sceneCommands)
+                                 commands: sceneCommands,
+                                 decisions: demoSessions == nil ? model.agents.decisions : nil,
+                                 onDecide: demoSessions == nil ? { model.agents.respond($0, $1) } : nil)
                 .clipShape(.rect(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.08)))
                 .frame(minHeight: 360)
