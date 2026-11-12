@@ -4,6 +4,9 @@ import Foundation
 enum LiveAppCommand: Equatable, Sendable {
     /// İki yönde de aynı hız sınırı (byte/sn).
     case limit(bytesPerSec: Int)
+    /// Yalnızca bir yönü değiştirir (diğer yönün mevcut sınırı korunur).
+    case limitDown(bytesPerSec: Int)
+    case limitUp(bytesPerSec: Int)
     case clearLimit
     /// Seçilen ağda engelle (mevcut `blockedOnMobile` + `blockedOnWiFi`; filtrede `blockedOnMobile` / `blockedAlways`).
     case block(BlockScope)
@@ -110,6 +113,14 @@ enum LiveAppActionMapper {
             guard let new = limit(bytesPerSec: bytes, onlyOnMobile: onlyOnMobile), new != previousLimit else { return nil }
             controls.setLimit(app, new)
             message = "\(name): \(AppModel.rateText(bytes)) hız sınırı" + (onlyOnMobile ? " (mobilde)" : "")
+        case .limitDown(let bytes), .limitUp(let bytes):
+            guard bytes >= 1024 else { return nil }
+            let isDown = if case .limitDown = command { true } else { false }
+            var new = previousLimit ?? AppLimit(onlyOnMobile: onlyOnMobile)
+            if isDown { new.downBytesPerSec = bytes } else { new.upBytesPerSec = bytes }
+            guard new != previousLimit else { return nil }
+            controls.setLimit(app, new)
+            message = "\(name): \(isDown ? "indirme ↓" : "yükleme ↑") \(AppModel.rateText(bytes))" + (new.onlyOnMobile ? " (mobilde)" : "")
         case .clearLimit:
             guard previousLimit != nil else { return nil }
             controls.setLimit(app, nil)
@@ -133,15 +144,24 @@ enum LiveAppActionMapper {
         if controls.blockScope(record.app) != record.previousBlock { controls.setBlockScope(record.app, record.previousBlock) }
     }
 
-    /// Satır rozeti metni: sınır (en düşük yön) ve/veya engel.
+    /// Satır rozeti metni: sınır (yönler farklıysa ikisi ayrı: "↓ 500 KB/s ↑ 250 KB/s") ve/veya engel.
     static func badges(limit: AppLimit?, block: BlockScope?) -> [LiveAppBadge] {
         var out: [LiveAppBadge] = []
         if let block { out.append(LiveAppBadge(text: block.badge, isBlock: true)) }
         if let limit, limit.hasCap {
-            let rate = [limit.rate(.down), limit.rate(.up)].compactMap { $0 }.min() ?? 0
-            out.append(LiveAppBadge(text: "≤ \(AppModel.rateText(rate))" + (limit.onlyOnMobile ? " mobilde" : ""), isBlock: false))
+            out.append(LiveAppBadge(text: limitSummary(limit) + (limit.onlyOnMobile ? " mobilde" : ""), isBlock: false))
         }
         return out
+    }
+}
+
+extension LiveAppActionMapper {
+    /// "≤ 500 KB/s" (iki yön aynı) ya da "↓ 500 KB/s ↑ 250 KB/s"; tanımsız yön yazılmaz. 1024 tabanlı (menüyle aynı).
+    static func limitSummary(_ limit: AppLimit) -> String {
+        let d = limit.downBytesPerSec.flatMap { $0 > 0 ? $0 : nil }
+        let u = limit.upBytesPerSec.flatMap { $0 > 0 ? $0 : nil }
+        if let d, let u, d == u { return "≤ \(AppModel.rateText(d))" }
+        return [d.map { "↓ \(AppModel.rateText($0))" }, u.map { "↑ \(AppModel.rateText($0))" }].compactMap { $0 }.joined(separator: " ")
     }
 }
 

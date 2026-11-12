@@ -205,7 +205,7 @@ final class LiveAppUsageTests: XCTestCase {
         XCTAssertNil(LiveAppActionMapper.customBytesPerSec(kilobytesText: "abc"))
         XCTAssertTrue(LiveAppActionMapper.badges(limit: nil, block: nil).isEmpty)
         let badges = LiveAppActionMapper.badges(limit: AppLimit(downBytesPerSec: 1_048_576, upBytesPerSec: 102_400, onlyOnMobile: true), block: .mobile)
-        XCTAssertEqual(badges, [LiveAppBadge(text: "Mobilde engelli", isBlock: true), LiveAppBadge(text: "≤ 100 KB/s mobilde", isBlock: false)])
+        XCTAssertEqual(badges, [LiveAppBadge(text: "Mobilde engelli", isBlock: true), LiveAppBadge(text: "↓ 1 MB/s ↑ 100 KB/s mobilde", isBlock: false)])
         XCTAssertEqual(LiveAppActionMapper.badges(limit: nil, block: .wifi), [LiveAppBadge(text: "Wi-Fi'de engelli", isBlock: true)])
         XCTAssertEqual(LiveAppActionMapper.badges(limit: nil, block: .everywhere), [LiveAppBadge(text: "Her yerde engelli", isBlock: true)])
     }
@@ -287,5 +287,20 @@ final class LiveAppUsageTests: XCTestCase {
         XCTAssertEqual(Preferences(defaults: d).blockScope(for: chrome), .mobile, "kalıcı")
         p.setBlockScope(chrome, nil)
         XCTAssertNil(Preferences(defaults: d).blockScope(for: chrome))
+    }
+
+    // Yön başına hızlı sınır + rozet/tablo aynı birim (2026-11-12)
+    @MainActor
+    func testLimitDownKeepsExistingUpAndBadgeShowsBoth() {
+        var stored: AppLimit? = AppLimit(downBytesPerSec: 500 * 1024, upBytesPerSec: 500 * 1024, onlyOnMobile: true)
+        let controls = LiveAppControls(limit: { _ in stored }, blockScope: { _ in nil },
+                                       setLimit: { _, l in stored = l }, setBlockScope: { _, _ in })
+        LiveAppActionMapper.apply(.limitUp(bytesPerSec: 250 * 1024), app: chrome, onlyOnMobile: false, controls: controls)
+        XCTAssertEqual(stored?.downBytesPerSec, 500 * 1024, "indirme korunur")
+        XCTAssertEqual(stored?.upBytesPerSec, 250 * 1024)
+        XCTAssertEqual(stored?.onlyOnMobile, true, "mevcut kapsam korunur")
+        XCTAssertEqual(LiveAppActionMapper.limitSummary(stored!), "↓ 500 KB/s ↑ 250 KB/s")
+        XCTAssertEqual(LiveAppActionMapper.limitSummary(AppLimit(downBytesPerSec: 512_000, upBytesPerSec: 512_000)), "≤ 500 KB/s")
+        XCTAssertEqual(LiveAppActionMapper.limitSummary(AppLimit(downBytesPerSec: 1024 * 1024)), "↓ 1 MB/s")
     }
 }

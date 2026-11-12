@@ -386,13 +386,23 @@ private struct LiveAppRow: View {
 
     /// Hız sınırı: aynı değer indirme ve yüklemeye birlikte uygulanır (ayrıca sorulmaz).
     @ViewBuilder private var limitItems: some View {
-        Section("Hız sınırı") {
+        Section(limit.map { "Şu an: \(LiveAppActionMapper.limitSummary($0))" } ?? "Hız sınırı (↓ ve ↑ birlikte)") {
             ForEach(LiveAppActionMapper.presets, id: \.self) { value in
                 let current = limit?.downBytesPerSec == value && limit?.upBytesPerSec == value
                 Button {
                     onCommand(.limit(bytesPerSec: value))
                 } label: {
                     if current { Label(AppModel.rateText(value), systemImage: "checkmark") } else { Text(AppModel.rateText(value)) }
+                }
+            }
+            Menu("Yalnızca indirme ↓") {
+                ForEach(LiveAppActionMapper.presets, id: \.self) { value in
+                    Button(AppModel.rateText(value)) { onCommand(.limitDown(bytesPerSec: value)) }
+                }
+            }
+            Menu("Yalnızca yükleme ↑") {
+                ForEach(LiveAppActionMapper.presets, id: \.self) { value in
+                    Button(AppModel.rateText(value)) { onCommand(.limitUp(bytesPerSec: value)) }
                 }
             }
             Button("Özel…") {

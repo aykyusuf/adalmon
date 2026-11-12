@@ -18,8 +18,9 @@ struct AppUsageTableRow: Identifiable, Sendable {
     var limitText: String? {
         guard let limit else { return nil }
         var parts: [String] = []
-        if let d = limit.downBytesPerSec, d > 0 { parts.append("↓ \(Format.rate(Double(d)))") }
-        if let u = limit.upBytesPerSec, u > 0 { parts.append("↑ \(Format.rate(Double(u)))") }
+        // Menü ve rozetle aynı (1024 tabanlı) birim: 500 KB/s seçilen sınır "512 KB/s" görünmesin.
+        if let d = limit.downBytesPerSec, d > 0 { parts.append("↓ \(AppModel.rateText(d))") }
+        if let u = limit.upBytesPerSec, u > 0 { parts.append("↑ \(AppModel.rateText(u))") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
