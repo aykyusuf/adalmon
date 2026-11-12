@@ -1,5 +1,7 @@
 # Adalmon: progress
 
+**2026-11-12 (16:00, compact)** — Codex limitleri canlı, sıfırlama hakları gösterimi, Limitler yan yana/hızlı, test pencereleri görünmez, tek kopya kilidi, canlı kullanım kalıcı; sıradaki: onaylar + Windows Faz 0.
+
 **2026-11-12 (öğleden sonra, 2)** — Temizlik yeniden tasarımı (sihirbaz + 3D kit), Limitler model dağılımı + logolar + % zıplama düzeltmesi, ofis kedisi; Windows/sunucu kararları alındı.
 
 **2026-11-12 (öğlen)** — Limitler ayrı sayfa (plan + 3D), Yer kaplayanlar hızlı + 3D, Akıllı tarama tek tıkla build'leri buluyor, test sunucusu artık görünmüyor. 1627 test (2 bilinen kararsız), Release kuruldu.

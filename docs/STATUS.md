@@ -267,3 +267,10 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 ### 2026-11-12 15:25
 **Now:** Codex limitleri canlı (`codex app-server` → yalnızca initialize/initialized/account/rateLimits/read; görünürken 60 sn, arka planda 15 dk); canlı değer eski rollout'u geçer; sıfırlama hakları yalnızca gösterilir (kullanım YOK, testle zorlanır). Bayat gösterimi sakinleşti (%100 → "Limit doldu · HH:MM'de açılır"). Claude için resmi yerel canlı kaynak yok (statusLine yalnızca oturum aktifken); ~/.claude.json'daki belgesiz önbellek alanları kullanılmadı. Tam suite 1740 (1 bilinen kararsız), Release yerinde kuruldu.
 **Next:** onaylar tek tek; Windows/sunucu Faz 0.
+
+**Karar (2026-11-12):** Claude limitleri için token/çerez yolu YOK (kullanıcı: "Oturum varken yeter"). Claude = statusLine (oturum açıkken canlı), Codex = app-server (her zaman canlı). `claude -p "/usage"` denendi: 0 maliyet ama yüzde döndürmüyor, önbelleği de tazelemiyor.
+
+### 2026-11-12 compact öncesi (16:00)
+**Now:** Son commit b704903 + bu handoff. Kurulu: Release, yerinde (rsync), tek kopya, filtre 1794457926. Bu oturumda biten: CLEAN-02 (10 bölüm + sihirbaz/3D kit + Yer kaplayanlar silme), OFFICE-CTRL-01 MVP (varsayılan kapalı), Limitler sayfası (plan, 3D, model dağılımı, logolar, yan yana, monoton birleştirme, Codex canlı app-server, sıfırlama hakları yalnız gösterim), ofis kedisi, canlı kullanım kalıcı, test pencereleri görünmez, tek kopya flock kilidi.
+**Next:** (1) Kullanıcı onayları AskUserQuestion ile tek tek: CLEAN-01/02, USAGE-01/03, OFFICE-CTRL-01 (gerçek oturum denemesi: Ayarlar > Claude ajanları > Ofisten cevapla → plugin Güncelle → yeni oturum), FILTER-LINK-01, CPU-01, USAGE-FIX-01, BATT-02, POLISH-01, ofis kedisi, Limitler. (2) Windows/sunucu Faz 0: Windows'taki Claude oturumuna verilecek talimatı yaz (docs/WINDOWS-VE-SUNUCU-ARASTIRMA.md "Kararlar (2026-11-12)"); Faz 1 sunucu api-adalmon.adaltek.com, kurulum SSH ile adım adım onaylı.
+**Open questions:** Docker builder prune vs system prune; Akıllı tarama riskli kartlarda sayı; model dağılımı sonucu diske kalıcı mı; ofis kedisi web ofisine de mi.
