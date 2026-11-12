@@ -10,7 +10,8 @@ struct SubscriptionLimitsCard: View {
         Group {
             if !providers.isEmpty {
                 TimelineView(.everyMinute) { context in
-                    SubscriptionLimitsContent(providers: providers, thresholds: model.thresholds, now: context.date)
+                    SubscriptionLimitsContent(providers: providers, thresholds: model.thresholds, now: context.date,
+                                              forecast: { model.forecast(for: $0, $1, now: context.date) })
                 }
             } else {
                 // Veri yokken de bir görünüm olmalı: onAppear yoksa Codex hiç okunmaz.
@@ -26,13 +27,14 @@ struct SubscriptionLimitsContent: View {
     let providers: [ProviderLimits]
     let thresholds: LimitAlertThresholds
     let now: Date
+    var forecast: (ProviderLimits, LimitWindowKind) -> LimitForecast? = { _, _ in nil }
 
     var body: some View {
         PanelCard(padding: 10) {
             VStack(alignment: .leading, spacing: 8) {
                 PanelGroupTitle(title: "Abonelik limitleri")
                 ForEach(providers, id: \.source) { provider in
-                    ProviderLimitsRows(provider: provider, thresholds: thresholds, now: now)
+                    ProviderLimitsRows(provider: provider, thresholds: thresholds, now: now, forecast: forecast)
                 }
             }
         }
@@ -43,6 +45,7 @@ private struct ProviderLimitsRows: View {
     let provider: ProviderLimits
     let thresholds: LimitAlertThresholds
     let now: Date
+    let forecast: (ProviderLimits, LimitWindowKind) -> LimitForecast?
 
     var body: some View {
         let stale = provider.isStale(now: now)
@@ -62,7 +65,7 @@ private struct ProviderLimitsRows: View {
             ForEach(LimitWindowKind.allCases) { kind in
                 if let window = provider.window(kind) {
                     LimitWindowRow(kind: kind, window: window, level: thresholds.level(for: window.usedPercent, kind: kind),
-                                   stale: stale, now: now)
+                                   stale: stale, now: now, forecast: window.isReset(now: now) ? nil : forecast(provider, kind))
                 }
             }
         }
@@ -77,6 +80,7 @@ private struct LimitWindowRow: View {
     let level: LimitLevel
     let stale: Bool
     let now: Date
+    let forecast: LimitForecast?
 
     var body: some View {
         let reset = window.isReset(now: now)
@@ -92,6 +96,11 @@ private struct LimitWindowRow: View {
             if let resetsAt = window.resetsAt {
                 Text(reset ? "Pencere yenilendi; yeni değer bekleniyor" : LimitFormat.resetText(resetsAt, now: now))
                     .font(.caption2).foregroundStyle(.tertiary)
+                    .padding(.leading, 64)
+            }
+            if let forecast {
+                Text(LimitForecastFormat.cardLine(forecast, kind: kind, now: now))
+                    .font(.caption2).foregroundStyle(.orange)
                     .padding(.leading, 64)
             }
         }

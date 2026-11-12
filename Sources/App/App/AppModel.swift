@@ -37,6 +37,10 @@ final class AppModel {
     private(set) var downToday: UInt64 = 0
     private(set) var upToday: UInt64 = 0
     private(set) var filterConnected = false
+    /// Uygulama ↔ filtre bağlantısı (yalnızca durum değişince yazılır).
+    private(set) var filterLink: FilterLinkState = .checking
+    /// Filtre 60 sn'den uzun süredir bağlı değilse sayfalardaki uyarının ağırlığı (mobilde kırmızı şerit).
+    private(set) var filterAlert: FilterAlertLevel = .none
     private(set) var proxy = ProxyDetector.Result(ports: [], ownerPaths: [])
     private(set) var lastUpdate: Date?
     /// Dönem başından dünün sonuna kadar mobil toplam (`iface_daily`; açılışta, gün/dönem değişince bir kez okunur).
@@ -48,7 +52,7 @@ final class AppModel {
 
     @ObservationIgnored let store = UsageStore()
     @ObservationIgnored private(set) lazy var battery = BatteryMonitor(
-        store: store, alertConfig: { [prefs] in prefs.batteryAlerts }, notify: { [alerts] in alerts.notify(title: $0, body: $1) })
+        store: store, alertConfig: { [prefs] in prefs.batteryAlerts }, notify: { [alerts] in alerts.postSystemOnly(title: $0, body: $1) })
     /// Pil Faz 2: Bluetooth / HID / iPhone & iPad pilleri.
     @ObservationIgnored private(set) lazy var devices = DeviceBatteryService(
         settings: { [prefs] in prefs.deviceSettings }, enabled: { [prefs] in prefs.deviceMonitoring },
@@ -74,6 +78,7 @@ final class AppModel {
     @ObservationIgnored private var lastRuleOutput = RuleOutput()
     @ObservationIgnored private var lastPushedMobile = false
     @ObservationIgnored private var lastEffective: EffectiveConfig?
+    @ObservationIgnored private var filterWatch = FilterLinkWatch()
     /// Açılış durumu (bugünkü toplamlar, dönem tabanı, kural durumu) yüklenene kadar filtreye yapılandırma itilmez:
     /// uygulama yeniden başlarken filtre eski yapılandırmasını korur, sınırlar gevşemez ve sahte sıfırlama olmaz.
     @ObservationIgnored private var rulesReady = false
@@ -81,7 +86,11 @@ final class AppModel {
     init() {
         usage = UsageEngine(store: store)
         alerts.onBlock = { [weak self] app in self?.setBlocked(app, true, fromNotification: true) }
-        agents.limits.notify = { [alerts] in alerts.notify(title: $0, body: $1) }
+        alerts.delivery = { [prefs] in prefs.alertDelivery }
+        // Önceki davranış: açılışta (sistem bildirimi seçiliyse) izin hiç sorulmadıysa sorulur.
+        if !AppEnvironment.isRunningTests { Task { [alerts, prefs] in await alerts.deliveryChanged(to: prefs.alertDelivery) } }
+        alerts.presentInApp = { [weak self] message, action in self?.battery.presenter.showMessage(message, action: action) }
+        agents.limits.notify = { [alerts] in alerts.notify(title: $0, body: $1, symbol: "gauge.with.needle") }
         installer.onFilterEnabled = { [weak self] in self?.startFilterWatchdog() }
     }
 
@@ -159,6 +168,11 @@ final class AppModel {
 
     func setBlocked(_ app: String, _ blocked: Bool, fromNotification: Bool = false) {
         let isBlocked = prefs.blockedOnMobile.contains(app)
+        // Wi-Fi engeli olan uygulama: kaldırma her kapsamı temizler (engellenen uygulama canlı listeden düşebilir), mobilde engellemek = her yerde.
+        if prefs.blockedOnWiFi.contains(app), !blocked || !isBlocked {
+            setBlockScope(app, blocked ? .everywhere : nil)
+            return
+        }
         guard blocked != isBlocked else { return }
         prefs.toggleBlocked(app)
         pushConfig(force: true)
@@ -174,6 +188,32 @@ final class AppModel {
     func undoToast() {
         guard let t = toast, let app = t.undoApp else { return }
         setBlocked(app, t.undoBlocked)
+    }
+
+    // MARK: Filtre bağlantısı
+
+    /// Bağlantı durumu, sayfa uyarısı ve (mobilde) bildirim. Ölçüm adımından çağrılır; ayrı zamanlayıcı yok.
+    private func updateFilterLink(now: Date) {
+        // Uzantı süreci reboot'a kadar çalışabilir; "aktif" için filtre ayarının da açık olması gerekir.
+        let connected = filter.isConnected && installer.state == .active
+        if connected != filterConnected { filterConnected = connected }
+        let watch = filterWatch.update(connected: connected, isMobile: isMobile, now: now)
+        let link = FilterLinkState.make(installer: installer.state, connected: filter.isConnected,
+                                        disconnectedSince: filterWatch.downSince, now: now)
+        if link != filterLink { filterLink = link }
+        if watch.level != filterAlert { filterAlert = watch.level }
+        if watch.alert { alerts.notifyFilterDown() }
+    }
+
+    /// "Filtreyi yeniden bağla": XPC bağlantısını yeniden kurar, filtre ayarının durumunu (salt okunur) tazeler ve
+    /// hemen bir ölçüm adımı çalıştırır; bağlantı gelirse son yapılandırma uzantıya yeniden gönderilir.
+    /// Filtre ayarını açıp kapatmaz, uzantıyı yeniden kurmaz (bunlar kullanıcının Ayarlar › Filtre'deki kararıdır).
+    func reconnectFilter() {
+        filter.reconnectNow()
+        Task {
+            await installer.refresh()
+            await step()
+        }
     }
 
     // MARK: Filtre emniyeti
@@ -232,6 +272,27 @@ final class AppModel {
     }
 
     func isBlocked(_ app: String) -> Bool { prefs.blockedOnMobile.contains(app) }
+
+    func blockScope(for app: String) -> BlockScope? { prefs.blockScope(for: app) }
+
+    /// Elle engel kapsamını ayarlar (`nil` = kaldır). Wi-Fi'de engeli filtrede şu anki ağa göre çözülür
+    /// (`EffectiveConfigBuilder`); şu anki ağı etkiliyorsa açık bağlantılar yenilenir.
+    func setBlockScope(_ app: String, _ scope: BlockScope?) {
+        let old = prefs.blockScope(for: app)
+        guard scope != old else { return }
+        prefs.setBlockScope(app, scope)
+        pushConfig(force: true)
+        let name = AppCatalog.shared.name(for: app)
+        guard let scope else {
+            showToast(Toast(message: "\(name) engeli kaldırıldı", undoApp: nil, undoBlocked: false))
+            return
+        }
+        let message = "\(name) \(scope.phrase) engellendi" + scope.note(onMobile: isMobile)
+        showToast(Toast(message: message, undoApp: nil, undoBlocked: false))
+        let wasHere = old.map { isMobile ? $0.blocksMobile : $0.blocksWiFi } ?? false
+        let isHere = isMobile ? scope.blocksMobile : scope.blocksWiFi
+        if isHere && !wasHere { scheduleReset(app, reason: .block) }
+    }
 
     // MARK: Hız sınırı
 
@@ -552,9 +613,7 @@ final class AppModel {
         apply(snap)
 
         let buckets = await filter.drain()
-        // Uzantı süreci reboot'a kadar çalışabilir; "aktif" için filtre ayarının da açık olması gerekir.
-        let connected = filter.isConnected && installer.state == .active
-        if connected != filterConnected { filterConnected = connected }
+        updateFilterLink(now: .now)
         usage.ingest(buckets, seconds: elapsed)
         alerts.checkBursts(usage.last60, threshold: prefs.burstThresholdBytes, isMobile: isMobile)
         // Kademeli limit açıkken uyarı bildirimlerini merdiven yönetir (çift bildirim olmasın).
@@ -652,7 +711,7 @@ final class AppModel {
         guard rulesReady else { return }
         // Elle ayarlar + kural/merdiven çıktısı; prefs'e yazılmaz, en kısıtlayıcı kazanır.
         let eff = EffectiveConfigBuilder.build(manualLimits: prefs.appLimits, manualBlocked: prefs.blockedOnMobile,
-                                               output: rules.output, onMobile: isMobile)
+                                               manualBlockedWiFi: prefs.blockedOnWiFi, output: rules.output, onMobile: isMobile)
         lastRuleOutput = rules.output
         lastPushedMobile = isMobile
         updateProxyWanted()

@@ -1,5 +1,7 @@
 # Adalmon: progress
 
+**2026-11-12 (öğlene doğru)** — Limit tahmini, bildirim seçimi, canlı mobil/ağ listesi (aralık + sınır + Mobilde/Wi-Fi'de/Her yerde engel), kompakt Genel bakış, simge düzeltmesi. Filtre bağlantısı 07:32'de kopmuştu (kurulumlarda uzantı sürümü değişiyordu); kullanıcı kapat-aç ile düzeltti; artık yeniden bağlanma + config tekrar gönderimi + mobilde kırmızı uyarı var, kurulumlar aktif uzantı sürümüyle yapılıyor. Tam suite 1341/1344.
+
 **2026-11-12 (sabah)** — USAGE-01 (Claude statusLine sarmalayıcı + Codex okuma + limit kartı/uyarı), CLEAN-01 (Süreçler > Temizlik, yalnız Çöp'e taşır) ve MENUBAR-01 (sırayı menü çubuğundan al) bitti; review bulguları düzeltildi; tam suite 1279/1282; kuruldu, push edildi. Açık: kurulum sonrası CPU ~%4-5 (kaynağı Adalmon kodu değil gibi, ölçülmeli).
 
 **2026-11-12 (gece yarısı)** — MENUBAR-01 bitti (commit'siz). USAGE-01 (Claude statusLine sarmalayıcı + Codex okuma + limit kartı/uyarı) kodu yazıldı, derlenmedi. CLEAN-01 planı + yarım kod. Usage limiti nedeniyle ajanlar durduruldu; devam adımları STATUS Handoff'ta.

@@ -15,6 +15,8 @@ final class Preferences {
     /// Dock'ta simge ve ana pencere göster (kapalıysa yalnızca menü çubuğu uygulaması).
     var showInDock: Bool { didSet { d.set(showInDock, forKey: "showInDock") } }
     var blockedOnMobile: [String] { didSet { d.set(blockedOnMobile, forKey: "blockedOnMobile") } }
+    /// Ölçülmeyen ağda (Wi-Fi/kablolu) engellenecekler. `blockedOnMobile` ile birlikte = her yerde (bkz. `BlockScope`).
+    var blockedOnWiFi: [String] { didSet { d.set(blockedOnWiFi, forKey: "blockedOnWiFi") } }
     /// Uygulama anahtarı → hız sınırı (JSON olarak saklanır).
     var appLimits: [String: AppLimit] { didSet { d.set(try? JSONEncoder().encode(appLimits), forKey: "appLimits") } }
 
@@ -57,6 +59,8 @@ final class Preferences {
     var agentsWebEnabled: Bool { didSet { d.set(agentsWebEnabled, forKey: "agentsWebEnabled") } }
     /// Dinleyicinin kalıcı rastgele portu; 0 = henüz seçilmedi.
     var agentsPort: Int { didSet { d.set(agentsPort, forKey: "agentsPort") } }
+    /// Uyarılar nasıl gelsin: uygulama içi (varsayılan), sistem bildirimi ya da ikisi (NOTIF-01).
+    var alertDelivery: AlertDelivery { didSet { d.set(alertDelivery.rawValue, forKey: "alertDelivery") } }
 
     /// Menü çubuğu widget düzeni (eski show*Item bayrakları yalnızca ilk açılışta buraya taşınır).
     let menuBar: MenuBarConfigStore
@@ -89,6 +93,7 @@ final class Preferences {
         showInDock = d.bool(forKey: "showInDock")
         updateInterval = d.integer(forKey: "updateInterval")
         blockedOnMobile = d.stringArray(forKey: "blockedOnMobile") ?? []
+        blockedOnWiFi = d.stringArray(forKey: "blockedOnWiFi") ?? []
         appLimits = d.data(forKey: "appLimits").flatMap { try? JSONDecoder().decode([String: AppLimit].self, from: $0) } ?? [:]
         billingCycleStartDay = min(28, max(1, d.integer(forKey: "billingCycleStartDay")))
         monthlyCapGB = d.object(forKey: "monthlyCapGB") == nil ? nil : d.double(forKey: "monthlyCapGB")
@@ -104,12 +109,30 @@ final class Preferences {
         agentsShowTargets = d.bool(forKey: "agentsShowTargets")
         agentsWebEnabled = d.bool(forKey: "agentsWebEnabled")
         agentsPort = d.integer(forKey: "agentsPort")
+        alertDelivery = d.string(forKey: "alertDelivery").flatMap(AlertDelivery.init(rawValue:)) ?? .system // önceki davranış: uyarılar sistem bildirimiydi
         menuBar = MenuBarConfigStore(defaults: d)
         panel = PanelConfigStore(defaults: d)
     }
 
     func toggleBlocked(_ app: String) {
         if let i = blockedOnMobile.firstIndex(of: app) { blockedOnMobile.remove(at: i) } else { blockedOnMobile.append(app) }
+    }
+
+    /// Uygulamanın elle engel kapsamı (`nil` = engel yok).
+    func blockScope(for app: String) -> BlockScope? {
+        BlockScope.from(mobile: blockedOnMobile.contains(app), wifi: blockedOnWiFi.contains(app))
+    }
+
+    /// Kapsamı ayarlar; mobil listede var olan sıra korunur, yeni giriş sona eklenir.
+    func setBlockScope(_ app: String, _ scope: BlockScope?) {
+        let mobile = scope?.blocksMobile ?? false
+        let wifi = scope?.blocksWiFi ?? false
+        if mobile != blockedOnMobile.contains(app) {
+            if mobile { blockedOnMobile.append(app) } else { blockedOnMobile.removeAll { $0 == app } }
+        }
+        if wifi != blockedOnWiFi.contains(app) {
+            if wifi { blockedOnWiFi.append(app) } else { blockedOnWiFi.removeAll { $0 == app } }
+        }
     }
 
     private static func store<T: Encodable>(_ value: T, _ key: String, _ d: UserDefaults) {

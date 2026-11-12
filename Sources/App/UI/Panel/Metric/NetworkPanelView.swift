@@ -37,7 +37,7 @@ struct NetworkPanelView: View {
                             data: data, config: $config, actions: actions, allowsShowMore: true)
                 }
             }
-            if !data.blockedApps.isEmpty {
+            if !data.blockedEntries.isEmpty {
                 BlockedAppsSection(data: data, config: $config, actions: actions)
             }
         } footer: {

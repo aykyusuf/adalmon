@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let officeWindow = OfficeWindowController(model: model)
         router.attach(showMainWindow: { mainWindow.show() }, showSettingsWindow: { settings.show() },
                       showOfficeWindow: { officeWindow.show() })
+        model.alerts.openFilterSettings = { router.open(.filter) }
         let panel = PanelController(
             model: model,
             openApp: { prefs.showInDock ? mainWindow.show() : router.open() },

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Mobil veride engellenen uygulamalar. Liste boşsa hiç görünmez.
+/// Elle engellenen uygulamalar (kapsam rozetiyle: Mobilde / Wi-Fi'de / Her yerde). Liste boşsa hiç görünmez.
 struct BlockedAppsSection: View {
     let data: PanelData
     @Binding var config: PanelConfig
@@ -9,17 +9,19 @@ struct BlockedAppsSection: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let apps = data.blockedApps
+        let apps = data.blockedEntries
         if !apps.isEmpty {
             let collapsed = config.isCollapsed(.blockedApps)
             VStack(alignment: .leading, spacing: 2) {
                 PanelSectionHeader(title: "Engellenenler", isCollapsed: collapsed, tint: .red) {
                     withAnimation(.panel(reduceMotion: reduceMotion)) { config.toggleCollapsed(.blockedApps) }
                 } accessory: {
-                    Text(data.isMobile ? "\(apps.count) engelli" : "\(apps.count) · Wi-Fi'de serbest")
+                    let active = apps.filter { $0.isActive(onMobile: data.isMobile) }.count
+                    Text(active == apps.count ? "\(apps.count) engelli" : "\(apps.count) · şu an \(active) etkin")
                 }
                 if !collapsed {
-                    ForEach(apps, id: \.self) { app in
+                    ForEach(apps) { entry in
+                        let app = entry.app
                         HStack(spacing: 6) {
                             Image(nsImage: AppCatalog.shared.icon(for: app))
                                 .resizable()
@@ -28,8 +30,9 @@ struct BlockedAppsSection: View {
                             Text(AppCatalog.shared.name(for: app))
                                 .font(.callout)
                                 .lineLimit(1)
+                            BlockScopeBadge(scope: entry.scope)
                             Spacer()
-                            Button("Kaldır") { actions.setBlocked(app, false) }
+                            Button("Kaldır") { actions.setBlockScope(app, nil) }
                                 .buttonStyle(.link)
                                 .font(.caption)
                                 .accessibilityLabel("\(AppCatalog.shared.name(for: app)) engelini kaldır")

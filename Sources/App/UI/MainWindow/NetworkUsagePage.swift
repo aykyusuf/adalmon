@@ -29,11 +29,16 @@ struct NetworkUsagePage: View, Equatable {
                     .monospacedDigit()
             }
             .padding(.horizontal, 24)
+            FilterLinkBanner(level: data.filterAlert, canReconnect: data.installerState == .active,
+                             onReconnect: actions.reconnectFilter, onOpenSettings: actions.openFilterSettings)
+                .padding(.horizontal, 24)
             if data.showsFilterCallout {
                 FilterInstallCallout(state: data.installerState, onInstall: actions.installFilter)
                     .padding(.horizontal, 24)
                 Spacer()
             } else {
+                LiveAppUsageList(source: .live(model), controls: .live(model), maxRows: 5)
+                    .padding(.horizontal, 24)
                 NetworkUsageTable(rows: rows, isSearching: !query.isEmpty, selection: $selectedID, sortOrder: $sortOrder,
                                   onShowDetails: select, onToggleBlock: toggleBlock, onClose: closeInspector)
             }

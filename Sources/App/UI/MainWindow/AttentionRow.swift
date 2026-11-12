@@ -37,13 +37,5 @@ struct AttentionRow: View {
         }
     }
 
-    private func open() {
-        switch item.destination {
-        case .rules: router.selectedMainSection = .rules
-        case .filterSettings: router.open(.filter)
-        case .app(let app):
-            router.selectedAppID = app
-            router.selectedMainSection = .network
-        }
-    }
+    private func open() { item.destination.open(router) }
 }

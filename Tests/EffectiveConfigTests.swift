@@ -44,6 +44,41 @@ final class EffectiveConfigTests: XCTestCase {
         XCTAssertEqual(onWifi.limits[app], limit(2 * 1024 * 1024, mobile: false))
     }
 
+    /// Elle engel kapsamları → filtre yapılandırması (filtre/şema değişmeden):
+    /// Mobilde = `blockedOnMobile`; Her yerde = `blockedOnMobile` + her ağda `blockedAlways`;
+    /// Wi-Fi'de = yalnız Wi-Fi/kablolu ağdayken `blockedAlways` (mobilde hiç engel yok).
+    func testManualBlockScopesMapToExistingFilterConfig() {
+        let mobile = "/Applications/M.app", wifi = "/Applications/W.app", all = "/Applications/E.app"
+        func build(onMobile: Bool) -> EffectiveConfig {
+            EffectiveConfigBuilder.build(manualLimits: [:], manualBlocked: [mobile, all], manualBlockedWiFi: [wifi, all],
+                                         output: RuleOutput(), onMobile: onMobile)
+        }
+        let onWifi = build(onMobile: false)
+        XCTAssertEqual(onWifi.blocked, [mobile, all])
+        XCTAssertEqual(onWifi.blockedAlways, [wifi, all])
+        let onCell = build(onMobile: true)
+        XCTAssertEqual(onCell.blocked, [mobile, all])
+        XCTAssertEqual(onCell.blockedAlways, [all], "Wi-Fi'de engeli mobilde uygulanmaz")
+        // Filtre kararı (FlowPolicy değişmeden): her senaryoda beklenen uygulama engellenir.
+        func blocks(_ app: String, _ eff: EffectiveConfig, expensive: Bool) -> Bool {
+            let cfg = FilterConfig(blockedOnMobile: eff.blocked, blockedAlways: eff.blockedAlways)
+            return FlowPolicy.shouldBlock(app: app, kind: .direct, expensive: expensive, config: cfg)
+        }
+        XCTAssertEqual([mobile, wifi, all].map { blocks($0, onWifi, expensive: false) }, [false, true, true])
+        XCTAssertEqual([mobile, wifi, all].map { blocks($0, onCell, expensive: true) }, [true, false, true])
+    }
+
+    /// Her ağda engellenen uygulamanın hız sınırı gönderilmez (saydam proxy akışı üstlenip engeli atlatmasın).
+    func testAlwaysBlockedAppHasNoLimitInConfig() {
+        let manual = [app: limit(100_000, mobile: false)]
+        let wifiBlocked = EffectiveConfigBuilder.build(manualLimits: manual, manualBlocked: [], manualBlockedWiFi: [app],
+                                                       output: RuleOutput(), onMobile: false)
+        XCTAssertNil(wifiBlocked.limits[app])
+        let onCell = EffectiveConfigBuilder.build(manualLimits: manual, manualBlocked: [], manualBlockedWiFi: [app],
+                                                  output: RuleOutput(), onMobile: true)
+        XCTAssertEqual(onCell.limits[app], manual[app], "mobilde Wi-Fi'de engeli yok, sınır geçerli")
+    }
+
     func testMobileOnlyRuleDoesNotLeakToWifiOverWideManualLimit() {
         let manual = [app: limit(1_000_000, mobile: false)]
         let rule = output(limit(100_000, mobile: true))

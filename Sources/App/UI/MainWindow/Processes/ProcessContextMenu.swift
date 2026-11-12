@@ -50,8 +50,8 @@ struct ProcessContextMenu: View {
                 .disabled(!permissions.canNetworkControl)
                 Button("Hız sınırı koy…", systemImage: "speedometer") { live.limitRow = row }
                     .disabled(!permissions.canNetworkControl)
-                let blocked = model.prefs.blockedOnMobile.contains(row.key)
-                Button(blocked ? "Mobil engelini kaldır" : "Mobilde engelle", systemImage: "nosign") { live.toggleBlockOnMobile(row) }
+                let scope = model.prefs.blockScope(for: row.key)
+                Button(scope.map { "Engeli kaldır (\($0.title))" } ?? "Mobilde engelle", systemImage: "nosign") { live.toggleBlockOnMobile(row) }
                     .disabled(!permissions.canNetworkControl)
                 Button("Bağlantıları yenile", systemImage: "arrow.triangle.2.circlepath") { live.resetConnections(row) }
                     .disabled(!permissions.canNetworkControl)

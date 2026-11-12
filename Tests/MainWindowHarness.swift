@@ -12,11 +12,12 @@ struct MainWindowHarness {
     let router: SettingsRouter
 
     /// `chartHover`: grafiklerde sanki imleç çizim alanının bu oranında (0...1) duruyormuş gibi ipucu gösterir (önizleme).
-    init(size: NSSize, section: MainSection, dark: Bool = true, model: AppModel = AppModel(), chartHover: Double? = nil) {
+    init(size: NSSize, section: MainSection, dark: Bool = true, model: AppModel = AppModel(), chartHover: Double? = nil,
+         source: MainWindowDataSource = .fixed(.sample)) {
         model.mainWindowVisible = true
         let router = SettingsRouter(isDockModeOn: { true })
         router.selectedMainSection = section
-        let view = MainWindowView(model: model, source: .fixed(.sample), actions: .inert, router: router) { settings in
+        let view = MainWindowView(model: model, source: source, actions: .inert, router: router) { settings in
             SettingsDetailView(section: settings, model: model)
         }
         let hosting = NSHostingController(rootView: AnyView(view.environment(\.chartPreviewHover, chartHover)))

@@ -415,9 +415,14 @@ final class ProcessLiveModel {
 
     func toggleBlockOnMobile(_ row: LiveRow) {
         guard let host, permissions(for: row).canNetworkControl else { return }
-        let blocked = host.prefs.blockedOnMobile.contains(row.key)
-        host.setBlocked(row.key, !blocked)
-        setStatus(blocked ? "“\(row.name)” mobil engeli kaldırıldı" : "“\(row.name)” mobilde engellendi")
+        // Engelli (Mobilde / Wi-Fi'de / Her yerde) → engel tümüyle kaldırılır; değilse mobilde engellenir.
+        if let scope = host.prefs.blockScope(for: row.key) {
+            host.setBlockScope(row.key, nil)
+            setStatus("“\(row.name)” engeli kaldırıldı (\(scope.title))")
+        } else {
+            host.setBlocked(row.key, true)
+            setStatus("“\(row.name)” mobilde engellendi")
+        }
     }
 
     func resetConnections(_ row: LiveRow) {

@@ -20,6 +20,11 @@ struct PanelActions {
     var setLowPowerMode: @MainActor (_ on: Bool) -> Void = { _ in }
     /// Cihaz pilini menü çubuğuna ekler / çıkarır (kimlik, ad, sabitle).
     var setDevicePinned: @MainActor (_ id: String, _ name: String, _ pinned: Bool) -> Void = { _, _, _ in }
+    /// Filtre bağlı değil şeridi: XPC bağlantısını yeniden kur (filtre ayarına dokunmaz) / Ayarlar › Filtre'yi aç.
+    var reconnectFilter: @MainActor () -> Void = {}
+    var openFilterSettings: @MainActor () -> Void = {}
+    /// Elle engel kapsamını ayarlar (`nil` = kaldır; Wi-Fi'de engelli uygulamalar da buradan kaldırılır).
+    var setBlockScope: @MainActor (_ app: String, _ scope: BlockScope?) -> Void = { _, _ in }
 
     /// Hiçbir şey yapmayan eylemler (önizleme/test).
     static var inert: PanelActions {
@@ -40,5 +45,8 @@ extension PanelActions {
             openSettings: openSettings,
             quit: { NSApp.terminate(nil) }
         )
+        reconnectFilter = { [weak model] in model?.reconnectFilter() }
+        setBlockScope = { [weak model] app, scope in model?.setBlockScope(app, scope) }
+        openFilterSettings = openSettings
     }
 }

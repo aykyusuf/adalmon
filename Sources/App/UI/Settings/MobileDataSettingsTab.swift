@@ -34,20 +34,23 @@ struct MobileDataSettingsTab: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Mobilde engellenenler") {
-                if prefs.blockedOnMobile.isEmpty {
+            Section("Engellenenler") {
+                let entries = BlockedAppEntry.list(mobile: prefs.blockedOnMobile, wifi: prefs.blockedOnWiFi)
+                if entries.isEmpty {
                     Text("Yok. Paneldeki ✋ düğmesiyle ya da bildirimden ekleyebilirsin.")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(prefs.blockedOnMobile, id: \.self) { app in
+                    ForEach(entries) { entry in
                         HStack {
-                            Image(nsImage: AppCatalog.shared.icon(for: app))
+                            Image(nsImage: AppCatalog.shared.icon(for: entry.app))
                                 .resizable()
                                 .frame(width: 16, height: 16)
                                 .accessibilityHidden(true)
-                            Text(AppCatalog.shared.name(for: app))
+                            Text(AppCatalog.shared.name(for: entry.app))
+                            BlockScopeBadge(scope: entry.scope)
                             Spacer()
-                            Button("Kaldır") { model.setBlocked(app, false) }
+                            Button("Kaldır") { model.setBlockScope(entry.app, nil) }
+                                .accessibilityLabel("\(AppCatalog.shared.name(for: entry.app)) engelini kaldır")
                         }
                     }
                 }

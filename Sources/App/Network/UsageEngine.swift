@@ -42,6 +42,8 @@ final class UsageEngine {
     private var pendingHourly: [HourlyKey: UsageStore.HourlyRow] = [:]
     private struct HourlyKey: Hashable { var hour: Int; var app: String; var domain: String; var mobile: Bool }
     private let store: UsageStore
+    /// Canlı liste (60 sn … 1 sa) için bellek içi geçmiş; gözlem bildirmez, görünüm görünürken `liveRows` ile okunur.
+    @ObservationIgnored private var live = LiveUsageHistory()
 
     init(store: UsageStore, calendar: Calendar = UsageStore.keyCalendar) {
         self.store = store
@@ -73,11 +75,14 @@ final class UsageEngine {
             ringIndex = (ringIndex + 1) % ring.count
             ring[ringIndex] = [:]
         }
+        live.advance(seconds: seconds)
+        live.prune(nowMinute: Int(now.timeIntervalSince1970) / 60)
 
         for b in buckets {
             let bytes = b.bytesIn + b.bytesOut
             if b.kind == .proxyEgress { proxyEgressToday += bytes; continue }
             let host = DomainGrouper.group(b.host)
+            live.record(app: b.app, bytesIn: b.bytesIn, bytesOut: b.bytesOut, mobile: b.expensive, minute: b.minute)
 
             ring[ringIndex][b.app, default: Totals()].bytes += bytes
             ring[ringIndex][b.app, default: Totals()].hosts[host, default: 0] += bytes
@@ -122,6 +127,17 @@ final class UsageEngine {
             let newToday = Self.summaries(todayTotals, limit: 30)
             if newToday != today { today = newToday }
         }
+    }
+
+    /// Canlı liste satırları (bkz. `LiveUsageHistory.rows`). Yalnızca görünür görünüm çağırır; ölçüm adımına ek iş yok.
+    func liveRows(range: LiveRange, interface: LiveInterface, limit: Int? = nil, now: Date = .now) -> [LiveAppUsage] {
+        live.rows(range: range, interface: interface, nowMinute: Int(now.timeIntervalSince1970) / 60, limit: limit)
+    }
+
+    /// Bugünün uygulama toplamları canlı liste biçiminde (anlık hız son saniyelerden). ↓/↑ ayrımı yoktur: hepsi `down`'da.
+    func todayRows(interface: LiveInterface, now: Date = .now) -> [LiveAppUsage] {
+        let rates = liveRows(range: .sec60, interface: interface, now: now).reduce(into: [String: UInt64]()) { $0[$1.app] = $1.rate }
+        return LiveAppUsage.today(today, interface: interface, rates: rates)
     }
 
     /// Bekleyen satırları diske yazar (birkaç saniyede bir).

@@ -15,7 +15,12 @@ struct EffectiveConfig: Equatable, Sendable {
 ///   şu anki ağa göre çözülür: mobildeyken ikisi de geçerli (en kısıtlayıcı, bayrak false), Wi-Fi'deyken yalnız
 ///   tüm-ağlar olanlar. Böylece yalnız-mobil bir sınır Wi-Fi'ye taşmaz, kullanıcının elle ayarı hiçbir ağda gevşemez.
 enum EffectiveConfigBuilder {
-    static func build(manualLimits: [String: AppLimit], manualBlocked: [String], output: RuleOutput, onMobile: Bool) -> EffectiveConfig {
+    /// - Elle "Wi-Fi'de" engeli (`manualBlockedWiFi`): filtrede yalnız-ölçülmeyen-ağ engeli yok; şu anki ağa göre çözülür.
+    ///   Wi-Fi/kablolu ağdayken `blockedAlways`'e girer, mobildeyken girmez. Mobil listesinde de olan ("her yerde")
+    ///   ağdan bağımsız olarak her zaman `blockedAlways`'tedir.
+    /// - Her ağda engellenen uygulamanın hız sınırı filtreye gönderilmez: saydam proxy akışı üstlenip engeli atlatmasın.
+    static func build(manualLimits: [String: AppLimit], manualBlocked: [String], manualBlockedWiFi: [String] = [],
+                      output: RuleOutput, onMobile: Bool) -> EffectiveConfig {
         var limits = manualLimits
         for (app, contributions) in output.limits {
             var all: [AppLimit] = contributions.map(\.limit)
@@ -25,7 +30,11 @@ enum EffectiveConfigBuilder {
         var blocked = manualBlocked
         var seen = Set(manualBlocked)
         for app in output.blocked.keys.sorted() where seen.insert(app).inserted { blocked.append(app) }
-        return EffectiveConfig(limits: limits, blocked: blocked, blockedAlways: output.blockedAlways)
+        var always = output.blockedAlways
+        let mobileSet = Set(manualBlocked)
+        for app in manualBlockedWiFi where !onMobile || mobileSet.contains(app) { always.insert(app) }
+        for app in always { limits[app] = nil }
+        return EffectiveConfig(limits: limits, blocked: blocked, blockedAlways: always)
     }
 
     /// Birden çok sınırı tek `AppLimit`'e indirger. Tek giriş olduğu gibi döner (elle girişe dokunulmaz).

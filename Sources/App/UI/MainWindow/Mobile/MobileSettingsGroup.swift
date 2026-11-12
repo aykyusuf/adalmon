@@ -3,7 +3,7 @@ import SwiftUI
 /// "Mobil veri" sayfasının altındaki ayar kartları (Dock modunda ayrı Ayarlar girişi yoktur).
 struct MobileSettingsGroup: View {
     let model: AppModel
-    let blocked: [String]
+    let blocked: [BlockedAppEntry]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

@@ -28,7 +28,7 @@ enum SettingsSection: String, CaseIterable, Identifiable, Hashable {
         case .batteryAlerts: "battery.50percent"
         case .widgets: "square.grid.2x2.fill"
         case .shortcuts: "command"
-        case .agents: "person.3.fill"
+        case .agents: "person.2.fill"
         case .throttle: "speedometer"
         case .mobileData: "antenna.radiowaves.left.and.right"
         case .filter: "line.3.horizontal.decrease"

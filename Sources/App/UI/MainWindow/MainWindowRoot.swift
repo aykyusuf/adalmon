@@ -17,7 +17,11 @@ struct MainWindowRoot: View {
         MainWindowView(
             model: model,
             source: .live(model),
-            actions: PanelActions(model: model, openApp: { [router] in router.open() }, openSettings: { [router] in router.open() }),
+            actions: {
+                var actions = PanelActions(model: model, openApp: { [router] in router.open() }, openSettings: { [router] in router.open() })
+                actions.openFilterSettings = { [router] in router.open(.filter) }
+                return actions
+            }(),
             router: router
         ) { section in
             SettingsDetailView(section: section, model: model)

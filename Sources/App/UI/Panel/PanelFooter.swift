@@ -22,11 +22,13 @@ struct PanelFooter: View {
     private func row(uptimeInline: Bool) -> some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(data.filterConnected ? Color.green : Color.secondary)
+                .fill(Self.dotColor(data))
                 .frame(width: 6, height: 6)
                 .accessibilityHidden(true)
             Text(statusText)
                 .lineLimit(1)
+                .foregroundStyle(data.filterAlert == .critical ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+                .fontWeight(data.filterAlert == .critical ? .semibold : nil)
             Spacer(minLength: 8)
             if uptimeInline { UptimeLine(boot: bootTime) }
             Button("Çık", systemImage: "power", action: onQuit)
@@ -37,11 +39,22 @@ struct PanelFooter: View {
     }
 
     private var statusText: String {
-        var parts: [String] = [data.filterConnected ? "Filtre aktif" : "Filtre bağlı değil"]
+        var parts: [String] = [Self.filterText(data)]
         if let port = data.proxyPorts.first {
             let owner = data.proxyOwnerPaths.first.map { ($0 as NSString).lastPathComponent } ?? "proxy"
             parts.append("\(owner) :\(port) ayrıştırılıyor")
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Bağlıyken yeşil; mobilde uzun süredir bağlı değilken kırmızı; diğer kopukluklarda turuncu.
+    static func dotColor(_ data: PanelData) -> Color {
+        if data.filterConnected { return .green }
+        return data.filterAlert == .critical ? .red : .orange
+    }
+
+    static func filterText(_ data: PanelData) -> String {
+        if data.filterConnected { return "Filtre aktif" }
+        return data.filterAlert == .critical ? "Filtre bağlı değil — sınırlar uygulanmıyor" : "Filtre bağlı değil"
     }
 }

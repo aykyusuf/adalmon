@@ -83,6 +83,8 @@ final class SubscriptionLimitsModel {
         static let thresholds = "subscriptionLimits.thresholds"
         static let tracker = "subscriptionLimits.alertTracker"
         static let codexEnabled = "subscriptionLimits.codexEnabled"
+        static let forecastSensitivity = "subscriptionLimits.forecastSensitivity"
+        static let forecastWarnings = "subscriptionLimits.forecastWarnings"
     }
 
     private(set) var claude: ProviderLimits?
@@ -90,6 +92,12 @@ final class SubscriptionLimitsModel {
     private(set) var claudeConnected = false
     private(set) var lastMessage: String?
     var thresholds: LimitAlertThresholds { didSet { store(thresholds, Key.thresholds) } }
+    /// Tahmin uyarısı duyarlılığı (USAGE-02). Ayrı anahtarda: eşik yapısının kayıtlı biçimi değişmesin.
+    var forecastSensitivity: LimitForecastSensitivity {
+        didSet { defaults.set(forecastSensitivity.rawValue, forKey: Key.forecastSensitivity) }
+    }
+    /// Örnek geçmişi yalnızca bellekte; değer gelince güncellenir (kart buradan okur, zamanlayıcı yok).
+    private(set) var forecaster = LimitForecastEngine()
     var codexEnabled: Bool {
         didSet {
             defaults.set(codexEnabled, forKey: Key.codexEnabled)
@@ -119,7 +127,9 @@ final class SubscriptionLimitsModel {
         thresholds = Self.load(LimitAlertThresholds.self, Key.thresholds, defaults) ?? LimitAlertThresholds()
         tracker = Self.load(LimitAlertTracker.self, Key.tracker, defaults) ?? LimitAlertTracker()
         claude = Self.load(ProviderLimits.self, Key.claude, defaults)
+        forecastSensitivity = defaults.string(forKey: Key.forecastSensitivity).flatMap(LimitForecastSensitivity.init(rawValue:)) ?? .medium
         codexEnabled = defaults.object(forKey: Key.codexEnabled) as? Bool ?? true
+        forecaster.warnings = Self.load(LimitForecastWarnings.self, Key.forecastWarnings, defaults) ?? LimitForecastWarnings()
         guard live else { return }
         binder.repairWrapperIfNeeded()
         claudeConnected = binder.isConnected
@@ -146,6 +156,7 @@ final class SubscriptionLimitsModel {
         claude = limits
         store(limits, Key.claude)
         evaluate(limits, now: now)
+        evaluateForecast(limits, now: now)
     }
 
     func connectClaude() {
@@ -195,7 +206,7 @@ final class SubscriptionLimitsModel {
             codexReading = false
             guard codexEnabled else { return }
             codex = result
-            if let result { evaluate(result, now: .now) }
+            if let result { evaluate(result, now: .now); evaluateForecast(result, now: .now) }
         }
     }
 
@@ -225,6 +236,22 @@ final class SubscriptionLimitsModel {
         let alerts = tracker.evaluate(limits, thresholds: thresholds, now: now)
         if tracker != before { store(tracker, Key.tracker) }
         for alert in alerts { notify?(alert.title(), alert.body(now: now)) }
+    }
+
+    /// Geçmişe örnek ekler; tahmin uyarısı koşulları sağlanırsa pencere başına bir kez bildirir.
+    /// Codex aynı olayı yeniden okursa (aynı `observedAt`) örnek eklenmez.
+    private func evaluateForecast(_ limits: ProviderLimits, now: Date) {
+        var engine = forecaster
+        let alerts = engine.ingest(limits, sensitivity: forecastSensitivity, alertsEnabled: thresholds.notificationsEnabled, now: now)
+        if engine.warnings != forecaster.warnings { store(engine.warnings, Key.forecastWarnings) }
+        if engine != forecaster { forecaster = engine }
+        for alert in alerts { notify?(alert.title(), alert.body(now: now)) }
+    }
+
+    /// Kart için: bu pencere için gösterilecek tahmin (yoksa nil). Veri eskiyse gösterilmez.
+    func forecast(for provider: ProviderLimits, _ kind: LimitWindowKind, now: Date) -> LimitForecast? {
+        guard !provider.isStale(now: now) else { return nil }
+        return forecaster.forecast(provider.source, kind, sensitivity: forecastSensitivity, now: now)
     }
 
     // MARK: Kalıcılık

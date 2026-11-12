@@ -16,7 +16,7 @@ struct SettingsDetailView: View {
         case .throttle: ThrottleSettingsPane(model: model)
         case .mobileData: MobileDataSettingsTab(model: model)
         case .filter: FilterSettingsTab(model: model)
-        case .general: GeneralSettingsTab(prefs: model.prefs)
+        case .general: GeneralSettingsTab(prefs: model.prefs, alerts: model.alerts)
         }
     }
 }

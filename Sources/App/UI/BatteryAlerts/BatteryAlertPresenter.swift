@@ -8,11 +8,15 @@ final class BatteryAlertPresenter {
     static let glowDuration: TimeInterval = 2.2
 
     private var bubble: NSPanel?
+    /// Balon görünürken gelen uyarılar sırayla gösterilir (en çok 4 bekler); biri kapanınca sıradaki açılır.
+    private var pending: [() -> Void] = []
+    static let maxPending = 4
     private var bubbleTask: Task<Void, Never>?
     private var glowWindows: [NSWindow] = []
     private var glowTask: Task<Void, Never>?
 
     var isShowingBubble: Bool { bubble != nil }
+    var pendingBubbles: Int { pending.count }
     var isShowingGlow: Bool { !glowWindows.isEmpty }
 
     func show(_ event: BatteryAlertEvent) {
@@ -27,8 +31,31 @@ final class BatteryAlertPresenter {
     // MARK: Balon
 
     private func showBubble(_ event: BatteryAlertEvent, top: Bool) {
-        dismissBubble()
-        let size = NSSize(width: BatteryAlertBubbleView.size.width + 24, height: BatteryAlertBubbleView.size.height + 24)
+        showPanel(BatteryAlertBubbleView(event: event, onClose: { [weak self] in self?.dismissBubble() }),
+                  contentSize: BatteryAlertBubbleView.size, top: top, duration: Self.bubbleDuration)
+    }
+
+    /// Genel uyarılar (limit, mobil veri, kural…) için aynı balon penceresi; üstte gösterilir. Düğmeli balon biraz daha uzun kalır.
+    func showMessage(_ message: AlertMessage, action: InAppAlertAction?) {
+        let view = InAppAlertBubbleView(message: message, action: action.map { action in
+            InAppAlertAction(title: action.title) { [weak self] in action.run(); self?.dismissBubble() }
+        }, onClose: { [weak self] in self?.dismissBubble() })
+        let sound = message.sound
+        showPanel(view, contentSize: InAppAlertBubbleView.size, top: true, duration: action == nil ? 6 : 10) {
+            if sound { NSSound(named: NSSound.Name("Glass"))?.play() }
+        }
+    }
+
+    private func showPanel<Content: View>(_ content: Content, contentSize: CGSize, top: Bool, duration: TimeInterval,
+                                          onShow: @escaping () -> Void = {}) {
+        if bubble != nil {
+            if pending.count < Self.maxPending {
+                pending.append { [weak self] in self?.showPanel(content, contentSize: contentSize, top: top, duration: duration, onShow: onShow) }
+            }
+            return
+        }
+        onShow()
+        let size = NSSize(width: contentSize.width + 24, height: contentSize.height + 24)
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false
@@ -38,8 +65,7 @@ final class BatteryAlertPresenter {
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        panel.contentView = NSHostingView(rootView: BatteryAlertBubbleView(event: event, onClose: { [weak self] in self?.dismissBubble() })
-            .padding(12))
+        panel.contentView = NSHostingView(rootView: content.padding(12))
         let screen = Self.targetScreen()
         let frame = screen.visibleFrame
         let y = top ? frame.maxY - size.height - 8 : frame.midY - size.height / 2
@@ -47,7 +73,7 @@ final class BatteryAlertPresenter {
         panel.orderFrontRegardless()
         bubble = panel
         bubbleTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Self.bubbleDuration))
+            try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled else { return }
             self?.dismissBubble()
         }
@@ -61,6 +87,7 @@ final class BatteryAlertPresenter {
         panel.orderOut(nil)
         panel.contentView = nil
         panel.close()
+        if !pending.isEmpty { pending.removeFirst()() }
     }
 
     // MARK: Kenar parlaması
@@ -187,6 +214,71 @@ struct BatteryAlertBubbleView: View {
         .onAppear { withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.5, bounce: 0.25)) { shown = true } }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(event.title). \(event.message)")
+    }
+}
+
+/// Genel uyarı balonu (NOTIF-01): simge, başlık, iki satıra kadar metin, isteğe bağlı eylem düğmesi.
+struct InAppAlertBubbleView: View {
+    static let size = CGSize(width: 460, height: 96)
+    static let tint = Color(red: 1.0, green: 0.62, blue: 0.10)
+
+    let message: AlertMessage
+    let action: InAppAlertAction?
+    var onClose: () -> Void = {}
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let tint = Self.tint
+        HStack(spacing: 14) {
+            Image(systemName: message.symbol)
+                .font(.system(size: 20, weight: .bold))
+                .foregroundStyle(tint)
+                .frame(width: 44, height: 44)
+                .background(tint.opacity(0.18), in: .circle)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(message.title)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(message.body)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.primary.opacity(0.82))
+                    .lineLimit(2)
+            }
+            .minimumScaleFactor(0.85)
+            Spacer(minLength: 4)
+            if let action {
+                Button(action.title) { action.run() }
+                    .controlSize(.small)
+            }
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.primary.opacity(0.78))
+                    .frame(width: 28, height: 28)
+                    .background(.primary.opacity(0.14), in: .circle)
+            }
+            .buttonStyle(.plain)
+            .help("Kapat")
+            .accessibilityLabel("Kapat")
+        }
+        .padding(.horizontal, 16)
+        .frame(width: Self.size.width, height: Self.size.height)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous).fill(.regularMaterial)
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(LinearGradient(colors: [tint.opacity(0.20), tint.opacity(0.05)], startPoint: .leading, endPoint: .trailing))
+            }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(tint.opacity(0.4), lineWidth: 1))
+        .shadow(color: .black.opacity(0.28), radius: 10, y: 3)
+        .scaleEffect(shown || reduceMotion ? 1 : 0.94)
+        .opacity(shown ? 1 : 0)
+        .onAppear { withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.45, bounce: 0.2)) { shown = true } }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(message.title). \(message.body)")
     }
 }
 

@@ -30,11 +30,15 @@ struct PanelData: Equatable {
     var budget: BudgetSnapshot?
 
     var blockedApps: [String] = []
+    /// Yalnızca Wi-Fi/kablolu ağda (ya da her yerde) engellenenler (`prefs.blockedOnWiFi`).
+    var blockedOnWiFi: [String] = []
     var isMobile = false
     var medium: PathMonitor.Medium = .wifi
     var interfaceName = ""
 
     var filterConnected = false
+    /// Filtre 60 sn'den uzun süredir bağlı değilse uyarı ağırlığı (ayrık değer: sayfalar her adımda yeniden çizilmez).
+    var filterAlert: FilterAlertLevel = .none
     var installerState: ExtensionInstaller.State = .active
     var proxyPorts: [Int] = []
     var proxyOwnerPaths: [String] = []
@@ -54,6 +58,9 @@ struct PanelData: Equatable {
     var showsFilterCallout: Bool { installerState != .active && !filterConnected }
 
     func isBlocked(_ app: String) -> Bool { blockedApps.contains(app) }
+
+    /// Elle engellenen tüm uygulamalar kapsamlarıyla (Mobilde / Wi-Fi'de / Her yerde).
+    var blockedEntries: [BlockedAppEntry] { BlockedAppEntry.list(mobile: blockedApps, wifi: blockedOnWiFi) }
 }
 
 extension PanelData {
@@ -84,10 +91,12 @@ extension PanelData {
             dailyCapBytes: model.prefs.dailyCapBytes,
             budget: model.budget(),
             blockedApps: model.prefs.blockedOnMobile,
+            blockedOnWiFi: model.prefs.blockedOnWiFi,
             isMobile: model.isMobile,
             medium: model.path.medium,
             interfaceName: model.path.interfaceName,
             filterConnected: model.filterConnected,
+            filterAlert: model.filterAlert,
             installerState: model.installer.state,
             proxyPorts: model.proxy.ports,
             proxyOwnerPaths: model.proxy.ownerPaths,

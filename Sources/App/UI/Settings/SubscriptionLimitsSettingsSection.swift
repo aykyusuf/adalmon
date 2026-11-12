@@ -45,6 +45,14 @@ struct SubscriptionLimitsSettingsSection: View {
             thresholdStepper("Haftalık: kritik", value: $model.thresholds.weeklyCritical)
             Text("Her limit penceresinde uyarı ve kritik bildirimi en çok birer kez gelir; pencere yenilenince sıfırlanır.")
                 .font(.caption).foregroundStyle(.secondary)
+
+            Picker("Erken dolma uyarısı", selection: $model.forecastSensitivity) {
+                ForEach(LimitForecastSensitivity.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .disabled(!model.thresholds.notificationsEnabled)
+            Text(forecastExplanation)
+                .font(.caption).foregroundStyle(.secondary)
         }
         .confirmationDialog("Claude limitleri bağlansın mı?", isPresented: $confirmConnect) {
             Button("Bağla") { model.connectClaude() }
@@ -52,6 +60,16 @@ struct SubscriptionLimitsSettingsSection: View {
         } message: {
             Text("~/.claude/settings.json yedeklenecek ve statusLine komutu Adalmon sarmalayıcısıyla değiştirilecek. Mevcut durum satırınız aynen görünmeye devam eder. Açık Claude Code oturumları değişikliği bir sonraki yenilemede görür.")
         }
+    }
+
+    /// Seçili duyarlılığın koşulları (ayar değişince metin de değişir).
+    private var forecastExplanation: String {
+        let five = LimitForecastRule.rule(.fiveHour, model.forecastSensitivity)
+        let week = LimitForecastRule.rule(.weekly, model.forecastSensitivity)
+        return "Tüketim hızı sürerse limit yenilenmeden belirgin şekilde önce dolacaksa pencere başına bir kez uyarır: "
+            + "5 saatlikte kullanım \(LimitFormat.percent(five.minUsedPercent)) ve üstündeyken, en az \(LimitFormat.duration(minutes: Int(five.minMargin / 60))) erken dolacaksa; "
+            + "haftalıkta \(LimitFormat.percent(week.minUsedPercent)) ve üstündeyken, en az \(LimitFormat.duration(minutes: Int(week.minMargin / 60))) erken dolacaksa. "
+            + "Hız yalnızca yeterli veri birikince (5 saatlikte en az \(LimitFormat.duration(minutes: Int(five.minSpan / 60))), haftalıkta en az \(LimitFormat.duration(minutes: Int(week.minSpan / 60)))) hesaplanır; tahmin panel kartında da görünür."
     }
 
     private func thresholdStepper(_ title: String, value: Binding<Double>) -> some View {

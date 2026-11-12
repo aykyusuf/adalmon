@@ -9,6 +9,7 @@ enum KnownApps {
         for usage in model.usage.last60 { keys.insert(usage.app) }
         keys.formUnion(model.prefs.appLimits.keys)
         keys.formUnion(model.prefs.blockedOnMobile)
+        keys.formUnion(model.prefs.blockedOnWiFi)
         keys.formUnion(model.prefs.usageRules.map(\.app))
         keys.formUnion(model.prefs.tierLadder.protectedApps)
         keys.formUnion(model.prefs.dataSaver.allowlist)

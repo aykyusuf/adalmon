@@ -201,6 +201,62 @@
       "done_when": "Windows'ta ajan ofisi hem tarayici/PWA olarak hem de tray uygulamasi olarak aciliyor ve Mac'teki ofisle ayni gorunumde; planlayici JS'e tasindi; kullanici gercek Windows PC'de denedi",
       "status": "todo",
       "evidence": "Karar 2026-11-10: ikisi de istendi. SERVER-01 sonrasi (Faz 2-3). Kod yok."
+    },
+    {
+      "id": "USAGE-02",
+      "title": "Limit tahmini: bu hizla 5 saatlik / haftalik limit pencere bitmeden dolacaksa uyari (yalnizca gercekten yuksek kullanimda)",
+      "priority": 1,
+      "done_when": "5 saatlik ve haftalik pencere icin tuketim hizindan dolma zamani tahmin ediliyor; dolma, yenilenmeden belirgin once olacaksa ve kullanim yuksekse tek bildirim geliyor (spam yok); esik/duyarlilik ayarlanabilir; testli; kullanici onayladi",
+      "status": "in_progress",
+      "evidence": "2026-11-12: LimitForecast.swift (en kucuk kareler hizi, pencere basina tek uyari, hassasiyet Dusuk/Orta/Yuksek; Orta: 5s >=%50 & >=3 ornek/10 dk & >=45 dk erken; haftalik >=%40 & >=3 ornek/2 sa & >=12 sa erken). Kartta 'bu hizla ~14:20'de dolar'. LimitForecastTests 10/10. Kuruldu 2026-11-12 ~09:00."
+    },
+    {
+      "id": "NOTIF-01",
+      "title": "Bildirimler: uygulama ici (pil uyarisi gibi) + istege bagli macOS sistem bildirimi",
+      "priority": 2,
+      "done_when": "Limit/mobil/pil uyarilari icin ayarlardan 'Uygulama ici', 'Sistem bildirimi' ya da ikisi secilebiliyor; sistem bildirimi izni yoksa uygulama ici kalir; kullanici onayladi",
+      "status": "in_progress",
+      "evidence": "2026-11-12: Ayarlar > Genel > Bildirimler: Uygulama ici / Sistem bildirimi / Ikisi de; varsayilan Sistem bildirimi (onceki davranis; ajan .inApp yapmisti, ana oturum geri cekti); izin reddedilirse uygulama ici + Sistem Ayarlari dugmesi; pil uyarilari kendi satir ayarlarinda kaldi. AlertDeliveryTests 7/7. Kuruldu 2026-11-12 ~09:00."
+    },
+    {
+      "id": "MOBILE-LIVE-01",
+      "title": "Mobil veri sayfasi: uygulama basina anlik tuketim, 60 sn / 5 dk / 15 dk / 30 dk / 1 sa araliklari, o an sinir/engel koyma",
+      "priority": 1,
+      "done_when": "Mobil veri sayfasinda panel widget'indaki gibi aralik secici var; secili aralikta uygulama basina mobil tuketim siralaniyor; her satirdan tek tikla hiz siniri ya da engel konabiliyor (mevcut kural/hiz siniri altyapisi); pil kurali korunuyor; kullanici onayladi",
+      "status": "in_progress",
+      "evidence": "2026-11-12: Ortak LiveAppUsageList (60 sn/5/15/30 dk/1 sa; UsageEngine.ingest'ten bellek ici gecmis, yeni ornekleyici yok; yalniz gorunurken <=1 Hz) Mobil veri sayfasinda 'Bugun' kartindan sonra; satirdan hiz siniri (100 KB/500 KB/1 MB/5 MB/ozel) + Mobilde engelle, 8 sn Geri al, rozetler, sistem sureci onayi. LiveAppUsageTests 13 + ilgili 86/86. Engelle secimi (mobil/Wi-Fi/her yer) ayri ajanda. Kuruldu 2026-11-12 ~09:00."
+    },
+    {
+      "id": "NET-LIVE-01",
+      "title": "Ag kullanimi sayfasi: ayni aralik secici ve aninda sinir/engel",
+      "priority": 1,
+      "done_when": "Ag kullanimi sayfasi MOBILE-LIVE-01 ile ayni aralik secici ve satirdan sinir/engel ozelligine sahip; kullanici onayladi",
+      "status": "in_progress",
+      "evidence": "2026-11-12: Ag kullanimi sayfasinda ayni canli liste (Tumu/Wi-Fi/Mobil, sinir her agda). Engelle menusu: Mobilde / Wi-Fi'de / Her yerde (filtre koduna dokunmadan: blockedOnMobile + blockedAlways; Wi-Fi'de ag degisimine gore), Her yerde icin onay, sistem servisleri yalniz Mobilde; Wi-Fi engelleri engelli listelerinde rozetle gorunur. Testler 102 + 110 gecti. Kuruldu. KALAN: kullanici onayi."
+    },
+    {
+      "id": "OVERVIEW-UX-01",
+      "title": "Genel bakis yeniden tasarim: kompakt pano",
+      "priority": 1,
+      "done_when": "Kullanici secimi 'Kompakt pano': ustte tiklanabilir ozet karolari (Bugun, Mobil, CPU, RAM, Disk...), altta tek 'En cok kullananlar' listesi [Ag|CPU|Bellek] sekmeli + aralik secici + satirdan sinir; altta ince durum seridi (ajanlar, acik kalma, Hotspot); kaydirmadan tek ekran; kullanici onayladi",
+      "status": "in_progress",
+      "evidence": "2026-11-12: Kompakt pano: tiklanabilir karolar (Bugun/Mobil/CPU/GPU/RAM/Disk; hover'da eski detaylar), tek 'En cok kullananlar' [Ag|CPU|Bellek] + son: menusu (Bugun dahil), satir sayisi pencere yuksekligine gore (kaydirma yok), alt durum seridi (dikkat cipleri, ajan sayisi, acik kalma, baglanti). Eski kart dosyalari silinmedi (testler kullaniyor; sonra temizlenecek). OverviewPageTests + ilgili 47 test gecti; onizleme PNG'leri kontrol edildi. Kuruldu 2026-11-12 ~09:00."
+    },
+    {
+      "id": "ICON-01",
+      "title": "Ayarlar kenar cubugunda 'Claude ajanlari' simgesi tasiyor",
+      "priority": 2,
+      "done_when": "Simge diger satirlarla ayni boyutta/hizada; light/dark kontrol edildi",
+      "status": "in_progress",
+      "evidence": "2026-11-12: SettingsSection .agents simgesi person.3.fill -> person.2.fill (daha dar, karoya sigar). Kuruldu 2026-11-12 ~09:00."
+    },
+    {
+      "id": "FILTER-LINK-01",
+      "title": "Uygulama-filtre baglantisi kopunca otomatik toparlanma + mobilde ciddi uyari",
+      "priority": 1,
+      "done_when": "Baglanti koparsa artan araliklarla yeniden baglanir ve ayarlari filtreye tekrar gonderir; mobilde 60 sn'den uzun kopuklukta Mobil/Ag/Genel bakista kirmizi bant + bildirim (30 dk'da bir en fazla); panel altbilgisi kirmizi; kullanici onayladi",
+      "status": "in_progress",
+      "evidence": "2026-11-12: Kok neden: kurulumlarda CURRENT_PROJECT_VERSION degisince filtre uzantisi her seferinde yeniden yuklendi, uygulama yeni filtreye XPC ile baglanamadi (07:32-08:17), uygulama basina sayim ve sinir/engel ayarlari gitmedi; kullanici Filtre'yi kapat-ac yapti -> duzeldi. Kod: FilterClient backoff 2->30 sn + yeniden baglaninca config tekrar gonderilir; FilterLink durum modeli; FilterLinkBanner (Mobil/Ag/Genel bakis), panel altbilgisi kirmizi, AlertCenter.notifyFilterDown; 'Sistem/diger mobil' -> 'Dagitilamayan'. FilterLinkTests 13; ilgili 110. Kurulum artik aktif uzanti surumuyle (1794457926) yapiliyor: yeniden yukleme yok, lookup hatasi 0, curl 200. KALAN: kullanici onayi."
     }
   ]
 }
