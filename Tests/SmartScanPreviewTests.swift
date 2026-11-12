@@ -45,11 +45,14 @@ final class SmartScanPreviewTests: XCTestCase {
         return r
     }
 
-    private func render(_ model: SmartScanModel, name: String, dark: Bool, dir: URL) throws {
-        let view = SmartScanSection(model: model)
+    private func render(_ model: SmartScanModel, name: String, dark: Bool, dir: URL, startDone: Bool = false) throws {
+        let view = SmartScanSection(model: model, startDone: startDone)
             .padding(24)
             .frame(width: 820, height: 760)
             .background(Color(nsColor: .windowBackgroundColor))
+            .preferredColorScheme(dark ? .dark : .light)
+            // Offscreen anlık görüntü 3D katmanları çizemez; hareketsiz (sabit) hâl çizilir.
+            .environment(\.cleanupStaticArtwork, true)
         let host = NSHostingView(rootView: view)
         let window = NSWindow(contentRect: NSRect(x: -3000, y: -3000, width: 820, height: 760),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -58,7 +61,8 @@ final class SmartScanPreviewTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.orderBack(nil)
         host.layoutSubtreeIfNeeded()
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+        // Kahraman giriş animasyonu (~1 sn) ve sayaç animasyonu bitsin.
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 1.6))
         host.layoutSubtreeIfNeeded()
         let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: rep)
@@ -79,7 +83,7 @@ final class SmartScanPreviewTests: XCTestCase {
         func makeModel() -> SmartScanModel { SmartScanModel(home: home, folderStore: ProjectFoldersStore(defaults: defaults, home: home)) }
 
         for dark in [false, true] {
-            try render(makeModel(), name: "1-empty", dark: dark, dir: dir)
+            try render(makeModel(), name: "1-welcome", dark: dark, dir: dir)
 
             let scanning = makeModel()
             let full = sampleResult()
@@ -96,6 +100,24 @@ final class SmartScanPreviewTests: XCTestCase {
             done.adopt(full, now: now)
             done.expanded = [.projectArtifacts]
             try render(done, name: "3-result", dark: dark, dir: dir)
+
+            let finished = makeModel()
+            finished.adopt(full, now: now)
+            let freed = finished.selectedItems.map { item in
+                CleanupResult(candidate: DeletionCandidate(item: item, roots: []), outcome: .trashed(to: nil))
+            }
+            finished.lastResult = freed
+            finished.lastMode = .trash
+            try render(finished, name: "4-done", dark: dark, dir: dir, startDone: true)
+
+            let clean = makeModel()
+            var empty = SmartScanResult()
+            for step in SmartScanStep.allCases.filter(\.isCleanable) {
+                empty.results[step] = SmartScanStepResult(step: step, state: .scanned)
+                empty.completed.append(step)
+            }
+            clean.adopt(empty, now: now)
+            try render(clean, name: "5-allclean", dark: dark, dir: dir)
         }
     }
 }

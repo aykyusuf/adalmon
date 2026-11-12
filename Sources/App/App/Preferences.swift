@@ -59,6 +59,8 @@ final class Preferences {
     var agentsControlEnabled: Bool { didSet { d.set(agentsControlEnabled, forKey: "agentsControlEnabled") } }
     /// Tarayıcıda canlı ofis (aynı yerel dinleyicide GET yolları). Varsayılan kapalı; kapalıyken GET'ler 404.
     var agentsWebEnabled: Bool { didSet { d.set(agentsWebEnabled, forKey: "agentsWebEnabled") } }
+    /// Ofiste dolaşan kedi (yalnızca ofis görünürken çalışır). Varsayılan AÇIK; kapalıyken kedi hiç oluşturulmaz.
+    var officeCatEnabled: Bool { didSet { d.set(officeCatEnabled, forKey: OfficeCat.defaultsKey) } }
     /// Dinleyicinin kalıcı rastgele portu; 0 = henüz seçilmedi.
     var agentsPort: Int { didSet { d.set(agentsPort, forKey: "agentsPort") } }
     /// Uyarılar nasıl gelsin: uygulama içi (varsayılan), sistem bildirimi ya da ikisi (NOTIF-01).
@@ -112,6 +114,7 @@ final class Preferences {
         agentsWebEnabled = d.bool(forKey: "agentsWebEnabled")
         agentsControlEnabled = d.bool(forKey: "agentsControlEnabled")
         agentsPort = d.integer(forKey: "agentsPort")
+        officeCatEnabled = OfficeCat.storedEnabled(d)
         alertDelivery = d.string(forKey: "alertDelivery").flatMap(AlertDelivery.init(rawValue:)) ?? .system // önceki davranış: uyarılar sistem bildirimiydi
         menuBar = MenuBarConfigStore(defaults: d)
         panel = PanelConfigStore(defaults: d)

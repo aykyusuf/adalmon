@@ -41,6 +41,8 @@ struct LimitHeroCard: View {
             case .data(let display):
                 LimitHeroWindows(display: display, snapshot: snapshot, entrance: entrance, delay: delay, previewTilt: previewTilt)
                     .opacity(display.isStale ? 0.72 : 1)
+                LimitModelUsageSection(source: section.source, usage: snapshot.modelUsage[section.source], kinds: display.windows.map(\.kind),
+                                       entrance: entrance, now: snapshot.now)
             case .empty(let reason):
                 LimitEmptyHero(source: section.source, reason: reason, openSettings: openSettings, entrance: entrance)
             }
@@ -95,16 +97,20 @@ private struct LimitHeroHeader: View {
         }
     }
 
+    /// Sağlayıcının kendi logosu (marka renginde), nötr cam bir plakada.
     private func glyph(_ brand: Color) -> some View {
-        Image(systemName: LimitStyle.symbol(source))
-            .font(.system(size: 20, weight: .bold))
-            .foregroundStyle(.white)
-            .frame(width: 46, height: 46)
-            .background(LinearGradient(colors: [brand.mix(with: .white, by: 0.25), brand.mix(with: .black, by: 0.18)],
-                                       startPoint: .topLeading, endPoint: .bottomTrailing), in: .rect(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.white.opacity(0.35), lineWidth: 1))
-            .shadow(color: brand.opacity(0.45), radius: 8, x: -tilt.width * 4, y: 4 - tilt.height * 3)
-            .offset(x: tilt.width * 3, y: tilt.height * 3)
+        let plate = RoundedRectangle(cornerRadius: 14)
+        let shadowX: CGFloat = -tilt.width * 4
+        let shadowY: CGFloat = 4 - tilt.height * 3
+        let shiftX: CGFloat = tilt.width * 3
+        let shiftY: CGFloat = tilt.height * 3
+        let logo = BrandLogo(source: source, size: 26).frame(width: 46, height: 46)
+        let framed = logo
+            .background(Color.primary.opacity(0.07), in: plate)
+            .overlay(plate.strokeBorder(brand.opacity(0.45), lineWidth: 1))
+        return framed
+            .shadow(color: brand.opacity(0.35), radius: 8, x: shadowX, y: shadowY)
+            .offset(x: shiftX, y: shiftY)
             .accessibilityHidden(true)
     }
 
@@ -147,21 +153,22 @@ private struct LimitHeroWindows: View {
     let previewTilt: CGSize?
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 14) { cells }
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 14) { cells }
+        if display.windows.count > 1 {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) { cells }
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 14) { cells }
+            }
+        } else {
+            cells
         }
     }
 
     @ViewBuilder private var cells: some View {
-        ForEach(Array(LimitWindowKind.allCases.enumerated()), id: \.element) { index, kind in
-            if let window = display.window(kind) {
-                LimitHeroWindowCell(source: display.source, window: window, now: snapshot.now, entrance: entrance,
+        // Verisi hiç gelmeyen pencere (ör. Claude Ultra'da 5 saatlik) çizilmez; kalan kart tüm genişliği kullanır.
+        ForEach(Array(display.windows.enumerated()), id: \.element.kind) { index, window in
+            LimitHeroWindowCell(source: display.source, window: window, now: snapshot.now, entrance: entrance,
                                 delay: delay + 0.18 + 0.12 * Double(index), previewTilt: previewTilt)
-            } else {
-                LimitMissingCell(source: display.source, kind: kind)
-            }
         }
     }
 }
@@ -247,25 +254,6 @@ struct LimitHeroWindowCell: View {
         if let countdown = window.countdownText(now: now) { parts.append("\(countdown) sonra yenilenir") }
         if let forecast = window.forecast { parts.append(LimitForecastFormat.cardLine(forecast, kind: window.kind, now: now)) }
         return parts.joined(separator: ", ")
-    }
-}
-
-private struct LimitMissingCell: View {
-    let source: LimitSource
-    let kind: LimitWindowKind
-
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text(kind.windowTitle.uppercased()).font(.caption.weight(.bold)).tracking(0.6).foregroundStyle(.secondary)
-            LimitRing3D(fraction: 0, tone: .muted, source: source, diameter: 128, lineWidth: 14, label: "—", entrance: false)
-                .padding(.bottom, 16)
-            Text("Bu pencere için veri gelmedi").font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color.primary.opacity(scheme == .dark ? 0.06 : 0.045), in: .rect(cornerRadius: 18))
     }
 }
 

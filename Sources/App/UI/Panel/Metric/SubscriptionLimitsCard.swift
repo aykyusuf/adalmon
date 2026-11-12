@@ -53,8 +53,7 @@ private struct ProviderLimitsRows: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
-                Image(systemName: LimitStyle.symbol(display.source))
-                    .font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                BrandLogo(source: display.source, size: 12)
                 Text(display.source.displayName).font(.callout.weight(.semibold))
                 Spacer(minLength: 4)
                 if display.isStale {
@@ -66,10 +65,9 @@ private struct ProviderLimitsRows: View {
                 }
             }
             HStack(alignment: .top, spacing: 8) {
-                ForEach(LimitWindowKind.allCases) { kind in
-                    if let window = display.window(kind) {
-                        LimitWindowCell(window: window, now: now, entrance: entrance)
-                    }
+                // Verisi gelmeyen pencere gösterilmez; kalan hücre tüm genişliği kullanır.
+                ForEach(display.windows) { window in
+                    LimitWindowCell(window: window, now: now, entrance: entrance)
                 }
             }
         }

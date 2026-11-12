@@ -13,6 +13,7 @@ struct LicensesSection: View {
                 }
             }
             Text(ThirdPartyNotice.lgplStatement).font(.caption).foregroundStyle(.secondary)
+            Text(ThirdPartyNotice.trademarkStatement).font(.caption).foregroundStyle(.secondary)
         }
     }
 }

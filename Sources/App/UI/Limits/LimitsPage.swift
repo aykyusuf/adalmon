@@ -13,8 +13,8 @@ struct LimitsPage: View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             LimitsPageContent(snapshot: model.snapshot(agentsEnabled: agentsEnabled, now: context.date), openSettings: openSettings)
         }
-        .onAppear { model.addViewer() }
-        .onDisappear { model.removeViewer() }
+        .onAppear { model.addViewer(); model.addUsageViewer() }
+        .onDisappear { model.removeViewer(); model.removeUsageViewer() }
     }
 }
 
@@ -47,7 +47,7 @@ struct LimitsPageContent: View {
                     }
                     LimitTimelineCard(snapshot: snapshot, entrance: entrance)
                         .limitEntrance(appeared, index: 2)
-                    LimitThresholdFooter(thresholds: snapshot.thresholds, openSettings: openSettings)
+                    LimitThresholdFooter(thresholds: snapshot.thresholds, kinds: snapshot.visibleKinds, openSettings: openSettings)
                         .limitEntrance(appeared, index: 3)
                 }
                 // Eğilen kartların ve gölgelerin kesilmemesi için pay.
@@ -76,6 +76,7 @@ struct LimitsPageContent: View {
 /// Eşikler, bildirim durumu ve Ayarlar bağlantısı.
 struct LimitThresholdFooter: View {
     let thresholds: LimitAlertThresholds
+    var kinds: [LimitWindowKind] = LimitWindowKind.allCases
     let openSettings: () -> Void
 
     var body: some View {
@@ -109,7 +110,7 @@ struct LimitThresholdFooter: View {
     }
 
     @ViewBuilder private var cards: some View {
-        ForEach(LimitWindowKind.allCases) { kind in
+        ForEach(kinds) { kind in
             let warn = kind == .fiveHour ? thresholds.fiveHourWarn : thresholds.weeklyWarn
             let critical = kind == .fiveHour ? thresholds.fiveHourCritical : thresholds.weeklyCritical
             HStack(spacing: 10) {

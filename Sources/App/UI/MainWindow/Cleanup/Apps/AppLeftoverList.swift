@@ -1,49 +1,28 @@
 import AppKit
 import SwiftUI
 
-/// Sağ bölme: seçili uygulamanın artıkları (onay kutularıyla) ve uyarıları.
-struct AppLeftoverList: View {
+/// Seçili uygulama kartının açılan içeriği: uyarılar, "uygulamanın kendisi" ve artıklar (onay kutularıyla).
+/// Tam bundle kimliği eşleşenler seçili gelir; ada göre eşleşenler seçili gelmez (model karar verir).
+struct AppLeftoverDetail: View {
     @Bindable var model: UninstallerModel
+    let app: InstalledApp
 
     var body: some View {
-        if let app = model.selectedApp {
-            VStack(alignment: .leading, spacing: 0) {
-                header(app)
-                    .padding(12)
-                Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        notes(app)
-                        bundleRow(app)
-                        leftoverGroups(app)
-                    }
-                    .padding(12)
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            Divider()
+            notes
+            bundleRow
+            leftoverGroups
+            HStack {
+                Spacer()
+                Button("Finder'da göster", systemImage: "magnifyingglass") { reveal(app.path) }
+                    .buttonStyle(.borderless).font(.caption)
             }
-        } else {
-            ContentUnavailableView("Uygulama seçin", systemImage: "app.badge.checkmark",
-                                   description: Text("Soldaki listeden bir uygulama seçince artıkları burada görünür."))
-        }
-    }
-
-    private func header(_ app: InstalledApp) -> some View {
-        HStack(spacing: 12) {
-            AppIconView(path: app.path, size: 48)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(app.name).font(.title3.bold()).lineLimit(1)
-                Text([app.version.map { "Sürüm \($0)" }, Format.bytes(app.bytes)].compactMap { $0 }.joined(separator: " · "))
-                    .foregroundStyle(.secondary)
-                Text(FolderWatchList.displayPath(app.path, home: model.home))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-            }
-            Spacer(minLength: 8)
-            Button("Finder'da göster", systemImage: "magnifyingglass") { reveal(app.path) }
-                .buttonStyle(.borderless)
         }
     }
 
     @ViewBuilder
-    private func notes(_ app: InstalledApp) -> some View {
+    private var notes: some View {
         if model.isRunning(app) {
             noteBox(icon: "exclamationmark.triangle.fill", color: .orange,
                     text: "\(app.name) şu an açık. Kaldırmak için önce uygulamayı kapatın; açıkken hiçbir şeye dokunulmaz.") {
@@ -57,12 +36,11 @@ struct AppLeftoverList: View {
         }
     }
 
-    @ViewBuilder
-    private func bundleRow(_ app: InstalledApp) -> some View {
+    private var bundleRow: some View {
         let allowed = app.removalBlock == nil && !model.isRunning(app)
-        Toggle(isOn: Binding(get: { model.includeBundle && allowed }, set: { model.includeBundle = $0 })) {
+        return Toggle(isOn: Binding(get: { model.includeBundle && allowed }, set: { model.includeBundle = $0 })) {
             HStack {
-                Text("Uygulamanın kendisi")
+                Text("Uygulamanın kendisi").font(.callout.weight(.medium))
                 Spacer(minLength: 8)
                 Text(Format.bytes(app.bytes)).foregroundStyle(.secondary).monospacedDigit()
             }
@@ -72,19 +50,22 @@ struct AppLeftoverList: View {
     }
 
     @ViewBuilder
-    private func leftoverGroups(_ app: InstalledApp) -> some View {
+    private var leftoverGroups: some View {
         if app.leftovers.isEmpty {
-            ResourceEmptyNote(text: "Bu uygulamaya ait artık dosya bulunamadı. Yalnızca tam bundle kimliği ya da tam uygulama adı eşleşenler listelenir.")
+            Text("Bu uygulamaya ait artık dosya bulunamadı. Yalnızca tam bundle kimliği ya da tam uygulama adı eşleşenler listelenir.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         } else {
             HStack {
-                Text("Artıklar (\(app.leftovers.count) öğe · \(Format.bytes(app.leftoverBytes)))").font(.headline).foregroundStyle(.secondary)
+                Text("Artıklar · \(app.leftovers.count) öğe · \(Format.bytes(app.leftoverBytes))")
+                    .font(.callout.weight(.medium)).foregroundStyle(.secondary)
                 Spacer()
                 Button("Tümünü seç") { model.leftoverSelection = Set(app.leftovers.map(\.path)) }.buttonStyle(.borderless)
                 Button("Hiçbiri") { model.leftoverSelection = [] }.buttonStyle(.borderless)
             }
-            ForEach(groups(of: app), id: \.title) { group in
+            .font(.caption)
+            ForEach(groups, id: \.title) { group in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(group.title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(group.title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     ForEach(group.items) { item in
                         LeftoverRow(item: item, home: model.home, isOn: Binding(
                             get: { model.leftoverSelection.contains(item.path) },
@@ -96,7 +77,7 @@ struct AppLeftoverList: View {
         }
     }
 
-    private func groups(of app: InstalledApp) -> [(title: String, items: [DeletionCandidate])] {
+    private var groups: [(title: String, items: [DeletionCandidate])] {
         var order: [String] = []
         var map: [String: [DeletionCandidate]] = [:]
         for item in app.leftovers {

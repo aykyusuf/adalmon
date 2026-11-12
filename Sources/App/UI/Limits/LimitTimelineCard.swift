@@ -19,11 +19,7 @@ struct LimitTimelineCard: View {
     let snapshot: LimitsSnapshot
     var entrance = true
 
-    private var rows: [(source: LimitSource, window: LimitWindowDisplay)] {
-        snapshot.sections.flatMap { section -> [(source: LimitSource, window: LimitWindowDisplay)] in
-            (section.display?.windows ?? []).filter { !$0.isReset && $0.resetsAt != nil }.map { (section.source, $0) }
-        }
-    }
+    private var rows: [(source: LimitSource, window: LimitWindowDisplay)] { LimitsPresentation.timelineRows(snapshot) }
 
     var body: some View {
         LimitSectionCard {

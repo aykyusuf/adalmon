@@ -10,13 +10,6 @@ enum LimitStyle {
         case .muted: .secondary
         }
     }
-
-    static func symbol(_ source: LimitSource) -> String {
-        switch source {
-        case .claude: "sparkle"
-        case .codex: "chevron.left.forwardslash.chevron.right"
-        }
-    }
 }
 
 /// Dairesel gösterge. Pil kuralı: sürekli animasyon yok; dolum yalnızca ilk görünüşte (bir kez) ve değer değişince yumuşakça animasyonlanır.

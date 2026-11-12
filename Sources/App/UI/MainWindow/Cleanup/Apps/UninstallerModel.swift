@@ -146,6 +146,11 @@ final class UninstallerModel {
         }
     }
 
+    /// Yalnızca önizleme / test: tarama ekranını verilen ilerlemeyle gösterir (gerçek tarama başlatmaz).
+    func showScanningForPreview(done: Int, total: Int) {
+        phase = .scanning(done: done, total: total)
+    }
+
     func cancel() {
         scanTask?.cancel()
         scanTask = nil

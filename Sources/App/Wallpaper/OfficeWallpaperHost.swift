@@ -50,6 +50,9 @@ final class OfficeWallpaperHost {
         let oldBackground = options.background
         options.background = newOptions.background   // ışık değişimi "Otomatik" arka planı yeni seçimle çözsün
         if newTheme != theme { theme = newTheme; scene.setTheme(newTheme); changed = true }
+        // Ofis kedisi: aynı tercih (varsayılan açık); her yapılandırmada okunur, kapalıyken sahnede hiç oluşturulmaz.
+        let wantCat = OfficeCat.storedEnabled()
+        if wantCat != (scene.cat != nil) { scene.setCat(enabled: wantCat); changed = true }
         if newOptions.lighting != options.lighting || scene.wallpaperLabels == nil {
             scene.setLightingMode(newOptions.lighting, animated: false); changed = true
         }

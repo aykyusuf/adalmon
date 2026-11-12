@@ -74,6 +74,7 @@ struct OfficeSceneView: NSViewRepresentable {
     @Binding var selectedRoom: String?
     var lightingMode: OfficeLightingMode = .auto
     var theme: OfficeTheme = .default
+    var catEnabled = true
     var panoActive = false
     @Binding var card: OfficeDetailCard?
     /// Üst katmanın sahneye komut vermesi (küçültme animasyonu) ve oda üzerine gelme bildirimi.
@@ -93,6 +94,7 @@ struct OfficeSceneView: NSViewRepresentable {
         var knownLighting: OfficeLightingMode?
         var knownTheme: OfficeTheme?
         var knownPano: Bool?
+        var knownCat: Bool?
         /// Bağlamaya son yazılan kart (kapat düğmesi bağlamayı nil yapınca sahneyi de kapatmak için).
         var pushedCard: OfficeDetailCard?
 
@@ -201,6 +203,8 @@ struct OfficeSceneView: NSViewRepresentable {
         scene.setBackdropStyle(.themed)
         scene.panoMode = panoActive
         coordinator.knownPano = panoActive
+        scene.setCat(enabled: catEnabled)
+        coordinator.knownCat = catEnabled
         coordinator.scene = scene
         view.onVisibilityChange = { [weak coordinator] in coordinator?.refreshRunState() }
         view.presentScene(scene)
@@ -218,6 +222,11 @@ struct OfficeSceneView: NSViewRepresentable {
         if c.knownTheme != theme {
             c.knownTheme = theme
             scene.setTheme(theme)
+            c.refreshRunState()
+        }
+        if c.knownCat != catEnabled {
+            c.knownCat = catEnabled
+            scene.setCat(enabled: catEnabled)
             c.refreshRunState()
         }
         if c.knownPano != panoActive {

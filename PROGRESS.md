@@ -1,5 +1,7 @@
 # Adalmon: progress
 
+**2026-11-12 (öğleden sonra, 2)** — Temizlik yeniden tasarımı (sihirbaz + 3D kit), Limitler model dağılımı + logolar + % zıplama düzeltmesi, ofis kedisi; Windows/sunucu kararları alındı.
+
 **2026-11-12 (öğlen)** — Limitler ayrı sayfa (plan + 3D), Yer kaplayanlar hızlı + 3D, Akıllı tarama tek tıkla build'leri buluyor, test sunucusu artık görünmüyor. 1627 test (2 bilinen kararsız), Release kuruldu.
 
 **2026-11-12 (öğleden sonra)** — Temizlik tamamlandı (Sistem çöpü, Geliştirici, Kaldırıcı, Büyük & eski, Kopyalar, Gizlilik, Yer kaplayanlar, Başlangıç, Bakım, Akıllı tarama); ofisten izin/soru cevaplama (varsayılan kapalı); Limitler detay sayfası + animasyonlu kart. 1581 test (3 bilinen kararsız), Release kuruldu.

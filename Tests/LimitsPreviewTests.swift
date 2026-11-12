@@ -29,6 +29,28 @@ final class LimitsPreviewTests: XCTestCase {
         [ProviderLimits(source: .codex, fiveHour: window(80, resetsIn: 3600), weekly: window(46, resetsIn: 2 * 86_400), observedAt: now.addingTimeInterval(-5 * 3600))]
     }
 
+    /// Claude Ultra: yalnızca haftalık pencere (5 saatlik yok), Codex tam.
+    private var weeklyOnly: [ProviderLimits] {
+        [ProviderLimits(source: .claude, fiveHour: nil, weekly: window(58, resetsIn: 3 * 86_400 + 4 * 3600), observedAt: now.addingTimeInterval(-90)),
+         ProviderLimits(source: .codex, fiveHour: window(42, resetsIn: 3 * 3600), weekly: window(31, resetsIn: 2 * 86_400), observedAt: now.addingTimeInterval(-240))]
+    }
+
+    /// Sahte model dağılımı: Claude yalnızca haftalık, Codex her iki pencere.
+    private func fakeUsage(_ providers: [ProviderLimits]) -> [LimitSource: ProviderModelUsage] {
+        var result: [LimitSource: ProviderModelUsage] = [:]
+        for provider in providers {
+            let ranges = ModelUsageBuilder.ranges(for: provider, now: now)
+            let models: [ModelAggregate] = provider.source == .claude
+                ? [ModelAggregate(model: "claude-opus-5-5", tokens: ModelTokens(input: 2_900, output: 10_800_000, cacheWrite: 49_300_000, cacheRead: 2_605_000_000), messages: 12_340),
+                   ModelAggregate(model: "claude-sonnet-5-5", tokens: ModelTokens(input: 2_400, output: 13_400_000, cacheWrite: 59_100_000, cacheRead: 2_060_000_000), messages: 11_760),
+                   ModelAggregate(model: "claude-haiku-5-5", tokens: ModelTokens(input: 850, output: 237_000, cacheWrite: 2_700_000, cacheRead: 15_700_000), messages: 402)]
+                : [ModelAggregate(model: "gpt-6.1-sol", tokens: ModelTokens(input: 3_470_000, output: 1_100_000, cacheWrite: 0, cacheRead: 275_000_000), messages: 1_769),
+                   ModelAggregate(model: "gpt-6.1-terra", tokens: ModelTokens(input: 1_260_000, output: 131_000, cacheWrite: 0, cacheRead: 21_400_000), messages: 337)]
+            result[provider.source] = ModelUsageBuilder.build(source: provider.source, ranges: ranges, now: now) { _, _ in models }
+        }
+        return result
+    }
+
     private func fillForecast(_ provider: ProviderLimits, _ kind: LimitWindowKind) -> LimitForecast? {
         guard kind == .fiveHour, let window = provider.window(kind) else { return nil }
         let minutes: Double = provider.source == .claude ? 95 : 40
@@ -36,7 +58,7 @@ final class LimitsPreviewTests: XCTestCase {
                              usedPercent: window.usedPercent, basedOn: now)
     }
 
-    private func snapshot(_ providers: [ProviderLimits], connected: Bool, agents: Bool = true) -> LimitsSnapshot {
+    private func snapshot(_ providers: [ProviderLimits], connected: Bool, agents: Bool = true, usage: Bool = false) -> LimitsSnapshot {
         let thresholds = LimitAlertThresholds()
         var plans: [LimitSource: LimitPlan] = [:]
         if providers.contains(where: { $0.source == .claude }) {
@@ -48,7 +70,7 @@ final class LimitsPreviewTests: XCTestCase {
         return LimitsSnapshot(
             sections: LimitsPresentation.sections(providers: providers, claudeConnected: connected, agentsEnabled: agents, codexEnabled: true,
                                                   thresholds: thresholds, now: now, forecast: fillForecast),
-            thresholds: thresholds, now: now, plans: plans)
+            thresholds: thresholds, now: now, plans: plans, modelUsage: usage ? fakeUsage(providers) : [:])
     }
 
     private func tile(_ providers: [ProviderLimits], connected: Bool) -> OverviewTile? {
@@ -67,7 +89,8 @@ final class LimitsPreviewTests: XCTestCase {
         let dir = URL(filePath: env)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let scenarios: [(String, [ProviderLimits], Bool)] = [("mixed", mixed, true), ("stale", stale, true),
-                                                              ("codexstale", codexStaleOnly, false), ("empty", [], false)]
+                                                              ("codexstale", codexStaleOnly, false), ("empty", [], false),
+                                                              ("weeklyonly", weeklyOnly, true)]
         for dark in [false, true] {
             let mode = dark ? "dark" : "light"
             // Genel bakış karosu: yanındaki normal karolarla aynı boyutta mı?
@@ -94,7 +117,7 @@ final class LimitsPreviewTests: XCTestCase {
             try await render(narrow, name: "limits-card-narrow-\(mode)", dir: dir, size: NSSize(width: 340, height: 130), dark: dark)
             // Sayfa (kenar çubuğu sayfası): geniş (1400 pt pencerenin içerik alanı) ve dar (940 pt pencere); eğimsiz, sabit eğimli ve giriş sonrası.
             for (name, providers, connected) in scenarios {
-                let snap = snapshot(providers, connected: connected)
+                let snap = snapshot(providers, connected: connected, usage: name == "weeklyonly" || name == "mixed")
                 for (sizeName, size) in [("wide", NSSize(width: 1180, height: 900)), ("narrow", NSSize(width: 720, height: 640))] {
                     let page = LimitsPageContent(snapshot: snap, openSettings: {}, entrance: false)
                         .background(Color(nsColor: .windowBackgroundColor))
@@ -106,6 +129,20 @@ final class LimitsPreviewTests: XCTestCase {
             let entering = LimitsPageContent(snapshot: snapshot(mixed, connected: true), openSettings: {})
                 .background(Color(nsColor: .windowBackgroundColor))
             try await render(entering, name: "limits-page-entrance-\(mode)", dir: dir, size: NSSize(width: 1180, height: 900), dark: dark, wait: 2.2)
+            // Logolar (büyük + küçük boyutlar).
+            let logos = HStack(spacing: 28) {
+                ForEach(LimitSource.allCases) { source in
+                    HStack(spacing: 16) {
+                        BrandLogo(source: source, size: 96)
+                        BrandLogo(source: source, size: 46)
+                        BrandLogo(source: source, size: 24)
+                        BrandLogo(source: source, size: 12)
+                    }
+                }
+            }
+            .padding(24)
+            .background(dark ? Color(white: 0.13) : Color(white: 0.96))
+            try await render(logos, name: "limits-logos-\(mode)", dir: dir, size: NSSize(width: 640, height: 150), dark: dark, wait: 0.3)
             // Panel kartı (372 pt).
             for (name, providers, _) in scenarios where !providers.isEmpty {
                 let card = SubscriptionLimitsContent(providers: providers, thresholds: LimitAlertThresholds(), now: now, forecast: fillForecast)

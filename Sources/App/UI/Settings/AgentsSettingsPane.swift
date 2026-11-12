@@ -27,6 +27,12 @@ struct AgentsSettingsPane: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            Section("Ofis") {
+                Toggle("Ofis kedisi", isOn: $prefs.officeCatEnabled)
+                Text("Ofiste dolaşan, masalara zıplayan, uyuyan ve tıklayınca miyavlayan bir kedi. Yalnızca ofis ya da ofis duvar kâğıdı görünürken çalışır; kapalıyken hiç oluşturulmaz. (Tarayıcı görünümünde kedi yok.)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("Tarayıcı görünümü") {
                 Toggle("Tarayıcı görünümünü etkinleştir", isOn: Binding(get: { prefs.agentsWebEnabled }, set: { agents.setWebEnabled($0) }))
                     .disabled(!prefs.agentsEnabled)

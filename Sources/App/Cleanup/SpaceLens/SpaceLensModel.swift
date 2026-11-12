@@ -1,11 +1,12 @@
 import Foundation
 
-/// Yer kaplayanlar: bir klasörün alt ağacını bir kez tarar, treemap için düğüm listesini önbellekten verir. Salt okunurdur (silme yok).
+/// Yer kaplayanlar: bir klasörün alt ağacını bir kez tarar, treemap için düğüm listesini önbellekten verir. Tarama salt okunurdur;
+/// kullanıcı karoları temizlik listesine ekleyip silebilir (yalnızca `CleanupDeleter` ile, tarama köküne bağlı `.descendant` kapsamı).
 /// Tarama yalnızca kullanıcı tıklayınca başlar; içine girme ve geri dönüş önbellekten anında gelir. Düğüm tavanı aşılan (tembel)
 /// seviyeler tıklanınca taranır; görünürken bir sonraki seviye arka planda önceden hazırlanır (zamanlayıcı yok).
 @MainActor @Observable
 final class SpaceLensModel {
-    enum Phase: Equatable { case idle, scanning }
+    enum Phase: Equatable { case idle, scanning, deleting }
 
     let home: String
     let access: CleanupAccessMonitor
@@ -18,6 +19,14 @@ final class SpaceLensModel {
     private(set) var lastState: CleanupRootState = .scanned
     /// Görünür sayfa bir sonraki seviyeyi önceden hazırlayabilir (sayfa kapanınca kapatılır).
     private(set) var prefetchEnabled = false
+    /// Temizlik listesi (tarama başlayınca / yeniden taranınca sıfırlanır).
+    private(set) var selection = SpaceLensSelection()
+    private(set) var lastResult: [CleanupResult]?
+    private(set) var lastMode: DeleteMode = .trash
+    @ObservationIgnored private var guardRules: SpaceLensGuard?
+    @ObservationIgnored private var deleteTask: Task<Void, Never>?
+    @ObservationIgnored private let deleter: CleanupDeleter
+    @ObservationIgnored private let identity: @Sendable (String) -> (dev: Int32, ino: UInt64)?
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var prefetchTask: Task<Void, Never>?
@@ -32,8 +41,11 @@ final class SpaceLensModel {
     static let prefetchCount = 3
 
     init(home: String = NSHomeDirectory(), probe: PathProbe = .live, scanner: (any SpaceTreeScanning)? = nil,
-         cacheNodeLimit: Int = SpaceLensScanner.defaultMaxStoredNodes * 2) {
+         cacheNodeLimit: Int = SpaceLensScanner.defaultMaxStoredNodes * 2, deleter: CleanupDeleter? = nil,
+         identity: @escaping @Sendable (String) -> (dev: Int32, ino: UInt64)? = SpaceLensIdentity.live) {
         self.home = home
+        self.deleter = deleter ?? CleanupDeleter(home: home)
+        self.identity = identity
         self.scanner = scanner ?? SpaceLensScanner(home: home, probe: probe)
         self.cacheNodeLimit = cacheNodeLimit
         access = CleanupAccessMonitor(home: home, probe: probe)
@@ -61,7 +73,19 @@ final class SpaceLensModel {
         cancelPrefetch()
         invalidate(root)
         trail = []
+        clearSelection()
+        guardRules = SpaceLensGuard(root: root, home: home)
         open(root, pushing: true)
+    }
+
+    /// Karşılama ekranına dönüş: önbellek, seçim ve sonuçlar atılır.
+    func reset() {
+        guard !isBusy else { return }
+        cancel()
+        trail = []
+        cache = [:]
+        guardRules = nil
+        clearSelection()
     }
 
     /// Klasörün içine girer: önbellekte varsa anında; yoksa (tembel seviye) tarar.
@@ -116,10 +140,11 @@ final class SpaceLensModel {
 
     /// Tamamlanana kadar bekler (testler için).
     func waitUntilIdle() async {
-        while let running = task ?? prefetchTask {
+        while let running = task ?? prefetchTask ?? deleteTask {
             await running.value
             if task == running { task = nil }
             if prefetchTask == running { prefetchTask = nil }
+            if deleteTask == running { deleteTask = nil }
         }
     }
 
@@ -158,6 +183,7 @@ final class SpaceLensModel {
     func rescan() {
         guard let current, !isBusy else { return }
         cancelPrefetch()
+        clearSelection()
         invalidate(current)
         open(current, pushing: false)
     }
@@ -260,5 +286,110 @@ final class SpaceLensModel {
         prefetchTask = nil
         prefetchingPath = nil
         prefetch()
+    }
+
+    // MARK: Temizlik listesi
+
+    /// Taramanın kökü (temizlik kapsamı).
+    var scanRoot: String? { trail.first }
+
+    var markedBytes: UInt64 { selection.totalBytes }
+
+    func isMarked(_ path: String) -> Bool { selection.contains(path) }
+
+    /// Seçili bir üst klasörün kapsadığı öğe (ayrıca seçilemez ama silinecek sayılır).
+    func isCovered(_ path: String) -> Bool { selection.coveringAncestor(of: path) != nil }
+
+    /// Öğe temizlik listesine eklenemiyorsa nedeni (karoda/listede gösterilir); eklenebiliyorsa nil.
+    func markRefusal(for node: SpaceNode) -> String? {
+        guard node.isMeasured else { return "Boyutu bilinmiyor" }
+        guard let guardRules else { return "Tarama yok" }
+        return guardRules.refusal(for: node.path)
+    }
+
+    func canMark(_ node: SpaceNode) -> Bool { markRefusal(for: node) == nil }
+
+    /// Seçili değilse ekler, seçiliyse çıkarır.
+    @discardableResult
+    func toggleMark(_ node: SpaceNode) -> SpaceMarkOutcome {
+        guard !isBusy else { return .blocked("Meşgul") }
+        if selection.contains(node.path) {
+            selection.remove(node.path)
+            return .unmarked
+        }
+        if selection.coveringAncestor(of: node.path) != nil { return .blocked("Üst klasör zaten seçili") }
+        if let reason = markRefusal(for: node) { return .blocked(reason) }
+        guard let id = identity(node.path) else { return .blocked("Artık yok") }
+        selection.add(SpaceMark(path: node.path, bytes: node.bytes, isFolder: node.isFolder, dev: id.dev, ino: id.ino))
+        return .marked
+    }
+
+    func clearSelection() {
+        selection.removeAll()
+        lastResult = nil
+    }
+
+    /// Seçili öğelerin silme adayları: tarama köküne bağlı `.descendant` kapsamı (kök kendisi, korunan konumlar deleter'da da reddedilir).
+    func candidates() -> [DeletionCandidate] {
+        guard let root = scanRoot ?? guardRules?.root else { return [] }
+        return selection.items.map { mark in
+            DeletionCandidate(path: mark.path, dev: mark.dev, ino: mark.ino, bytes: mark.bytes, kind: "lens.selection",
+                              scope: .descendant(roots: [root], nameAllowlist: nil), displayName: mark.name)
+        }
+    }
+
+    /// Seçili öğeleri siler (varsayılan Çöp; kalıcı yalnızca onay akışından sonra). Bitince önbellekteki ağaç güncellenir.
+    func deleteMarked(mode: DeleteMode) {
+        let items = candidates()
+        guard !items.isEmpty, !isBusy else { return }
+        phase = .deleting
+        lastResult = nil
+        let deleter = deleter
+        deleteTask = Task.detached(priority: .utility) { [weak self] in
+            let results = deleter.delete(items, mode: mode)
+            await MainActor.run { [weak self] in self?.deleteFinished(results, mode: mode) }
+        }
+    }
+
+    func deleteFinished(_ results: [CleanupResult], mode: DeleteMode) {
+        let removed = results.filter(\.isRemoved)
+        for result in removed { applyRemoval(path: result.candidate.path, bytes: result.candidate.bytes) }
+        let removedPaths = removed.map(\.candidate.path)
+        if let cut = trail.firstIndex(where: { step in removedPaths.contains { step == $0 || step.hasPrefix($0 + "/") } }), cut > 0 {
+            trail = Array(trail.prefix(cut))
+        }
+        selection.removeAll()
+        lastResult = results
+        lastMode = mode
+        deleteTask = nil
+        phase = .idle
+    }
+
+    /// Son silmede kaldırılan öğe sayısı, boyutu ve atlananlar.
+    var lastFreed: (count: Int, bytes: UInt64, skipped: Int)? {
+        guard let lastResult else { return nil }
+        let moved = lastResult.filter(\.isRemoved)
+        return (moved.count, moved.reduce(UInt64(0)) { $0 + $1.candidate.bytes }, lastResult.count - moved.count)
+    }
+
+    /// Silinen öğeyi önbellekten düşer; üst klasörlerin boyutu aynı miktar azalır (yeniden tarama gerekmez).
+    private func applyRemoval(path: String, bytes: UInt64) {
+        guard let root = trail.first else { return }
+        var child = path
+        while child != root {
+            let parent = (child as NSString).deletingLastPathComponent
+            if parent == child { break }
+            if let dir = cache[parent], let node = dir.nodes.first(where: { $0.path == child }) {
+                if child == path {
+                    cache[parent] = SpaceDir(nodes: dir.nodes.filter { $0.path != child }, otherBytes: dir.otherBytes, otherCount: dir.otherCount)
+                } else {
+                    cache[parent] = dir.replacingFolder(child, bytes: node.bytes >= bytes ? node.bytes - bytes : 0) ?? dir
+                }
+            }
+            child = parent
+        }
+        let prefix = path + "/"
+        cache = cache.filter { $0.key != path && !$0.key.hasPrefix(prefix) }
+        prefetchAttempted.removeAll()
     }
 }

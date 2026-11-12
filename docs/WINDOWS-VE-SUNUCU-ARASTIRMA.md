@@ -229,6 +229,13 @@ Hook'lar orada çalışır (`CLAUDE_CODE_REMOTE=true`) ama yerel kullanıcı aya
 5. **Adres:** Adaltek-1'de yeni alt alan adı + nginx server bloğu (alan adı kullanıcıdan bekleniyor; DNS ve sertifika gerekir). **Windows:** Claude Code native, hook `shell: powershell` + `curl.exe`. **Gizlilik:** proje/oturum adı olduğu gibi gider, maskeleme sonra ayar olarak.
 6. Sunucu (`adaltek_legacy`, salt okunur bakıldı): Ubuntu 24.04, 7,7 GB RAM, disk %83, Postgres/Redis ve çok sayıda servis çalışıyor, canlı iş sunucusu. Basit API orada yazılabilir ama küçük kalmalı (ayrı pm2 süreci, nginx arkasında, boş bir port).
 
+### Kararlar (2026-11-12)
+
+7. **Alan adı:** `api-adalmon.adaltek.com` (kullanıcı: "olabilir, değişebiliriz sonra").
+8. **Sunucu kurulumu:** ana oturum SSH ile yapar, adım adım, her değişiklikten (nginx reload dahil) önce kullanıcı onayı; ayrı pm2 süreci + boş port + yeni nginx bloğu; mevcut servislere dokunulmaz.
+9. **Faz 0 Windows denemesi:** kullanıcı Windows PC'de bir Claude oturumu açar; ana oturum o oturuma verilecek talimatı (test komutları + beklenen çıktı) yazar, kullanıcı iletir ve sonucu getirir.
+10. **Uzak kapsam:** görüntüleme (Faz 1) + Mac oturumları da sunucuya gönderilsin (Faz 2 için) + **uzaktan izin/soru cevaplama** (kullanıcı istedi; ayrı faz, güvenlik tasarımı şart: sunucu üzerinden onay yolu, cihaz başına token, onay yalnızca Mac Adalmon içindeki tıklamayla, sunucu yalnız iletir). Uzak limitler gerekmez: abonelik hesap genelinde aynı, Mac zaten aynı yüzdeyi gösteriyor (farklı hesap kullanılırsa yeniden bakılır).
+
 ## 9. Doğrulanmayanlar (uygulamadan önce denenmeli)
 
 - `http` hook'un async/arka plan çalıştırma desteği (dokümanın ilgili bölümü okunamadı).

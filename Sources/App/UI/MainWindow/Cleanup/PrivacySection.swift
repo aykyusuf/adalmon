@@ -1,48 +1,66 @@
 import AppKit
 import SwiftUI
 
-/// Gizlilik: Chrome, Edge ve Safari için geçmiş ve çerezleri ayrı ayrı temizler. Yalnızca Tara'ya basınca okur;
-/// açık tarayıcı reddedilir. Silme Çöp Sepeti'ne gider (kalıcı silme işlem başına, iki onayla).
+/// Gizlilik sihirbazı: karşılama → tarama → tarayıcı kartları (geçmiş / çerezler seçimi) → bitti.
+/// Chrome, Edge ve Safari; yalnızca Tara'ya basınca okur. Açık tarayıcı reddedilir, yer imleri ve kayıtlı parolalar
+/// hiçbir koşulda listelenmez ya da silinmez. Silme Çöp Sepeti'ne gider (kalıcı silme işlem başına, iki onayla).
 struct PrivacySection: View {
-    @State private var vm = BrowserPrivacyViewModel()
-    @State private var pending: PendingPrivacyDeletion?
+    @State private var vm: BrowserPrivacyViewModel
+    @State private var confirm: PrivacyConfirmRequest?
     @State private var helpReason: AccessReason?
-    @State private var showDetails = false
+    @State private var isRunning = false
+    @State private var runTask: Task<Void, Never>?
+    @State private var freed: PrivacyFreed?
+    @State private var showDone = false
+    @State private var showSkipped = false
+    private let forceScanning: Bool
+
+    private let accent = CleanupAccent.privacy
+
+    init() {
+        _vm = State(initialValue: BrowserPrivacyViewModel())
+        forceScanning = false
+    }
+
+    /// Önizleme testleri için: modeli ve başlangıç adımını (tarama ya da bitti) doğrudan verir.
+    init(vm: BrowserPrivacyViewModel, startFreed: PrivacyFreed? = nil, forceScanning: Bool = false) {
+        _vm = State(initialValue: vm)
+        _freed = State(initialValue: startFreed)
+        _showDone = State(initialValue: startFreed != nil)
+        self.forceScanning = forceScanning
+    }
+
+    private var step: CleanupWizardStep {
+        if forceScanning { .scanning }
+        else if showDone { .done }
+        else if vm.phase == .scanning && !isRunning { .scanning }
+        else if !vm.hasScanned { .welcome }
+        else { .result }
+    }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                topRow
-                Text(vm.deleteMode == .trash
-                     ? "Silinen dosyalar Çöp Sepeti'ne taşınır. Yer, Çöp Sepeti boşaltılınca açılır."
-                     : "Kalıcı silme seçili: dosyalar Çöp Sepeti'ne gitmez, geri alınamaz. İşlemden sonra Çöp'e taşımaya döner.")
-                    .font(.caption).foregroundStyle(vm.deleteMode == .trash ? Color.secondary : Color.red)
-                if let result = vm.lastResult { banner(result) }
-                if !vm.hasScanned {
-                    ResourceEmptyNote(text: "Tarayıcı geçmişi ve çerezlerini görmek için Tara'ya basın. Tarama yalnızca siz isteyince yapılır. Yer imleri ve kayıtlı parolalar listelenmez, silinmez.")
-                }
-                ForEach(PrivacyBrowser.allCases) { browser in
-                    if let scan = vm.scan(for: browser) {
-                        BrowserPrivacyCard(vm: vm, browser: browser, scan: scan,
-                                           onHelp: { helpReason = $0 },
-                                           onDelete: { pending = vm.requestDeletion(of: browser) })
-                    }
-                }
-            }
-            .padding(.bottom, 8)
+        CleanupWizard(step: step) {
+            welcome
+        } scanning: {
+            scanning
+        } result: {
+            result
+        } done: {
+            done
         }
         .onAppear { vm.access.resume() }
         .onDisappear {
+            runTask?.cancel()
             vm.cancel()
             vm.access.stop()
             vm.resetMode()
         }
-        .sheet(item: $pending) { request in
+        .sheet(item: $confirm) { request in
             PrivacyConfirmSheet(request: request, mode: vm.deleteMode, home: vm.home, onConfirm: { mode in
-                pending = nil
-                vm.perform(request, mode: mode)
+                confirm = nil
+                start(request, mode: mode)
             }, onCancel: {
-                pending = nil
+                confirm = nil
                 vm.resetMode()
             })
         }
@@ -51,172 +69,134 @@ struct PrivacySection: View {
         }
     }
 
-    private var topRow: some View {
-        HStack(spacing: 10) {
-            if vm.phase == .scanning {
-                ProgressView().controlSize(.small)
-                Text("Taranıyor…").foregroundStyle(.secondary)
-                Button("Durdur") { vm.cancel() }
-            } else {
-                Button("Tara", systemImage: "magnifyingglass") { vm.scan() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(vm.isBusy)
-            }
-            Spacer(minLength: 8)
-            if vm.phase == .deleting { ProgressView().controlSize(.small) }
-            Picker("Silme yöntemi", selection: $vm.deleteMode) {
-                Text("Çöp'e taşı").tag(DeleteMode.trash)
-                Text("Kalıcı sil").tag(DeleteMode.permanent)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .disabled(vm.isBusy)
-            .help("Kalıcı silme yalnızca bu işlem içindir; sonra Çöp'e taşımaya döner.")
+    // MARK: 1. Karşılama
+
+    private var welcome: some View {
+        CleanupHero3D(symbol: "hand.raised.fill", accent: accent, badgeSymbol: "lock.fill",
+                      title: "Gizlilik",
+                      subtitle: "Chrome, Edge ve Safari'deki geçmişi ve çerezleri temizler. Yer imleri ve kayıtlı parolalar listelenmez, silinmez.",
+                      primaryTitle: "Tara", primarySymbol: "magnifyingglass") { vm.scan() }
+        accessory: {
+            Text("Tarama yalnızca siz isteyince yapılır. Tarayıcılar açıksa önce kapatmanız gerekir.")
+                .font(.callout).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 420)
         }
     }
 
-    private func banner(_ results: [CleanupResult]) -> some View {
-        let moved = results.filter(\.isRemoved)
-        let skipped = results.filter { !$0.isRemoved }
-        let bytes = moved.reduce(UInt64(0)) { $0 + $1.candidate.bytes }
-        let verb = vm.lastMode == .trash ? "Çöp Sepeti'ne taşındı" : "kalıcı olarak silindi"
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("\(moved.count) dosya \(verb) (\(Format.bytes(bytes))). \(skipped.count) atlandı.", systemImage: "checkmark.circle")
-                Spacer()
-                if !skipped.isEmpty {
-                    Button(showDetails ? "Gizle" : "Ayrıntılar") { showDetails.toggle() }.buttonStyle(.borderless)
+    // MARK: 2. Tarama
+
+    private var scanning: some View {
+        CleanupScanProgress(accent: accent, symbol: "hand.raised.fill", title: "Tarayıcılar taranıyor…",
+                            detail: PrivacyBrowser.allCases.map(\.shortName).joined(separator: ", ")) { vm.cancel() }
+    }
+
+    // MARK: 3. Sonuç
+
+    private var result: some View {
+        let shown = PrivacyBrowser.allCases.compactMap { browser in vm.scan(for: browser).map { (browser, $0) } }
+        let found = shown.reduce(UInt64(0)) { $0 + ($1.1.state == .scanned ? $1.1.files.reduce(0) { $0 + $1.bytes } : 0) }
+        let hasProblem = shown.contains { $0.1.state == .running || $0.1.state == .noAccess }
+        let anyData = shown.contains { $0.1.state != .notFound }
+        return VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if found == 0 && !hasProblem {
+                        CleanupAllCleanView(
+                            accent: accent,
+                            subtitle: anyData ? "Silinecek geçmiş ya da çerez bulunamadı." : "Desteklenen bir tarayıcı bulunamadı.",
+                            primaryTitle: "Yeniden tara", onPrimary: { vm.scan() }, compact: true)
+                    } else {
+                        CleanupResultHeader(bytes: found, caption: "tarayıcı izi bulundu", accent: accent,
+                                            notes: ["Silmek istediklerinizi seçin. Yer imleri ve kayıtlı parolalar listelenmez, silinmez."])
+                    }
+                    ForEach(shown, id: \.0) { browser, scan in
+                        PrivacyBrowserGroup(vm: vm, browser: browser, scan: scan, isBusy: isBusyNow,
+                                            onHelp: { helpReason = $0 })
+                    }
+                    if let freed, !freed.skipped.isEmpty { skippedCard(freed.skipped) }
                 }
+                .padding(.bottom, 10)
             }
-            if showDetails {
+            .scrollIndicators(.never)
+            if found > 0 { actionBar.padding(.top, 8).padding(.bottom, 4) }
+        }
+    }
+
+    private var isBusyNow: Bool { vm.isBusy || isRunning }
+
+    private var actionBar: some View {
+        let totals = PrivacyBrowser.allCases.map { vm.selectedTotals($0) }
+        let count = totals.reduce(0) { $0 + $1.count }
+        let bytes = totals.reduce(UInt64(0)) { $0 + $1.bytes }
+        return CleanupActionBar(
+            countText: count == 0 ? "Seçili veri yok" : "\(count) dosya seçili", bytes: bytes, mode: $vm.deleteMode,
+            isEnabled: count > 0 && !isBusyNow, isBusy: vm.phase == .deleting || isRunning, accent: accent
+        ) {
+            requestConfirmation()
+        } leading: {
+            Button { vm.scan() } label: { Image(systemName: "arrow.clockwise") }
+                .buttonStyle(.borderless).disabled(isBusyNow).help("Yeniden tara")
+        }
+    }
+
+    private func skippedCard(_ skipped: [CleanupResult]) -> some View {
+        CleanupResultCard(
+            symbol: "exclamationmark.circle.fill", title: "\(skipped.count) dosya atlandı",
+            subtitle: "Son temizlikte silinmeyen dosyalar.", accent: .privacyWarning,
+            isExpanded: $showSkipped
+        ) {
+            VStack(alignment: .leading, spacing: 4) {
                 ForEach(skipped, id: \.candidate.id) { r in
                     HStack {
                         Text(r.candidate.displayName).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Text(r.reasonText ?? "").foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Text(r.reasonText ?? "").foregroundStyle(.secondary).lineLimit(1)
                     }
                     .font(.caption)
                 }
             }
         }
-        .padding(12)
-        .background(Color.green.opacity(0.10), in: .rect(cornerRadius: 12))
     }
-}
 
-/// Tarayıcı başına kart: durum (açık / erişim yok / bulunamadı) ya da geçmiş ve çerezler için ayrı seçim.
-private struct BrowserPrivacyCard: View {
-    let vm: BrowserPrivacyViewModel
-    let browser: PrivacyBrowser
-    let scan: BrowserPrivacyScan
-    let onHelp: (AccessReason) -> Void
-    let onDelete: () -> Void
+    // MARK: Silme zinciri
 
-    var body: some View {
-        ResourceCard(title: browser.title, systemImage: browser.symbol) {
-            switch scan.state {
-            case .running:
-                HStack(spacing: 8) {
-                    Label(BrowserPrivacyRules.closeFirstText(browser), systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                    Spacer(minLength: 8)
-                    Button("Tekrar tara") { vm.scan() }.disabled(vm.isBusy)
-                }
-                Text("\(browser.shortName) açıkken dosyaları kilitli olabilir; bu yüzden hiçbir şey listelenmez ve silinmez.")
-                    .font(.caption).foregroundStyle(.secondary)
-            case .noAccess:
-                HStack(spacing: 8) {
-                    Label(AccessReason.fullDiskAccess.title, systemImage: "lock").foregroundStyle(.orange)
-                    if let button = AccessReason.fullDiskAccess.buttonTitle {
-                        Button(button) { vm.access.openSettings(for: .fullDiskAccess) }
-                    }
-                    Button("Nasıl?") { onHelp(.fullDiskAccess) }.buttonStyle(.borderless)
-                }
-            case .notFound:
-                ResourceEmptyNote(text: "Bulunamadı.")
-            case .scanned:
-                scannedContent
-            }
+    /// Seçili her tarayıcı için bekleyen silme kurulur (açık tarayıcıyı model reddeder ve kartı "açık" yapar); tek onay hepsini kapsar.
+    private func requestConfirmation() {
+        let pendings = PrivacyBrowser.allCases.compactMap { browser -> PendingPrivacyDeletion? in
+            vm.selectedTotals(browser).count > 0 ? vm.requestDeletion(of: browser) : nil
+        }
+        guard !pendings.isEmpty else { return }
+        confirm = PrivacyConfirmRequest(pendings: pendings)
+    }
+
+    private func start(_ request: PrivacyConfirmRequest, mode: DeleteMode) {
+        guard !isRunning else { return }
+        isRunning = true
+        runTask = Task { @MainActor in
+            let results = await PrivacyDeletionRun.run(request.pendings, mode: mode, on: vm)
+            isRunning = false
+            runTask = nil
+            guard !Task.isCancelled else { return }
+            let summary = PrivacyFreed(results: results, mode: mode)
+            freed = summary
+            if summary.count > 0 { showDone = true }
         }
     }
 
-    @ViewBuilder
-    private var scannedContent: some View {
-        if scan.files.isEmpty {
-            ResourceEmptyNote(text: "Silinecek geçmiş ya da çerez yok.")
-        } else {
-            Text(profileText).font(.caption).foregroundStyle(.secondary)
-            ForEach(PrivacyDataKind.allCases) { kind in
-                kindRow(kind)
-            }
-            let totals = vm.selectedTotals(browser)
-            HStack {
-                Text(totals.count == 0 ? "Seçili veri yok" : "Seçili: \(totals.count) dosya · \(Format.bytes(totals.bytes))")
-                    .monospacedDigit().foregroundStyle(.secondary)
-                Spacer()
-                Button(vm.deleteMode == .trash ? "Çöp Sepeti'ne taşı…" : "Kalıcı olarak sil…",
-                       systemImage: vm.deleteMode == .trash ? "trash" : "xmark.bin") { onDelete() }
-                    .tint(vm.deleteMode == .trash ? nil : .red)
-                    .disabled(totals.count == 0 || vm.isBusy)
-            }
-        }
-    }
+    // MARK: 4. Bitti
 
-    private var profileText: String {
-        browser == .safari ? "Safari" : "\(scan.profileCount) profil"
-    }
-
-    private func kindRow(_ kind: PrivacyDataKind) -> some View {
-        let available = scan.has(kind)
-        let isOn = vm.selected(browser).contains(kind)
-        return HStack(spacing: 8) {
-            Button { vm.toggle(kind, in: browser) } label: {
-                Image(systemName: isOn ? "checkmark.square.fill" : "square")
-            }
-            .buttonStyle(.borderless)
-            .disabled(!available)
-            .accessibilityLabel("\(kind.title): \(browser.shortName)")
-            VStack(alignment: .leading, spacing: 0) {
-                Text(kind.title)
-                Text(kind == .history ? "Ziyaret edilen sayfalar, en çok gidilen siteler" : "Tüm sitelerden çıkış yapılır")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Text(available ? Format.bytes(scan.bytes(of: kind)) : "Yok").monospacedDigit().foregroundStyle(.secondary)
-        }
-        .font(.callout)
-        .contentShape(.rect)
-    }
-}
-
-/// Onay: önce kaybedilecekler açıkça yazılır, ardından ortak DeleteConfirmation akışı (Çöp tek adım, kalıcı iki onay).
-private struct PrivacyConfirmSheet: View {
-    let request: PendingPrivacyDeletion
-    let mode: DeleteMode
-    let home: String
-    let onConfirm: (DeleteMode) -> Void
-    let onCancel: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("\(request.browser.title): bunlar kaybolacak", systemImage: "exclamationmark.triangle.fill")
-                    .font(.headline).foregroundStyle(.orange)
-                ForEach(BrowserPrivacyRules.lossLines(browser: request.browser, kinds: request.kinds), id: \.self) { line in
-                    Text("• " + line).font(.callout).fixedSize(horizontal: false, vertical: true)
-                }
-                Text("Yer imleri ve kayıtlı parolalar etkilenmez.").font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.orange.opacity(0.10), in: .rect(cornerRadius: 10))
-            .padding([.horizontal, .top], 20)
-            DeleteConfirmation(
-                summary: DeleteSummary(count: request.candidates.count, bytes: request.bytes, mode: mode,
-                                       sample: request.candidates.prefix(5).map { FolderWatchList.displayPath($0.path, home: home) }),
-                onConfirm: onConfirm, onCancel: onCancel
-            )
+    private var done: some View {
+        let summary = freed ?? PrivacyFreed(count: 0, bytes: 0, skipped: [], mode: .trash)
+        let trashed = summary.mode == .trash
+        var detail = "\(summary.count) dosya \(trashed ? "taşındı" : "kalıcı olarak silindi")"
+        detail += summary.skipped.isEmpty ? "." : ", \(summary.skipped.count) atlandı."
+        detail += " Yer imleri ve kayıtlı parolalara dokunulmadı."
+        if trashed { detail += " Disk alanı, Çöp Sepeti'ni boşaltınca açılır." }
+        return CleanupDoneView(
+            accent: accent, bytes: summary.bytes, headline: trashed ? "Çöp Sepeti'ne taşındı" : "boşaltıldı", detail: detail,
+            secondaryTitle: "Sonuçlara dön", onSecondary: { showDone = false }
+        ) {
+            showDone = false
+            vm.scan()
         }
     }
 }

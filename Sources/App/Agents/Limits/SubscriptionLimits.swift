@@ -232,6 +232,55 @@ enum CodexRolloutParser {
     }
 }
 
+// MARK: Çok oturumlu birleştirme
+
+/// Birden çok Claude Code / Codex oturumu açıkken her oturum kendi SON gördüğü `rate_limits`'i gönderir: boşta oturum eski (düşük) değeri,
+/// aktif oturum güncel değeri yollar ve gösterge zıplar. Pencere başına monoton birleştirme: aynı yenilenme anı (±60 sn) için kullanılan
+/// yüzde yalnızca ARTABİLİR; daha yeni (ileri) yenilenme anı yeni pencere sayılır ve değer kabul edilir; daha eski yenilenme anı yok sayılır.
+/// 5 saatlik ve haftalık ayrı değerlendirilir.
+enum LimitMerge {
+    static let resetTolerance: TimeInterval = 60
+
+    /// Gelen değerin mevcutla birleşmiş hali. Hiçbir pencere kabul edilmediyse (hepsi daha düşük/eski) nil: mevcut değer ve `observedAt` değişmez.
+    static func monotonic(current: ProviderLimits, incoming: ProviderLimits) -> ProviderLimits? {
+        var result = incoming
+        var accepted = false
+        for kind in LimitWindowKind.allCases {
+            guard let new = incoming.window(kind) else { continue }
+            guard let old = current.window(kind) else { accepted = true; continue }
+            let merged: LimitWindow?
+            switch (old.resetsAt, new.resetsAt) {
+            case let (oldReset?, newReset?):
+                if newReset.timeIntervalSince(oldReset) > resetTolerance {
+                    merged = new
+                } else if oldReset.timeIntervalSince(newReset) > resetTolerance {
+                    merged = nil
+                } else if new.usedPercent >= old.usedPercent {
+                    merged = LimitWindow(usedPercent: new.usedPercent, resetsAt: max(oldReset, newReset))
+                } else {
+                    merged = nil
+                }
+            case (nil, _):
+                merged = new
+            case (_?, nil):
+                merged = nil
+            }
+            if let merged { accepted = true; set(&result, kind, merged) } else { set(&result, kind, old) }
+        }
+        guard accepted else { return nil }
+        // Gelen pencere kalmadıysa (ör. yalnızca eski pencere değeri geldi) mevcut kredi/plan bilgisi korunur.
+        if result.planType == nil { result.planType = current.planType }
+        return result
+    }
+
+    private static func set(_ limits: inout ProviderLimits, _ kind: LimitWindowKind, _ window: LimitWindow) {
+        switch kind {
+        case .fiveHour: limits.fiveHour = window
+        case .weekly: limits.weekly = window
+        }
+    }
+}
+
 // MARK: Eşikler ve bildirim
 
 enum LimitLevel: Int, Codable, Comparable, Sendable {

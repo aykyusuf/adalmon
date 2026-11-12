@@ -22,6 +22,7 @@ struct OfficeSceneContainer: View {
     @Environment(\.controlActiveState) private var controlState
     @AppStorage(OfficeLighting.defaultsKey) private var lightingRaw = OfficeLightingMode.auto.rawValue
     @AppStorage(OfficeTheme.defaultsKey) private var themeRaw = OfficeTheme.default.rawValue
+    @AppStorage(OfficeCat.defaultsKey) private var catEnabled = true
     @State private var card: OfficeDetailCard?
     @State private var hoveredRoom: OfficeRoomHover?
     @State private var overButton = false
@@ -31,7 +32,7 @@ struct OfficeSceneContainer: View {
 
     var body: some View {
         OfficeSceneView(members: members, selectedRoom: $selectedRoom, lightingMode: OfficeLightingMode(rawValue: lightingRaw) ?? .auto,
-                        theme: OfficeTheme(rawValue: themeRaw) ?? .default, panoActive: panoActive, card: $card,
+                        theme: OfficeTheme(rawValue: themeRaw) ?? .default, catEnabled: catEnabled, panoActive: panoActive, card: $card,
                         commands: commands, onRoomHover: onMinimize == nil ? nil : { roomHover($0) })
             .overlay { minimizeButtonLayer }
             .onChange(of: hoverControlsEnabled) { _, enabled in if !enabled { hoveredRoom = nil; overButton = false } }

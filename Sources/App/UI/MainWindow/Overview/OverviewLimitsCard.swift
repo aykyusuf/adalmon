@@ -103,18 +103,15 @@ private struct ProviderRings: View {
     var body: some View {
         VStack(spacing: 2) {
             HStack(spacing: 4) {
-                ForEach(LimitWindowKind.allCases) { kind in
-                    if let window = display.window(kind) {
-                        LimitRing(fraction: window.fraction, tone: window.tone, diameter: 28, lineWidth: 3.5, label: window.numberText,
-                                  labelFont: .system(size: 9, weight: .bold, design: .rounded),
-                                  entrance: entrance)
-                    } else {
-                        Circle().stroke(Color.primary.opacity(0.08), lineWidth: 3.5).frame(width: 28, height: 28)
-                    }
+                // Verisi hiç gelmeyen pencere için halka çizilmez.
+                ForEach(display.windows) { window in
+                    LimitRing(fraction: window.fraction, tone: window.tone, diameter: 28, lineWidth: 3.5, label: window.numberText,
+                              labelFont: .system(size: 9, weight: .bold, design: .rounded),
+                              entrance: entrance)
                 }
             }
             HStack(spacing: 3) {
-                Image(systemName: LimitStyle.symbol(display.source)).font(.system(size: 7, weight: .bold))
+                BrandLogo(source: display.source, size: 9)
                 Text(display.source.displayName).font(.system(size: 10, weight: isFeatured ? .semibold : .regular))
             }
             .foregroundStyle(isFeatured ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))

@@ -1820,6 +1820,35 @@ final class OfficeRoomNode {
         notify()
     }
 
+    // MARK: Ofis kedisi (bağlantı noktaları; mantık `Cat/` altındadır)
+
+    /// Temizlik (robot süpürge / temizlikçi) şu an sürüyor mu: kedi kaçar.
+    var isCleaning: Bool { cleaning }
+
+    /// Kedinin bu odadaki dünyası (ulaşılabilir zemin + tırmanılabilir masalar); oda kitinden bir kez türetilir.
+    private(set) lazy var catWorld = OfficeCatWorld.make(grid: kit.grid, entrance: kit.spots.entrance, furniture: kit.layout.furniture, catalog: assets.catalog)
+
+    /// Kedi düğümü `content` altına girer: oda görünmezken kedinin SKAction'ları da durur.
+    func attachCat(_ node: SKNode) {
+        if node.parent !== content { node.removeFromParent(); content.addChild(node) }
+    }
+
+    /// Karodaki ayakta duran karakterle aynı öne-arkaya sırası.
+    func tileZ(_ t: OfficeTile) -> CGFloat { yDown(t) + 0.5 }
+
+    /// Masa üstünde kedinin ayak noktası (odanın yerel koordinatı, y yukarı) ve z sırası (masa + PC'nin hemen üstü).
+    func perchPoint(_ p: OfficePerch) -> (point: CGPoint, z: CGFloat) {
+        let b = kit.bounds
+        let x = CGFloat((p.col - b.minCol) * 16 + 8)
+        let bottom = CGFloat(kit.worldHeight - ((p.row - b.minRow) * 16 + p.heightTiles * 16))
+        return (CGPoint(x: x, y: bottom + p.surfaceLift), CGFloat((p.row + p.heightTiles) * 16) + 0.6)
+    }
+
+    /// Çalışan (yazan/okuyan, oturan) ajanların koltuk karoları.
+    func workingSeatTiles() -> [OfficeTile] {
+        actors.values.filter { !$0.away && !$0.moving && !$0.leaving && !$0.upright && $0.behavior.pose != .sitting }.map { $0.seat.tile }
+    }
+
     // MARK: Ofis v3 — tıklama / üzerine gelme
 
     /// Odanın yerel noktasında (y yukarı) en üstteki karakter.

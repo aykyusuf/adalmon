@@ -37,6 +37,10 @@ final class OfficeScene: SKScene {
     private var pending: [String: Int] = [:]
     private var generation = 0
     private var lastAnimating = false
+    /// Ofis kedisi: varsayılan KAPALI (nil, sıfır maliyet); ev sahibi tercihe göre `setCat(enabled:)` ile açar.
+    private(set) var cat: OfficeCatController?
+    private var catWanted = false
+    private var catRNG = OfficeCatRandom.system
     private var nextWander: [String: Date] = [:]
     private var lastWander: [String: Date] = [:]
     /// Ofis v3: ışık modu (varsayılan gündüz; ev sahibi kayıtlı modu verir), gece mi, tek saat-sınırı zamanlayıcısı.
@@ -101,7 +105,9 @@ final class OfficeScene: SKScene {
 
     // MARK: Ölçüm / test erişimi
 
-    var isAnimating: Bool { !pending.isEmpty || rooms.values.contains { $0.isVisible && $0.isAnimating } }
+    var isAnimating: Bool { !pending.isEmpty || rooms.values.contains { $0.isVisible && $0.isAnimating } || catAnimating }
+    /// Kedi yalnızca odası görünürken animasyon sayılır (uyku/sabit poz: hiç).
+    private var catAnimating: Bool { cat.map { $0.isAnimating && $0.room?.isVisible == true } ?? false }
     var actorCount: Int { rooms.values.reduce(0) { $0 + $1.actorCount } }
     var memberIDs: Set<String> { Set(rooms.values.flatMap { $0.actors.keys }) }
     var roomIDs: [String] { order }
@@ -143,6 +149,7 @@ final class OfficeScene: SKScene {
     func setTheme(_ newTheme: OfficeTheme) {
         guard newTheme != theme else { return }
         theme = newTheme
+        cat?.detach(); cat = nil
         refreshBackdrop(animated: false)
         for r in rooms.values { destroy(r) }
         for r in dying { destroy(r) }
@@ -152,6 +159,7 @@ final class OfficeScene: SKScene {
         if let t = tooltipNode, t.parent == nil { world.addChild(t) }
         cameraPlaced = false
         apply(members: lastMembers, animated: false)
+        if catWanted { setCat(enabled: true, rng: catRNG) }
     }
 
     // MARK: Arka plan
@@ -256,6 +264,7 @@ final class OfficeScene: SKScene {
         }
         if let id = selectedMemberID { if liveIDs.contains(id) { emitCard() } else { setSelectedMember(nil) } }
         refreshLabels()
+        _ = refreshCatHost()
         notifyAnimationState()
     }
 
@@ -480,6 +489,7 @@ final class OfficeScene: SKScene {
     }
 
     private func click(at p: CGPoint, count: Int) {
+        if catHit(atView: p), cat?.greet(now: .now, zoom: zoom) == true { return }
         if let h = hit(atView: p) {
             // Çift tık: odaya yakınlaş (kart açık kalır). Tek tık: karakter/tahta → detay kartı.
             if count >= 2 { select(h.room.id) } else { setSelectedMember(h.memberID) }
@@ -513,8 +523,71 @@ final class OfficeScene: SKScene {
             if r.variantCount < 2, Double.random(in: 0..<1) < 0.6, let c = r.idleCandidates().randomElement(), r.startIdleVariant(id: c.member.id) != nil { started = true }
             if r.cleanerTick(now: now) { started = true }
         }
+        if let cat {
+            // Kedi: ofisin mevcut düşük frekanslı vuruşuna bağlı; yeni zamanlayıcı yok. Görsel değişiklik olduysa true (duraklı görünüm yeniden çizilir).
+            if refreshCatHost(now: now) { started = true }
+            if cat.tick(now: now) { started = true }
+        }
         if started { notifyAnimationState() }
         return started
+    }
+
+    // MARK: Ofis kedisi
+
+    /// Kediyi açar/kapatır. Kapalıyken kedi hiç oluşturulmaz (sıfır maliyet). `rng`: testlerde deterministik.
+    func setCat(enabled: Bool, rng: OfficeCatRandom = .system) {
+        catWanted = enabled
+        if enabled {
+            if cat != nil { return }
+            catRNG = rng
+            let c = OfficeCatController(theme: theme, rng: rng)
+            c.onChange = { [weak self] in self?.catChanged() }
+            c.otherRooms = { [weak self] in self?.catOtherRooms() ?? [] }
+            c.roomLookup = { [weak self] id in self?.rooms[id] }
+            c.setNight(isNight)
+            cat = c
+            _ = refreshCatHost()
+        } else if let c = cat {
+            c.onChange = nil
+            c.detach()
+            cat = nil
+            notifyAnimationState()
+            onActivity?()
+        }
+    }
+
+    private func catChanged() {
+        notifyAnimationState()
+        onActivity?()
+    }
+
+    private func catOtherRooms() -> [String] {
+        guard let current = cat?.roomID else { return [] }
+        return order.filter { id in
+            guard id != current, let r = rooms[id] else { return false }
+            return r.isVisible && !r.isPlaceholder && r.memberCount > 0 && r.root.alpha > 0.5
+        }
+    }
+
+    /// Kedinin odası hâlâ sahnede ve görünür mü; değilse görünür, boş olmayan bir odanın girişine taşır. Taşındıysa true.
+    @discardableResult
+    func refreshCatHost(now: Date = .now) -> Bool {
+        guard let cat else { return false }
+        if let r = cat.room, rooms[r.id] === r, r.isVisible, !r.isPlaceholder { return false }
+        let candidates = order.compactMap { rooms[$0] }.filter { $0.isVisible && !$0.isPlaceholder && $0.memberCount > 0 }
+        guard let target = candidates.first else {
+            if cat.room != nil, cat.room.map({ rooms[$0.id] !== $0 }) == true { cat.detach() }
+            return false
+        }
+        cat.host(in: target, at: .floor(target.catWorld.entrance), now: now)
+        return true
+    }
+
+    private func catHit(atView p: CGPoint) -> Bool {
+        guard let cat, let id = cat.roomID else { return false }
+        let pt = OfficeCamera.contentPoint(fromView: p, view: size, center: cameraCenter, zoom: zoom)
+        guard let cell = arrangement.cell(at: pt), cell.id == id, rooms[id]?.isVisible == true else { return false }
+        return cat.hit(local: CGPoint(x: pt.x - cell.x, y: cell.y + cell.height - pt.y))
     }
 
     // MARK: Işık (gün / gece)
@@ -540,13 +613,14 @@ final class OfficeScene: SKScene {
         guard night != isNight else { return }
         isNight = night
         for r in rooms.values { r.setNight(night, animated: animated); r.backdropShadow?.setNight(night, animated: animated) }
+        cat?.setNight(night)
         backdropNode?.setNight(night, animated: animated)
         if animated { track(world, key: "lighting", .wait(forDuration: OfficeLighting.crossfade + 0.1)) }
         onNightChange?(night)
     }
 
     /// Ev sahibi kapanırken zamanlayıcıyı bırakır.
-    func shutdown() { boundaryTimer?.invalidate(); boundaryTimer = nil }
+    func shutdown() { boundaryTimer?.invalidate(); boundaryTimer = nil; cat?.onChange = nil }
 
     // MARK: Üzerine gelme + detay kartı
 
@@ -590,6 +664,11 @@ final class OfficeScene: SKScene {
     /// Fare hareketi (görünüm koordinatı). Karakterin üstünde ad · rol · model · durum satırı; imleç değişimi için `onHoverChange`.
     func hover(at p: CGPoint?) {
         reportRoomHover(p)
+        if dragStart == nil, let p, catHit(atView: p) {
+            if tooltipNode?.isHidden == false { tooltipNode?.isHidden = true }
+            if hoverID != "#cat" { hoverID = "#cat"; onHoverChange?(true) }
+            return
+        }
         if dragStart == nil, let p, let room = rackHit(atView: p), let top = room.rackTop {
             if hoverID != room.id + "#rack" { hoverID = room.id + "#rack"; onHoverChange?(true) }
             let node = tooltipNode ?? makeTooltip()

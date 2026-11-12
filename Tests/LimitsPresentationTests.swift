@@ -203,4 +203,43 @@ final class LimitsPresentationTests: XCTestCase {
         XCTAssertEqual(filled.featured?.source, .claude)
         XCTAssertEqual(model.snapshot(agentsEnabled: false, now: at).sections[0].state, .empty(.agentsDisabled))
     }
+
+    // MARK: Gelmeyen pencere gizlenir (ör. Claude Ultra'da 5 saatlik yok)
+
+    func testMissingFiveHourWindowIsNotShownAnywhere() throws {
+        let providers = [claude(five: nil, weekly: 35), codex(five: nil, weekly: 20)]
+        let s = sections(providers)
+        let display = try XCTUnwrap(s[0].display)
+        XCTAssertEqual(display.windows.map(\.kind), [.weekly], "5 saatlik pencere için boş kutu/halka üretilmez")
+        XCTAssertNil(display.window(.fiveHour))
+        let snapshot = LimitsSnapshot(sections: s, thresholds: thresholds, now: now)
+        XCTAssertEqual(snapshot.visibleKinds, [.weekly])
+        XCTAssertEqual(LimitsPresentation.timelineRows(snapshot).map(\.window.kind), [.weekly, .weekly])
+    }
+
+    func testVisibleKindsKeepsWindowAnyProviderHas() {
+        let s = sections([claude(five: nil, weekly: 35), codex(five: 80, weekly: 20)])
+        let snapshot = LimitsSnapshot(sections: s, thresholds: thresholds, now: now)
+        XCTAssertEqual(snapshot.visibleKinds, [.fiveHour, .weekly])
+        XCTAssertEqual(LimitsPresentation.timelineRows(snapshot).map { "\($0.source.rawValue)-\($0.window.kind.rawValue)" },
+                       ["claude-weekly", "codex-fiveHour", "codex-weekly"])
+    }
+
+    func testVisibleKindsFallsBackToBothWhenNoData() {
+        let snapshot = LimitsSnapshot(sections: sections([], connected: false), thresholds: thresholds, now: now)
+        XCTAssertEqual(snapshot.visibleKinds, LimitWindowKind.allCases)
+        XCTAssertTrue(LimitsPresentation.timelineRows(snapshot).isEmpty)
+    }
+
+    func testCardCaptionAndFeaturedUseOnlyExistingWindows() throws {
+        let snapshot = LimitsSnapshot(sections: sections([claude(five: nil, weekly: 35)]), thresholds: thresholds, now: now)
+        let featured = try XCTUnwrap(snapshot.featured)
+        XCTAssertEqual(featured.window.kind, .weekly)
+        XCTAssertEqual(LimitsPresentation.cardCaption(snapshot)?.contains("5 sa"), false)
+    }
+
+    func testModelUsageTravelsInSnapshotAndDefaultsToEmpty() {
+        let snapshot = LimitsSnapshot(sections: sections([claude()]), thresholds: thresholds, now: now)
+        XCTAssertTrue(snapshot.modelUsage.isEmpty)
+    }
 }

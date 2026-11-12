@@ -76,6 +76,9 @@ struct CodexRolloutReader: Sendable {
 @MainActor @Observable
 final class SubscriptionLimitsModel {
     static let codexInterval: TimeInterval = 180
+    /// Model kullanımı taraması: en sık dakikada bir (zorlama hariç); sayfa görünürken döngü 2 dk'da bir dener.
+    static let usageMinInterval: TimeInterval = 60
+    static let usageLoopInterval: TimeInterval = 120
     /// Değişmeyen Claude değerinde kalıcı zaman damgasının en sık yenilenme aralığı.
     static let unchangedRefresh: TimeInterval = 60
     private enum Key {
@@ -93,6 +96,8 @@ final class SubscriptionLimitsModel {
     private(set) var lastMessage: String?
     /// Claude planı (`~/.claude.json` → `oauthAccount`, yalnızca beş alan). Bellekte; yalnızca limit görünümü açıkken okunur.
     private(set) var claudePlan: ClaudeAccountPlan?
+    /// Model bazında kullanım (yalnızca Limitler sayfası görünürken hesaplanır; sayfa kapanınca son değer kalır).
+    private(set) var modelUsage: [LimitSource: ProviderModelUsage] = [:]
     var thresholds: LimitAlertThresholds { didSet { store(thresholds, Key.thresholds) } }
     /// Tahmin uyarısı duyarlılığı (USAGE-02). Ayrı anahtarda: eşik yapısının kayıtlı biçimi değişmesin.
     var forecastSensitivity: LimitForecastSensitivity {
@@ -113,6 +118,11 @@ final class SubscriptionLimitsModel {
     @ObservationIgnored private let binder: ClaudeStatusLineBinder
     @ObservationIgnored private let codexReader: CodexRolloutReader
     @ObservationIgnored private let planReader: ClaudePlanReader
+    @ObservationIgnored private let usageStore: ModelUsageStore
+    @ObservationIgnored private var usageViewers = 0
+    @ObservationIgnored private var usageLoop: Task<Void, Never>?
+    @ObservationIgnored private var usageWork: Task<[LimitSource: ProviderModelUsage], Never>?
+    @ObservationIgnored private var lastUsageRefresh: Date?
     @ObservationIgnored private var planStamp: ClaudePlanReader.Stamp?
     @ObservationIgnored private var planReading = false
     @ObservationIgnored private var tracker: LimitAlertTracker
@@ -125,11 +135,12 @@ final class SubscriptionLimitsModel {
 
     init(defaults: UserDefaults = .standard, binder: ClaudeStatusLineBinder = ClaudeStatusLineBinder(),
          codexReader: CodexRolloutReader = CodexRolloutReader(), planReader: ClaudePlanReader = ClaudePlanReader(),
-         live: Bool = !AppEnvironment.isRunningTests) {
+         usageStore: ModelUsageStore = ModelUsageStore(), live: Bool = !AppEnvironment.isRunningTests) {
         self.defaults = defaults
         self.binder = binder
         self.codexReader = codexReader
         self.planReader = planReader
+        self.usageStore = usageStore
         self.live = live
         thresholds = Self.load(LimitAlertThresholds.self, Key.thresholds, defaults) ?? LimitAlertThresholds()
         tracker = Self.load(LimitAlertTracker.self, Key.tracker, defaults) ?? LimitAlertTracker()
@@ -154,6 +165,11 @@ final class SubscriptionLimitsModel {
     func ingestClaude(_ limits: ProviderLimits, now: Date = .now) {
         var limits = limits
         limits.observedAt = now
+        // Birden çok oturum eski değeri yollayabilir: daha düşük/eski değer yok sayılır (observedAt da güncellenmez).
+        if let current = claude {
+            guard let merged = LimitMerge.monotonic(current: current, incoming: limits) else { return }
+            limits = merged
+        }
         // Sayılar aynıysa yeniden atama/yazma yok (kart yeniden çizilmesin); zaman damgası en çok dakikada bir tazelenir.
         if let current = claude, current.fiveHour == limits.fiveHour, current.weekly == limits.weekly,
            now.timeIntervalSince(current.observedAt) < Self.unchangedRefresh {
@@ -212,8 +228,15 @@ final class SubscriptionLimitsModel {
             let result = await Task.detached(priority: .utility) { reader.latest() }.value
             codexReading = false
             guard codexEnabled else { return }
+            guard var result else { codex = nil; return }
+            if let current = codex {
+                // Birden çok Codex oturumu: eski/düşük değer göstergeyi geri sarmasın.
+                guard let merged = LimitMerge.monotonic(current: current, incoming: result) else { return }
+                result = merged
+            }
             codex = result
-            if let result { evaluate(result, now: .now); evaluateForecast(result, now: .now) }
+            evaluate(result, now: .now)
+            evaluateForecast(result, now: .now)
         }
     }
 
@@ -236,6 +259,61 @@ final class SubscriptionLimitsModel {
     func removeViewer() {
         viewers = max(0, viewers - 1)
         if viewers == 0 { viewerLoop?.cancel(); viewerLoop = nil }
+    }
+
+    // MARK: Model kullanımı
+
+    /// Limitler sayfası görünürken çağrılır: hemen bir kez hesaplar, görünür kaldıkça 2 dk'da bir dener (en çok dakikada bir tarar).
+    /// Sayfa kapanınca döngü ve süren tarama iptal edilir. Testte/önizlemede (live == false) hiçbir şey okunmaz.
+    func addUsageViewer() {
+        usageViewers += 1
+        guard live, usageViewers == 1 else { return }
+        refreshModelUsage(force: false)
+        usageLoop = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.usageLoopInterval), tolerance: .seconds(20))
+                guard !Task.isCancelled else { return }
+                self?.refreshModelUsage(force: false)
+            }
+        }
+    }
+
+    func removeUsageViewer() {
+        usageViewers = max(0, usageViewers - 1)
+        guard usageViewers == 0 else { return }
+        usageLoop?.cancel()
+        usageLoop = nil
+        usageWork?.cancel()
+    }
+
+    /// Pencereleri güncel limit verisinden çıkarır; dosyaları `.utility` öncelikli arka plan görevinde artımlı okur.
+    func refreshModelUsage(force: Bool, now: Date = .now) {
+        Task { await refreshModelUsageNow(force: force, now: now) }
+    }
+
+    func refreshModelUsageNow(force: Bool, now: Date = .now) async {
+        guard usageWork == nil else { return }
+        if !force, let last = lastUsageRefresh, now.timeIntervalSince(last) < Self.usageMinInterval { return }
+        var jobs: [(LimitSource, [ModelUsageBuilder.Range])] = []
+        for limits in providers { jobs.append((limits.source, ModelUsageBuilder.ranges(for: limits, now: now))) }
+        guard !jobs.isEmpty else { return }
+        lastUsageRefresh = now
+        let store = usageStore
+        let work = Task.detached(priority: .utility) { () -> [LimitSource: ProviderModelUsage] in
+            var result: [LimitSource: ProviderModelUsage] = [:]
+            for (source, ranges) in jobs {
+                guard let since = ranges.map(\.start).min() else { continue }
+                store.refresh(source, since: since, now: now, isCancelled: { Task.isCancelled })
+                if Task.isCancelled { break }
+                result[source] = ModelUsageBuilder.build(source: source, ranges: ranges, now: now) { store.aggregate(source, from: $0, to: $1) }
+            }
+            return result
+        }
+        usageWork = work
+        let result = await work.value
+        usageWork = nil
+        for (source, usage) in result where modelUsage[source] != usage { modelUsage[source] = usage }
+        if !codexEnabled { modelUsage[.codex] = nil }
     }
 
     // MARK: Plan

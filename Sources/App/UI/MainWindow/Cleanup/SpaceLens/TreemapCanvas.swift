@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Yer kaplayanlar haritası: 3D hissi veren karolar (üstten ışık gradyanı, kenar parlaması, derinlik gölgesi). Yerleşim `TreemapLayout`tan gelir.
@@ -39,6 +40,12 @@ struct TreemapCanvas: View {
     var contextPath: String = ""
     /// Önizleme testleri için başlangıçta üstüne gelinmiş karo.
     var previewHoverID: String?
+    /// Temizlik listesine eklenmiş karolar (işaret rozeti ve çerçeve gösterilir).
+    var markedIDs: Set<String> = []
+    /// Karo seçilebilir mi (korunan konumlar / tarama kökü hayır). Üstüne gelince onay kutusu yalnızca seçilebilirlerde çıkar.
+    var canMark: (SpaceNode) -> Bool = { _ in false }
+    /// ⌘-tık, onay kutusu ve sağ tık menüsü bunu çağırır; nil ise seçim kapalıdır (salt okunur harita).
+    var onToggleMark: ((SpaceNode) -> Void)?
     let onTap: (SpaceNode) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -50,7 +57,11 @@ struct TreemapCanvas: View {
     @State private var hover: Hover?
 
     init(nodes: [SpaceNode], otherBytes: UInt64 = 0, selectedID: String?, contextPath: String = "", previewHoverID: String? = nil,
-         onTap: @escaping (SpaceNode) -> Void) {
+         markedIDs: Set<String> = [], canMark: @escaping (SpaceNode) -> Bool = { _ in false },
+         onToggleMark: ((SpaceNode) -> Void)? = nil, onTap: @escaping (SpaceNode) -> Void) {
+        self.markedIDs = markedIDs
+        self.canMark = canMark
+        self.onToggleMark = onToggleMark
         self.nodes = nodes
         self.otherBytes = otherBytes
         self.selectedID = selectedID
@@ -83,13 +94,15 @@ struct TreemapCanvas: View {
         GeometryReader { proxy in
             ZStack {
                 if let outgoing {
-                    TreemapLevelView(level: outgoing, size: proxy.size, selectedID: nil, hover: nil, reduceMotion: reduceMotion)
+                    TreemapLevelView(level: outgoing, size: proxy.size, selectedID: nil, hover: nil, reduceMotion: reduceMotion,
+                                     markedIDs: [], canMark: { _ in false }, onToggleMark: nil, onOpen: { _ in })
                         .id(outgoing.id)
                         .scaleEffect(outShown ? 1 : (outgoing.forward ? 1.7 : 0.45), anchor: outgoing.anchor)
                         .opacity(outShown ? 1 : 0)
                         .allowsHitTesting(false)
                 }
-                TreemapLevelView(level: displayed, size: proxy.size, selectedID: selectedID, hover: hover, reduceMotion: reduceMotion)
+                TreemapLevelView(level: displayed, size: proxy.size, selectedID: selectedID, hover: hover, reduceMotion: reduceMotion,
+                                 markedIDs: markedIDs, canMark: canMark, onToggleMark: onToggleMark, onOpen: onTap)
                     .id(displayed.id)
                     .scaleEffect(inShown ? 1 : (displayed.forward ? 0.55 : 1.5), anchor: displayed.anchor)
                     .opacity(inShown ? 1 : 0)
@@ -100,7 +113,12 @@ struct TreemapCanvas: View {
             .onTapGesture { location in
                 guard let hit = Self.rects(for: displayed, in: proxy.size).first(where: { $0.rect.contains(location) }),
                       let node = displayed.nodes.first(where: { $0.id == hit.id }) else { return }
-                onTap(node)
+                // ⌘-tık: seçime ekle / çıkar. Düz tıklama hâlâ klasörün içine girer.
+                if NSEvent.modifierFlags.contains(.command), let onToggleMark, canMark(node) {
+                    onToggleMark(node)
+                } else {
+                    onTap(node)
+                }
             }
             .onAppear { size = proxy.size }
             .onChange(of: proxy.size) { _, new in size = new }
@@ -187,15 +205,41 @@ private struct TreemapLevelView: View {
     let selectedID: String?
     let hover: TreemapCanvas.Hover?
     let reduceMotion: Bool
+    let markedIDs: Set<String>
+    let canMark: (SpaceNode) -> Bool
+    let onToggleMark: ((SpaceNode) -> Void)?
+    let onOpen: (SpaceNode) -> Void
     @State private var shown: Bool
 
-    init(level: TreemapCanvas.Level, size: CGSize, selectedID: String?, hover: TreemapCanvas.Hover?, reduceMotion: Bool) {
+    init(level: TreemapCanvas.Level, size: CGSize, selectedID: String?, hover: TreemapCanvas.Hover?, reduceMotion: Bool,
+         markedIDs: Set<String>, canMark: @escaping (SpaceNode) -> Bool, onToggleMark: ((SpaceNode) -> Void)?,
+         onOpen: @escaping (SpaceNode) -> Void) {
+        self.markedIDs = markedIDs
+        self.canMark = canMark
+        self.onToggleMark = onToggleMark
+        self.onOpen = onOpen
         self.level = level
         self.size = size
         self.selectedID = selectedID
         self.hover = hover
         self.reduceMotion = reduceMotion
         _shown = State(initialValue: !level.stagger || reduceMotion)
+    }
+
+    @ViewBuilder
+    private func tileMenu(_ node: SpaceNode?, markable: Bool, marked: Bool) -> some View {
+        if let node, node.isMeasured {
+            if onToggleMark != nil {
+                Button(marked ? "Temizlik listesinden çıkar" : "Temizlik listesine ekle", systemImage: marked ? "minus.circle" : "plus.circle") {
+                    onToggleMark?(node)
+                }
+                .disabled(!markable && !marked)
+            }
+            if node.isFolder { Button("İçine gir", systemImage: "arrow.right.circle") { onOpen(node) } }
+            Button("Finder'da göster", systemImage: "magnifyingglass.circle") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)])
+            }
+        }
     }
 
     var body: some View {
@@ -207,9 +251,15 @@ private struct TreemapLevelView: View {
             ForEach(Array(rects.enumerated()), id: \.element.id) { index, item in
                 let node = byID[item.id]
                 let isHovered = hover?.id == item.id
+                let markable = onToggleMark != nil && (node.map(canMark) ?? false)
+                let marked = markedIDs.contains(item.id)
                 TreemapTile(node: node, otherBytes: otherTotal, index: index, size: item.rect.insetBy(dx: 1.5, dy: 1.5).size,
-                            selected: item.id == selectedID, hover: isHovered ? hover : nil)
+                            selected: item.id == selectedID, hover: isHovered ? hover : nil, marked: marked,
+                            showsCheckbox: markable && (isHovered || marked)) {
+                    if let node { onToggleMark?(node) }
+                }
                     .frame(width: max(0, item.rect.width - 3), height: max(0, item.rect.height - 3))
+                    .contextMenu { tileMenu(node, markable: markable, marked: marked) }
                     .scaleEffect(shown ? 1 : 0.8)
                     .opacity(shown ? 1 : 0)
                     .animation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0.2).delay(min(0.45, Double(index) * 0.02)), value: shown)
@@ -230,6 +280,9 @@ private struct TreemapTile: View {
     let size: CGSize
     let selected: Bool
     let hover: TreemapCanvas.Hover?
+    var marked = false
+    var showsCheckbox = false
+    var onCheckbox: () -> Void = { }
 
     private var category: SpaceCategory { node.map(SpaceCategory.of) ?? .other }
     private var base: (h: Double, s: Double, b: Double) {
@@ -257,7 +310,25 @@ private struct TreemapTile: View {
             shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.6), .white.opacity(0.08), .black.opacity(0.25)],
                                               startPoint: .top, endPoint: .bottom), lineWidth: 1)
             if selected { shape.strokeBorder(.white, lineWidth: 2) }
+            if marked {
+                shape.fill(Color.black.opacity(0.22))
+                shape.strokeBorder(Color.white, lineWidth: 3)
+            }
             label
+            if showsCheckbox, size.width >= 40, size.height >= 30 {
+                Button(action: onCheckbox) {
+                    Image(systemName: marked ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.55), radius: 2, y: 1)
+                        .frame(width: 28, height: 28)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(2)
+                .accessibilityLabel(marked ? "Temizlik listesinden çıkar" : "Temizlik listesine ekle")
+            }
         }
         .clipShape(shape)
         .shadow(color: .black.opacity(hovered ? 0.5 : 0.32), radius: hovered ? 9 : 3, x: 0, y: hovered ? 7 : 2)

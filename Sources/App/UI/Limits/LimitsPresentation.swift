@@ -212,6 +212,14 @@ struct LimitsSnapshot: Equatable, Sendable {
     var now: Date
     /// Sağlayıcı başına plan rozeti (bilinmiyorsa yok).
     var plans: [LimitSource: LimitPlan] = [:]
+    /// Sağlayıcı başına model bazında kullanım (hesaplanmadıysa yok).
+    var modelUsage: [LimitSource: ProviderModelUsage] = [:]
+
+    /// En az bir sağlayıcıda verisi gelen pencere türleri (hiç veri yoksa ikisi de). Gelmeyen pencere hiçbir yerde çizilmez.
+    var visibleKinds: [LimitWindowKind] {
+        let present = LimitWindowKind.allCases.filter { kind in sections.contains { $0.display?.window(kind) != nil } }
+        return present.isEmpty ? LimitWindowKind.allCases : present
+    }
 
     var featured: (source: LimitSource, window: LimitWindowDisplay)? { LimitsPresentation.featured(sections) }
     var hasData: Bool { sections.contains { $0.display != nil } }
@@ -282,6 +290,13 @@ enum LimitsPresentation {
         return "\(source.displayName) \(window.kind.shortLabel)"
     }
 
+    /// Zaman çizelgesi satırları: yalnızca verisi gelen, yenilenmemiş ve yenilenme anı bilinen pencereler.
+    static func timelineRows(_ snapshot: LimitsSnapshot) -> [(source: LimitSource, window: LimitWindowDisplay)] {
+        snapshot.sections.flatMap { section -> [(source: LimitSource, window: LimitWindowDisplay)] in
+            (section.display?.windows ?? []).filter { !$0.isReset && $0.resetsAt != nil }.map { (section.source, $0) }
+        }
+    }
+
     /// Plan satırının alt metni: "Stripe aboneliği · Ek kullanım kapalı"; hiçbiri yoksa nil.
     static func planDetail(_ plan: LimitPlan) -> String? {
         var parts: [String] = []
@@ -304,6 +319,6 @@ extension SubscriptionLimitsModel {
             sections: LimitsPresentation.sections(
                 providers: providers, claudeConnected: claudeConnected, agentsEnabled: agentsEnabled, codexEnabled: codexEnabled,
                 thresholds: thresholds, now: now, forecast: { forecast(for: $0, $1, now: now) }),
-            thresholds: thresholds, now: now, plans: plans)
+            thresholds: thresholds, now: now, plans: plans, modelUsage: modelUsage)
     }
 }
