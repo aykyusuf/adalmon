@@ -16,6 +16,11 @@
 - "iyice test etsene bak kesin çalışıp çalışmadıpnı anlayalım" / "çok garanti çalışması lazım" — ajan hattı ve ofis için gerçek zincirle (uçtan uca) test; edge durumlar ara ara kontrol edilmeli.
 - "over engineering e gerek yok abarmtmaya çalış kendi sunucumuz var" ve "Sadece analiz et gel" — Windows/çok-PC sunucu işi: abartma, şimdilik yalnızca analiz (docs/WINDOWS-VE-SUNUCU-ARASTIRMA.md); kod yazma kararlar gelince.
 - Silme komutlarında crew-chief guard: 5 satır SAFE/RISKY gerekçesi yaz, sonra aynı komutu tekrar çalıştır.
+- "neden kendin yapıon paraler ajanlarla yapsana bitir işte" — işleri paralel ajanlarla yürüt (ayrı DerivedData, ajanlar commit/kurulum yapmaz).
+- "salak salak yine çok önemli bi soru mu sordun sanki" / "askquestion ile sro" — küçük kararlarda durma, varsayılanı uygula; gerçek kararları metinle değil AskUserQuestion ile sor ve devam et.
+- "kapanması gerkenleri tek tek sorsana bana askquestion ile bi de yeni işleri de tek tek sor" — görev kapatma ve yeni işleri AskUserQuestion ile tek tek sor.
+- "filtre aktif değilse mobilde uyar ıversin olm ciddi bi şekilde" — filtre bağlı/aktif değilken mobilde ciddi uyarı.
+- "firefox uyumluluğu da olmasın amk" — Temizlik'te Firefox desteği hiç olmayacak.
 
 ## Dersler (doğrulanmış nedenler)
 - Test host'u Adalmon.app'in kendisidir: `AppModel.start()` testte gerçek ajan dinleyicisini kurarsa kullanıcının `~/Library/Application Support/Adalmon/ClaudePlugin/config.json` dosyasını ve `agentsPort` tercihini ezer; çalışan uygulamanın hook'ları ölü porta gider, ajanlar ofiste görünmez. Önlem: `AppModel.start` testte `agents.apply()` çağırmaz; dinleyici testleri kendi geçici dizinini kullanır (`AgentPluginGenerator(root:)`). Tam suite sonrası config md5 ve `/v1/state` kontrol edilir.

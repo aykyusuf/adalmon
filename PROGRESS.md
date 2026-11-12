@@ -1,5 +1,7 @@
 # Adalmon: progress
 
+**2026-11-12 (compact)** — Handoff güncellendi; çalışma ağacı temiz (ef50e76 + bu commit); sıradaki: CLEAN-02 Phase 1-6, OFFICE-CTRL-01.
+
 **2026-11-12 (öğleden sonra)** — Onay turu: 12 görev kapandı. Release kuruluma geçildi (Debug'du). CPU düzeltmeleri, proxy fazla sayım düzeltmesi, ofis metinleri/etiket önceliği, şimşek seçenekleri, Genel bakışta Limitler karosu, Temizlik ⌘0 sayfası + güvenli silici + erişim akışı. Ofis kontrolü spike'ı: PermissionRequest hook terminali bloklamıyor → uygulanabilir. Tam suite 1394/1395.
 
 **2026-11-12 (öğlene doğru)** — Limit tahmini, bildirim seçimi, canlı mobil/ağ listesi (aralık + sınır + Mobilde/Wi-Fi'de/Her yerde engel), kompakt Genel bakış, simge düzeltmesi. Filtre bağlantısı 07:32'de kopmuştu (kurulumlarda uzantı sürümü değişiyordu); kullanıcı kapat-aç ile düzeltti; artık yeniden bağlanma + config tekrar gönderimi + mobilde kırmızı uyarı var, kurulumlar aktif uzantı sürümüyle yapılıyor. Tam suite 1341/1344.
