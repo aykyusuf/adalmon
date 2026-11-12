@@ -224,4 +224,5 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 **Next:** kullanıcı onayları (tasks.json in_progress); eski Overview kart dosyalarının temizliği (testlerle birlikte); CPU %4-5 ölçümü (duvar kâğıdı kapalıyken).
 **Open:** Wi-Fi'de engel ağ değişimine göre uygulanır (Adalmon kapalıyken son config kalır); tam çözüm FilterConfig'e yeni liste (uzantı değişikliği → kullanıcı onayı).
 **Decision (2026-11-12, kullanıcı):** Günlük bütçe = günlük limit (örn. 3 GB). "Aylık kalan ÷ kalan gün" yalnızca bilgi/uyarı satırı; artık bugünün bütçesini düşürmez.
+**Ders (2026-11-12 08:48):** Kurulum sırasında aynı saniyede iki Adalmon açıldı (ikisi de launchd'den; tek kopya koruması yoktu → iki menü çubuğu öğesi, iki dinleyici). Düzeltme: `AdalmonMain.main` başında `SingleInstance` (küçük PID kalır, büyük PID öncekini öne getirip çıkar). Kurulum kontrolüne `pgrep -x Adalmon | wc -l` = 1 eklendi.
 
