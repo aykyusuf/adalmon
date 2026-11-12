@@ -4,7 +4,9 @@ import Foundation
 /// Vektör tema: aynı odadaki ad etiketlerinin (hap) çakışma çözümü. Saf mantık (SpriteKit'siz, deterministik).
 /// Sıra: (1) soldan sağa yerleştirirken çakışan etiket dikeyde en çok `maxLevel` kademe yukarı alınır;
 /// (2) bu yetmezse tüm odanın etiketleri bir sonraki metin biçimine geçer (tam ad → önek atılmış → 14 karakter "…");
-/// (3) son biçimde de sığmayan etiket, en az çakışan kademeye konur (kabul edilen çakışma; `overlaps` sayar).
+/// (3) son biçimde de sığmayan etiket: öncelikli (`priority >= protectedPriority`, ör. oturum) ise en az çakışan kademeye konur
+/// (kabul edilen çakışma; `overlaps` sayar), değilse gizlenir (`hidden`; üst üste binmez). Öncelik sırası: oturum > çalışan alt ajan > boşta.
+/// Maliyet: en çok 3 aşama × etiket × 3 kademe × yerleşmiş etiket (odada ≲ 15 etiket); olay/zoom değişmedikçe yeniden çalışmaz.
 struct OfficeLabelItem: Equatable {
     var id: String
     /// Dünya birimi: etiket merkez x'i ve kademe 0'daki alt y'si.
@@ -12,11 +14,15 @@ struct OfficeLabelItem: Equatable {
     var y: CGFloat
     /// Metin biçimlerinin ekran piksel genişlikleri (0: tam ad, sonra giderek kısalan).
     var widths: [CGFloat]
+    /// Büyük = önemli (önce yerleşir, sığmazsa en son gizlenir). Varsayılan: gizlenmez.
+    var priority: Int = OfficeLabelLayout.protectedPriority
 }
 
 struct OfficeLabelPlacement: Equatable {
     var variant: Int
     var level: Int
+    /// Hiçbir kademeye sığmadı ve önceliği düşük: etiket çizilmez (tooltip/kart yine ad söyler).
+    var hidden = false
 }
 
 enum OfficeLabelLayout {
@@ -26,6 +32,10 @@ enum OfficeLabelLayout {
     static let maxLevel = 2
     static let margin: CGFloat = 2
     static let shortLimit = 14
+    /// Oturum etiketi (gizlenmez) / çalışan alt ajan / boşta alt ajan.
+    static let protectedPriority = 2
+    static let runningPriority = 1
+    static let idlePriority = 0
 
     /// Etiket metin biçimleri: tam ad; `eklenti:` öneki atılmış ad; en çok 14 karakter "…" ile kısaltılmış ad (yinelenenler elenir).
     static func variants(of title: String) -> [String] {
@@ -45,7 +55,9 @@ enum OfficeLabelLayout {
     /// Her etiket için biçim + kademe. `overlaps`: çözülemeyip kabul edilen çakışan çift sayısı.
     static func resolve(_ items: [OfficeLabelItem], zoom: CGFloat) -> (placements: [String: OfficeLabelPlacement], overlaps: Int) {
         let z = max(zoom, 0.01)
-        let sorted = items.filter { !$0.widths.isEmpty }.sorted { ($0.x, $0.y, $0.id) < ($1.x, $1.y, $1.id) }
+        let sorted = items.filter { !$0.widths.isEmpty }.sorted {
+            $0.priority != $1.priority ? $0.priority > $1.priority : ($0.x, $0.y, $0.id) < ($1.x, $1.y, $1.id)
+        }
         guard !sorted.isEmpty else { return ([:], 0) }
         let stages = sorted.map(\.widths.count).max() ?? 1
         var result: [String: OfficeLabelPlacement] = [:]
@@ -64,6 +76,10 @@ enum OfficeLabelLayout {
                 if chosen == nil {
                     failed = true
                     if !last { break }
+                    if item.priority < protectedPriority {
+                        out[item.id] = OfficeLabelPlacement(variant: variant, level: 0, hidden: true)
+                        continue
+                    }
                     // Kabul edilen çakışma: en az kesişim alanı, eşitlikte en düşük kademe.
                     var best = (level: 0, area: CGFloat.greatestFiniteMagnitude)
                     for level in 0...maxLevel {
@@ -84,7 +100,7 @@ enum OfficeLabelLayout {
     }
 
     static func overlapCount(_ items: [OfficeLabelItem], _ placements: [String: OfficeLabelPlacement], zoom z: CGFloat) -> Int {
-        let rects = items.compactMap { i in placements[i.id].map { rect(i, variant: $0.variant, level: $0.level, zoom: z) } }
+        let rects = items.compactMap { i in placements[i.id].flatMap { $0.hidden ? nil : $0 }.map { rect(i, variant: $0.variant, level: $0.level, zoom: z) } }
         var n = 0
         for i in rects.indices { for j in rects.indices where j > i && rects[i].intersects(rects[j]) { n += 1 } }
         return n

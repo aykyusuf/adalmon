@@ -613,6 +613,17 @@ test('etiket çözümü: 12 yan yana etiket son biçimde de sığmaz; çakışma
   assert.strictEqual(res.overlaps, overlapsOf(items, res));
 });
 
+test('etiket çözümü: düşük öncelikli sığmayan etiket gizlenir, oturum etiketi gizlenmez, görünenler çakışmaz', async () => {
+  const api = await makeEnv().ready();
+  const items = lblItems(12, 12, null, [150, 110, 90]);
+  items.forEach((it, i) => { it.priority = i === 5 ? 2 : (i % 2 === 0 ? 1 : 0); });
+  const res = api.resolveLabels(items, LM);
+  const ps = [...res.placements.values()];
+  assert.ok(ps.some((p) => p.hidden), 'bazı etiketler gizlendi');
+  assert.ok(!res.placements.get('a05').hidden, 'oturum etiketi gizlenmez');
+  assert.strictEqual(res.overlaps, 0);
+});
+
 test('etiket çözümü: metin biçimleri (tam ad, önek atılmış, 14 karakter)', async () => {
   const api = await makeEnv().ready();
   assert.deepStrictEqual(Array.from(api.labelVariants('general-purpose')), ['general-purpose', 'general-purpo…']);

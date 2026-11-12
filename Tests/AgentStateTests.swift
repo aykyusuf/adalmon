@@ -794,4 +794,14 @@ final class LockedCounter: @unchecked Sendable {
     private var n = 0
     var value: Int { lock.withLock { n } }
     @discardableResult func increment() -> Int { lock.withLock { n += 1; return n } }
+
+    func testToolStatusLabelsAreHumanTurkish() {
+        let map: [String: String] = ["Bash": "Komut çalıştırıyor", "Read": "Dosya okuyor", "Edit": "Dosya düzenliyor", "Write": "Dosya düzenliyor",
+            "MultiEdit": "Dosya düzenliyor", "NotebookEdit": "Dosya düzenliyor", "Grep": "Arama yapıyor", "Glob": "Arama yapıyor",
+            "WebFetch": "Web'e bakıyor", "WebSearch": "Web'e bakıyor", "Agent": "Alt ajan başlatıyor", "Task": "Alt ajan başlatıyor",
+            "AskUserQuestion": "Soru soruyor", "mcp__github__create_issue": "github aracı", "Foo": "Araç: Foo"]
+        for (tool, text) in map { XCTAssertEqual(AgentStatus.tool(tool).label, text, tool) }
+        XCTAssertEqual(AgentStatus.tool("a b;c").label, "Araç: abc", "yalnızca güvenli karakterler")
+        XCTAssertEqual(AgentStatus.tool("✓").label, "Araç kullanıyor")
+    }
 }

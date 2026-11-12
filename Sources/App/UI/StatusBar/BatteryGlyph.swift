@@ -1,5 +1,66 @@
 import AppKit
 
+/// Şarj şimşeğinin stili ve rengi (yalnızca Mac pili; şimşek yalnızca şarjda/fişteyken vardır).
+/// Varsayılan (`auto` + `auto`) bugünkü görünümdür: şarj gücüne göre renk ve "Animasyon" ayarını izleyen nefes.
+struct BatteryBoltOptions: Codable, Hashable, Sendable {
+    enum Style: String, Codable, CaseIterable, Identifiable, Sendable {
+        case auto, still, pulse, shimmer, flow
+        var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .auto: "Otomatik"
+            case .still: "Sabit"
+            case .pulse: "Nabız"
+            case .shimmer: "Parıltı"
+            case .flow: "Akış"
+            }
+        }
+        var help: String {
+            switch self {
+            case .auto: "Şarj gücüne göre hızı değişen yumuşak nefes (varsayılan)"
+            case .still: "Hiç hareket etmez"
+            case .pulse: "Kalp atışı gibi çift vuruş"
+            case .shimmer: "Üzerinden geçen ışık huzmesi"
+            case .flow: "Şimşek alttan üste dolar"
+            }
+        }
+    }
+
+    enum Tone: String, Codable, CaseIterable, Identifiable, Sendable {
+        case auto, yellow, green, white, custom
+        var id: String { rawValue }
+        var displayName: String {
+            switch self {
+            case .auto: "Otomatik"
+            case .yellow: "Sarı"
+            case .green: "Yeşil"
+            case .white: "Beyaz"
+            case .custom: "Özel"
+            }
+        }
+    }
+
+    var style: Style = .auto
+    var tone: Tone = .auto
+    /// `tone == .custom` iken kullanılan renk.
+    var custom: RGBAColor?
+
+    init(style: Style = .auto, tone: Tone = .auto, custom: RGBAColor? = nil) {
+        self.style = style
+        self.tone = tone
+        self.custom = custom
+    }
+
+    private enum CodingKeys: String, CodingKey { case style, tone, custom }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        style = (try? c.decodeIfPresent(Style.self, forKey: .style)) ?? .auto
+        tone = (try? c.decodeIfPresent(Tone.self, forKey: .tone)) ?? .auto
+        custom = (try? c.decodeIfPresent(RGBAColor.self, forKey: .custom)) ?? nil
+    }
+}
+
 struct BatteryGlyphOptions: Codable, Equatable, Sendable {
     enum Size: String, Codable, CaseIterable, Identifiable, Sendable {
         case small, medium, large
@@ -102,9 +163,13 @@ struct BatteryGlyphOptions: Codable, Equatable, Sendable {
     var fillColor: RGBAColor?
     /// Gradyan / ikinci katman rengi; `nil` = birinci renkten türetilir.
     var secondColor: RGBAColor?
+    /// Şarj şimşeğinin stili ve rengi.
+    var bolt = BatteryBoltOptions()
 
     init(showTime: Bool = false, statusColors: Bool = true, size: Size = .medium, motion: Animation = .live,
-         style: Style = .liquid, fillColor: RGBAColor? = nil, secondColor: RGBAColor? = nil) {
+         style: Style = .liquid, fillColor: RGBAColor? = nil, secondColor: RGBAColor? = nil,
+         bolt: BatteryBoltOptions = BatteryBoltOptions()) {
+        self.bolt = bolt
         self.showTime = showTime
         self.statusColors = statusColors
         self.size = size
@@ -114,7 +179,7 @@ struct BatteryGlyphOptions: Codable, Equatable, Sendable {
         self.secondColor = secondColor
     }
 
-    private enum CodingKeys: String, CodingKey { case showTime, statusColors, size, style, fillColor, secondColor
+    private enum CodingKeys: String, CodingKey { case showTime, statusColors, size, style, fillColor, secondColor, bolt
         case motion = "animation"
     }
 
@@ -127,6 +192,7 @@ struct BatteryGlyphOptions: Codable, Equatable, Sendable {
         style = (try? c.decodeIfPresent(Style.self, forKey: .style)) ?? .liquid
         fillColor = (try? c.decodeIfPresent(RGBAColor.self, forKey: .fillColor)) ?? nil
         secondColor = (try? c.decodeIfPresent(RGBAColor.self, forKey: .secondColor)) ?? nil
+        bolt = (try? c.decodeIfPresent(BatteryBoltOptions.self, forKey: .bolt)) ?? BatteryBoltOptions()
     }
 }
 
@@ -310,6 +376,8 @@ enum BatteryGlyph {
         var duration: TimeInterval
         var minOpacity: Float
         var maxScale: CGFloat
+        /// Hangi şimşek stili (`auto` = bugünkü nefes).
+        var style: BatteryBoltOptions.Style = .auto
         var scales: Bool { maxScale > 1 }
     }
 
@@ -326,10 +394,25 @@ enum BatteryGlyph {
 
     /// `nil` → şimşek statik (Kapalı, fişte-şarj-yok, şimşek yok). Hafif: yalnızca opaklık, süre ×1.5; Canlı: opaklık + hafif ölçek.
     /// Güç yetmiyor (turuncu): daha belirgin, yavaş yanıp sönme (opaklık 1 → 0.35, ölçeksiz).
-    static func boltAnimation(_ state: BatteryGlyphState, motion: BatteryGlyphOptions.Animation) -> BoltAnimation? {
+    /// Seçili stil (`style`): Sabit → hep statik; Nabız / Parıltı / Akış yalnızca gerçekten şarj olurken (fişte-şarj-yok statik).
+    static func boltAnimation(_ state: BatteryGlyphState, motion: BatteryGlyphOptions.Animation,
+                              style: BatteryBoltOptions.Style = .auto) -> BoltAnimation? {
         guard motion != .off, showsBolt(state) else { return nil }
         let light = motion == .light
         let stretch = light ? 1.5 : 1.0
+        switch style {
+        case .still: return nil
+        case .pulse:
+            guard state.isCharging else { return nil }
+            return BoltAnimation(duration: 1.4 * stretch, minOpacity: 0.6, maxScale: light ? 1 : 1.14, style: .pulse)
+        case .shimmer:
+            guard state.isCharging else { return nil }
+            return BoltAnimation(duration: 2.2 * stretch, minOpacity: 1, maxScale: 1, style: .shimmer)
+        case .flow:
+            guard state.isCharging else { return nil }
+            return BoltAnimation(duration: 1.8 * stretch, minOpacity: 1, maxScale: 1, style: .flow)
+        case .auto: break
+        }
         if state.chargeTier == .insufficient {
             return BoltAnimation(duration: boltBreathDuration(.insufficient) * stretch, minOpacity: 0.35, maxScale: 1)
         }
@@ -495,6 +578,21 @@ enum BatteryGlyph {
         return boltColor(.medium)
     }
 
+    /// Seçili şimşek rengi (`Otomatik` → güç kademesi / durum renkleri). Fişte-şarj-yok iken seçili renk de sakinleşir.
+    static func boltColor(_ bolt: BatteryBoltOptions, statusColors: Bool, _ state: BatteryGlyphState) -> NSColor {
+        let chosen: NSColor?
+        switch bolt.tone {
+        case .auto: chosen = nil
+        case .yellow: chosen = dynamic("bolt.pick.yellow", dark: (1.0, 0.82, 0.10), light: (0.80, 0.56, 0.0))
+        case .green: chosen = dynamic("bolt.pick.green", dark: (0.35, 0.88, 0.45), light: (0.16, 0.62, 0.26))
+        // Açık menü çubuğunda beyaz görünmez: açık görünümde koyu gri.
+        case .white: chosen = dynamic("bolt.pick.white", dark: (0.97, 0.97, 0.99), light: (0.20, 0.20, 0.23))
+        case .custom: chosen = bolt.custom?.nsColor
+        }
+        guard let chosen else { return boltColor(statusColors: statusColors, state) }
+        return state.isCharging ? chosen : chosen.withAlphaComponent(0.7)
+    }
+
     static func boltColor(_ tier: ChargeTier) -> NSColor {
         switch tier {
         case .insufficient: dynamic("bolt.drain", dark: (1.0, 0.60, 0.26), light: (0.90, 0.45, 0.06))
@@ -507,7 +605,7 @@ enum BatteryGlyph {
 
     /// Gövdenin solundaki ince şimşek (dikey ortalı, yarım noktaya hizalı). Gövde karelerinin dışında → taban görüntüde.
     static func drawBolt(_ state: BatteryGlyphState, options: BatteryGlyphOptions, capsule: CGRect) {
-        boltColor(statusColors: options.statusColors, state).setFill()
+        boltColor(options.bolt, statusColors: options.statusColors, state).setFill()
         boltPath(in: boltRect(options.size, capsule: capsule)).fill()
     }
 

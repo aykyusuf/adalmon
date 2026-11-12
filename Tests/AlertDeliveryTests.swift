@@ -77,6 +77,17 @@ final class AlertDeliveryTests: XCTestCase {
         XCTAssertEqual(shown().map(\.title), ["Kural devrede: X"])
     }
 
+    /// Yerel proxy'ye giden loopback trafiği (mobil değil) toplamı yüksek olsa da patlama uyarısı vermez.
+    func testBurstUsesMobileBytesNotTotal() async {
+        let notifier = FakeNotifier(current: .authorized)
+        let (center, shown) = await makeCenter(notifier, delivery: .both)
+        center.checkBursts([AppUsage(app: "/py", bytes: 465_000_000, mobileBytes: 0, domains: [])], threshold: 50_000_000, isMobile: true)
+        XCTAssertTrue(notifier.posted.isEmpty)
+        XCTAssertTrue(shown().isEmpty)
+        center.checkBursts([AppUsage(app: "/py", bytes: 465_000_000, mobileBytes: 60_000_000, domains: [])], threshold: 50_000_000, isMobile: true)
+        XCTAssertEqual(notifier.posted.first?.body.hasPrefix("Son 1 dakikada \(Format.bytes(60_000_000))"), true)
+    }
+
     func testBothDeliversTwiceAndBurstKeepsActionAndCategory() async {
         let notifier = FakeNotifier(current: .authorized)
         let (center, shown) = await makeCenter(notifier, delivery: .both)

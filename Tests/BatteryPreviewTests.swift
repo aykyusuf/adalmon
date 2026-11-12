@@ -251,3 +251,135 @@ final class BatteryPreviewTests: XCTestCase {
                            name: "bat1-settings-alerts", wait: 0.8)
     }
 }
+
+/// Opt-in PNGs of the charging-bolt styles x colors at a few animation phases (light + dark), at menu bar scale (x8).
+/// The real animation is Core Animation (cannot be snapshotted), so phases are drawn here with the same keyframe tables
+/// as `BatteryLiquidAnimator.updateBoltAnimation`. Run with TEST_RUNNER_ADALMON_PREVIEW_DIR=<dir>.
+@MainActor
+final class BatteryBoltPreviewTests: XCTestCase {
+    private static let zoom: CGFloat = 8
+    private static let phases: [Double] = [0, 0.2, 0.4, 0.6, 0.8]
+
+    private func interpolate(_ values: [Double], _ times: [Double], at t: Double) -> Double {
+        for i in 1..<times.count where t <= times[i] {
+            let f = (t - times[i - 1]) / max(times[i] - times[i - 1], 1e-9)
+            return values[i - 1] + (values[i] - values[i - 1]) * f
+        }
+        return values.last ?? 1
+    }
+
+    private func chargingState() -> BatteryGlyphState {
+        var r = BatteryReading.sample
+        r.level = 64
+        r.isCharging = true
+        r.isPluggedIn = true
+        r.batteryPowerMW = 15_000
+        r.timeToFullMinutes = 40
+        r.timeToEmptyMinutes = nil
+        var s = BatteryGlyphState(r)
+        s.timeText = nil
+        return s
+    }
+
+    /// Bir hücre: pil + şimşek, verilen stilin `phase` anındaki hali (hücre sol-alt = origin).
+    private func drawCell(style: BatteryBoltOptions.Style, tone: BatteryBoltOptions.Tone, phase: Double, at origin: CGPoint,
+                          cell: CGSize, state: BatteryGlyphState, ctx: CGContext) {
+        let bolt = BatteryBoltOptions(style: style, tone: tone, custom: tone == .custom ? RGBAColor(hex: "#FF4FA3") : nil)
+        let options = BatteryGlyphOptions(statusColors: true, size: .medium, motion: .live, style: .liquid, bolt: bolt)
+        let m = BatteryGlyph.metrics(.medium)
+        let capSize = BatteryGlyph.capsuleSize(m, state)
+        let slot = BatteryGlyph.boltSlot(m, state)
+        ctx.saveGState()
+        ctx.translateBy(x: origin.x, y: origin.y)
+        let content = CGSize(width: slot + capSize.width, height: capSize.height)
+        ctx.translateBy(x: (cell.width - content.width) / 2, y: (cell.height - content.height) / 2)
+        let capsule = CGRect(x: slot, y: 0, width: capSize.width, height: capSize.height)
+        BatteryGlyph.drawCapsule(state, options: options, level: Double(state.level), in: capsule, wave: nil)
+
+        let rect = BatteryGlyph.boltRect(.medium, capsule: capsule)
+        let color = BatteryGlyph.boltColor(bolt, statusColors: true, state)
+        let path = BatteryGlyph.boltPath(in: rect)
+        func fill(_ alpha: CGFloat) {
+            color.withAlphaComponent(alpha).setFill()
+            path.fill()
+        }
+        switch style {
+        case .auto, .still:
+            fill(1)
+        case .pulse:
+            let times = [0, 0.12, 0.26, 0.4, 0.54, 1.0]
+            let opacity = interpolate([1, 0.6, 1, 0.84, 1, 1], times, at: phase)
+            let scale = interpolate([1, 1.14, 1, 1.084, 1, 1], times, at: phase)
+            ctx.saveGState()
+            ctx.translateBy(x: rect.midX, y: rect.midY)
+            ctx.scaleBy(x: scale, y: scale)
+            ctx.translateBy(x: -rect.midX, y: -rect.midY)
+            fill(opacity)
+            ctx.restoreGState()
+        case .shimmer:
+            fill(1)
+            ctx.saveGState()
+            path.addClip()
+            let x = interpolate([-0.5, 1.5, 1.5], [0, 0.55, 1], at: phase) * rect.width + rect.minX
+            let band = CGRect(x: x - rect.width * 0.45, y: rect.minY, width: rect.width * 0.9, height: rect.height)
+            let gradient = NSGradient(colors: [NSColor.white.withAlphaComponent(0), NSColor.white.withAlphaComponent(0.85),
+                                               NSColor.white.withAlphaComponent(0)])
+            gradient?.draw(in: band, angle: 0)
+            ctx.restoreGState()
+        case .flow:
+            fill(0.3)
+            let grow = phase < 0.6 ? 0.5 - 0.5 * cos(.pi * phase / 0.6) : 1
+            let fade = interpolate([1, 1, 1, 0], [0, 0.6, 0.85, 1], at: phase)
+            ctx.saveGState()
+            CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height * grow).clip()
+            fill(fade)
+            ctx.restoreGState()
+        }
+        ctx.restoreGState()
+    }
+
+    private func render(style: BatteryBoltOptions.Style, dark: Bool, to url: URL) throws {
+        let state = chargingState()
+        let tones = BatteryBoltOptions.Tone.allCases
+        let cell = CGSize(width: 54, height: 18)
+        let labelW: CGFloat = 46
+        let size = CGSize(width: labelW + cell.width * CGFloat(Self.phases.count), height: cell.height * CGFloat(tones.count) + 14)
+        let z = Self.zoom
+        let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * z), pixelsHigh: Int(size.height * z),
+                                                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        rep.size = size
+        let appearance = try XCTUnwrap(NSAppearance(named: dark ? .darkAqua : .aqua))
+        NSGraphicsContext.saveGraphicsState()
+        let gc = try XCTUnwrap(NSGraphicsContext(bitmapImageRep: rep))
+        NSGraphicsContext.current = gc
+        appearance.performAsCurrentDrawingAppearance {
+            (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.93, alpha: 1)).setFill()
+            CGRect(origin: .zero, size: size).fill()
+            let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 5), .foregroundColor: NSColor.labelColor]
+            ("\(style.displayName) — fazlar " + Self.phases.map { String(format: "%.1f", $0) }.joined(separator: " / "))
+                .draw(at: CGPoint(x: 3, y: size.height - 10), withAttributes: attrs)
+            for (row, tone) in tones.enumerated() {
+                let y = cell.height * CGFloat(tones.count - 1 - row)
+                tone.displayName.draw(at: CGPoint(x: 3, y: y + cell.height / 2 - 3), withAttributes: attrs)
+                for (col, phase) in Self.phases.enumerated() {
+                    drawCell(style: style, tone: tone, phase: phase, at: CGPoint(x: labelW + cell.width * CGFloat(col), y: y),
+                             cell: cell, state: state, ctx: gc.cgContext)
+                }
+            }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: url)
+    }
+
+    func testExportBoltPreviews() throws {
+        guard let path = ProcessInfo.processInfo.environment["ADALMON_PREVIEW_DIR"] else { return }
+        let dir = URL(filePath: path)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for style in BatteryBoltOptions.Style.allCases {
+            for dark in [false, true] {
+                try render(style: style, dark: dark, to: dir.appending(path: "bolt-\(style.rawValue)-\(dark ? "dark" : "light").png"))
+            }
+        }
+    }
+}

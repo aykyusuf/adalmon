@@ -24,6 +24,8 @@ struct MetricCardConfig: Equatable, Identifiable, Sendable {
     var batteryStyle: BatteryGlyphOptions.Style = .liquid
     var batteryFill: RGBAColor?
     var batterySecond: RGBAColor?
+    /// Pil kartı: şarj şimşeğinin stili ve rengi (varsayılan = bugünkü görünüm).
+    var batteryBolt = BatteryBoltOptions()
 
     var id: MetricCardKind { kind }
 

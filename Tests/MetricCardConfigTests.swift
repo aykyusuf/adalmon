@@ -233,4 +233,27 @@ final class MetricCardConfigTests: XCTestCase {
         let cards = try XCTUnwrap(MetricCardConfig.cards(from: components))
         XCTAssertEqual(cards.first { $0.kind == .memory }?.thresholds, Thresholds(warning: 0.5, critical: 0.9))
     }
+
+    func testBatteryBoltOptionsRoundTripAndLegacyDecode() throws {
+        var battery = MetricCardConfig.defaultCard(.battery)
+        battery.shown = true
+        XCTAssertEqual(battery.batteryBolt, BatteryBoltOptions(), "varsayılan = bugünkü görünüm")
+        battery.batteryBolt = BatteryBoltOptions(style: .flow, tone: .custom, custom: .blue)
+        var cards = MetricCardConfig.defaults
+        cards[cards.firstIndex { $0.kind == .battery }!] = battery
+
+        let components = MetricCardConfig.components(for: cards)
+        let mac = try XCTUnwrap(components.first { $0.visual == .batteryCapsule })
+        XCTAssertEqual(mac.battery.bolt, battery.batteryBolt)
+        let parsed = try XCTUnwrap(MetricCardConfig.cards(from: components), "şimşek stili/rengi basit düzenleyiciden atmamalı")
+        XCTAssertEqual(parsed.first { $0.kind == .battery }, battery)
+
+        // Codable gidiş-dönüş + eski kayıt (bolt anahtarı yok) varsayılana düşer; bozuk değer de.
+        let data = try JSONEncoder().encode(mac.battery)
+        XCTAssertEqual(try JSONDecoder().decode(BatteryGlyphOptions.self, from: data).bolt, battery.batteryBolt)
+        let legacy = try JSONDecoder().decode(BatteryGlyphOptions.self, from: Data(#"{"showTime":true,"style":"beam"}"#.utf8))
+        XCTAssertEqual(legacy.bolt, BatteryBoltOptions())
+        let broken = try JSONDecoder().decode(BatteryGlyphOptions.self, from: Data(#"{"bolt":{"style":"zap","tone":7}}"#.utf8))
+        XCTAssertEqual(broken.bolt, BatteryBoltOptions())
+    }
 }

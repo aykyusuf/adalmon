@@ -24,7 +24,8 @@ extension MetricCardConfig {
             var c = MenuBarComponent(.batteryLevel, visual: .batteryCapsule, showLabel: showLabel, layout: layout,
                                      battery: BatteryGlyphOptions(showTime: showTime, statusColors: thresholdColor,
                                                                   motion: batteryAnimation, style: batteryStyle,
-                                                                  fillColor: batteryFill, secondColor: batterySecond))
+                                                                  fillColor: batteryFill, secondColor: batterySecond,
+                                                                  bolt: batteryBolt))
             c.id = Self.componentID(kind, slot: 0)
             c.enabled = shown
             return [applyingColors(to: c)]
@@ -87,6 +88,7 @@ extension MetricCardConfig {
                 card.batteryStyle = c.battery.style
                 card.batteryFill = c.battery.fillColor
                 card.batterySecond = c.battery.secondColor
+                card.batteryBolt = c.battery.bolt
             } else if c.visual == .sparkline {
                 card.showGraph = true
             } else if kind != .connection {

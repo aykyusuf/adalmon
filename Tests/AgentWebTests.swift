@@ -482,6 +482,33 @@ final class AgentWebTests: XCTestCase {
         XCTAssertEqual(count1, 0, "bağlantı kopunca SSE istemcisi temizlenmeli")
     }
 
+    func testStaleSnapshotIsNotSentOnStreamOpen() async throws {
+        let web = AgentWebStore(webRoot: webRoot, officeRoot: officeRoot)
+        web.setEnabled(true)
+        web.setState(Data(#"{"v":1,"n":0}"#.utf8))
+        web.markStale()
+        XCTAssertTrue(web.isStale)
+        let (server, port) = try await startServer(web: web)
+        defer { server.stop() }
+        var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/stream?t=\(token)")!)
+        req.timeoutInterval = 8
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let (bytes, _) = try await session.bytes(for: req)
+        let collector = Task { () -> [String] in
+            var lines: [String] = []
+            do { for try await line in bytes.lines { lines.append(line); if line.hasPrefix("data:") { break } } } catch {}
+            return lines
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        web.setState(Data(#"{"v":1,"n":2}"#.utf8))
+        XCTAssertFalse(web.isStale, "yeni görüntü bayatlığı kaldırır")
+        server.broadcast(Data(#"{"v":1,"n":2}"#.utf8))
+        let lines = await collector.value
+        XCTAssertFalse(lines.contains(#"data: {"v":1,"n":0}"#), "bayat görüntü gönderilmemeli: \(lines)")
+        XCTAssertEqual(lines.last, #"data: {"v":1,"n":2}"#, "ilk veri taze yayın olmalı: \(lines)")
+    }
+
     func testLivePostEventStillWorksWithWebLayer() async throws {
         let web = AgentWebStore(webRoot: webRoot, officeRoot: officeRoot)
         web.setEnabled(true)
@@ -529,4 +556,45 @@ private final class LiveStateBox: @unchecked Sendable {
     private var state = AgentEventServer.State.stopped
     func set(_ s: AgentEventServer.State) { lock.lock(); state = s; lock.unlock() }
     var value: AgentEventServer.State { lock.lock(); defer { lock.unlock() }; return state }
+}
+
+/// Pil: tarayıcı görünümü açıkken bile bağlı istemci (SSE) yoksa ofis anlık görüntüsü (JSON) üretilmez;
+/// ilk istemci bağlanınca bir kez üretilip yayınlanır. Geçici dizin; gerçek config.json'a dokunulmaz.
+@MainActor
+final class AgentWebLazySnapshotTests: XCTestCase {
+    func testNoSnapshotBuildWithoutStreamClientsThenFreshOnConnect() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appending(path: "weblazy-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let suite = "AgentWebLazy-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let prefs = Preferences(defaults: defaults)
+        prefs.agentsEnabled = true
+        prefs.agentsWebEnabled = true
+        let generator = AgentPluginGenerator(root: tmp, usesPython: false)
+        let service = AgentService(prefs: prefs, installer: AgentPluginInstaller(generator: generator))
+        service.apply()
+        defer { service.setEnabled(false) }
+        for _ in 0..<50 where service.port == nil { try await Task.sleep(for: .milliseconds(100)) }
+        _ = try XCTUnwrap(service.port, "dinleyici başlamalı")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(service.webSnapshotBuilds, 0, "istemci yokken görüntü üretilmez")
+
+        let url = try XCTUnwrap(service.webURL)
+        let token = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "t" }?.value)
+        var req = URLRequest(url: URL(string: "http://127.0.0.1:\(try XCTUnwrap(service.port))/v1/stream?t=\(token)")!)
+        req.timeoutInterval = 8
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let (bytes, _) = try await session.bytes(for: req)
+        let collector = Task { () -> String? in
+            do { for try await line in bytes.lines where line.hasPrefix("data:") { return line } } catch {}
+            return nil
+        }
+        let first = await collector.value
+        XCTAssertEqual(service.webSnapshotBuilds, 1, "ilk istemci bağlanınca bir kez üretilir")
+        let line = try XCTUnwrap(first, "taze görüntü yayınlanmalı")
+        XCTAssertTrue(line.contains("rooms"), line)
+    }
 }

@@ -97,16 +97,17 @@ final class AlertCenter {
         deliver(Self.filterDownMessage, action: action)
     }
 
-    /// Son 60 sn'de eşiği aşan uygulamalar için (uygulama başına 5 dakikada bir).
+    /// Son 60 sn'de MOBİL byte'ı eşiği aşan uygulamalar için (uygulama başına 5 dakikada bir).
+    /// Toplam değil mobil sayılır: yerel proxy'ye giden loopback trafiği Mac'ten çıkmaz (bkz. `UsageEngine.mobileShares`).
     func checkBursts(_ apps: [AppUsage], threshold: UInt64, isMobile: Bool, now: Date = .now) {
         guard isMobile else { return }
-        for a in apps where a.bytes >= threshold {
+        for a in apps where a.mobileBytes >= threshold {
             if let t = lastBurst[a.app], now.timeIntervalSince(t) < 300 { continue }
             lastBurst[a.app] = now
             let name = AppCatalog.shared.name(for: a.app)
             let domain = a.domains.first.map { " · \($0.name)" } ?? ""
             let message = AlertMessage(id: "burst-\(a.app)", title: "\(name) mobil veriyi hızlı harcıyor",
-                                       body: "Son 1 dakikada \(Format.bytes(a.bytes))\(domain)",
+                                       body: "Son 1 dakikada \(Format.bytes(a.mobileBytes))\(domain)",
                                        category: UNSystemNotifier.burstCategory, userInfo: ["app": a.app],
                                        symbol: "antenna.radiowaves.left.and.right")
             let app = a.app

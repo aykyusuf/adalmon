@@ -112,7 +112,8 @@ final class StatusBarController: NSObject {
                 let frameKey = BatteryFrameKey(state: battery, options: group.items[index].battery,
                                                appearance: appearance.name, scale: scale)
                 image = batteryAnimator.show(.init(itemKey: group.key, button: button, base: base, rect: rect,
-                                                    frameKey: frameKey, appearance: appearance, bolt: battery))
+                                                    frameKey: frameKey, appearance: appearance, bolt: battery,
+                                                    boltOptions: group.items[index].battery.bolt))
             } else if group.items.isEmpty {
                 image = MenuBarComposer.placeholderImage()
             } else {

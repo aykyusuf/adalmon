@@ -1,3 +1,4 @@
+import SpriteKit
 import XCTest
 @testable import Adalmon
 
@@ -79,5 +80,44 @@ final class OfficeLabelLayoutTests: XCTestCase {
 
     func testEmpty() {
         XCTAssertTrue(OfficeLabelLayout.resolve([], zoom: 1).placements.isEmpty)
+    }
+
+    func testLowPriorityHiddenInsteadOfOverlapping() {
+        var items = row(12, spacing: 12)
+        for i in items.indices { items[i].priority = i == 5 ? OfficeLabelLayout.protectedPriority : (i % 2 == 0 ? OfficeLabelLayout.runningPriority : OfficeLabelLayout.idlePriority) }
+        let r = OfficeLabelLayout.resolve(items, zoom: 2)
+        XCTAssertEqual(r.placements.count, 12)
+        XCTAssertEqual(r.overlaps, 0, "gizlenenler sayılmaz, görünenler çakışmaz")
+        XCTAssertTrue(r.placements.values.contains { $0.hidden })
+        XCTAssertEqual(r.placements["a05"]?.hidden, false, "öncelikli etiket gizlenmez")
+        // Çalışan, boştakinden önce yerleşir: gizlenen bir çalışan varsa tüm boştakiler de gizlidir.
+        let hiddenRunning = items.filter { $0.priority == 1 && r.placements[$0.id]?.hidden == true }
+        if !hiddenRunning.isEmpty { XCTAssertTrue(items.filter { $0.priority == 0 }.allSatisfy { r.placements[$0.id]?.hidden == true }) }
+    }
+
+    func testDefaultPriorityNeverHides() {
+        let r = OfficeLabelLayout.resolve(row(12, spacing: 12), zoom: 2)
+        XCTAssertTrue(r.placements.values.allSatisfy { !$0.hidden })
+    }
+
+    @MainActor
+    func testCrowdDemoHasNoOverlappingVisibleLabels() throws {
+        let assets = try XCTUnwrap(OfficeAssets.shared)
+        let size = CGSize(width: 1600, height: 1000)
+        let view = SKView(frame: CGRect(origin: .zero, size: size))
+        let scene = OfficeScene(assets: assets, size: size, theme: .vector)
+        view.presentScene(scene)
+        scene.apply(members: OfficeMember.members(from: OfficeDemo.crowd()), animated: false)
+        defer { scene.shutdown() }
+        var checked = 0
+        for id in scene.roomIDs {
+            scene.select(id, animated: false)
+            let rects = try XCTUnwrap(scene.room(id)).visibleLabelRects
+            checked += rects.count
+            for i in rects.indices { for j in rects.indices where j > i {
+                XCTAssertFalse(rects[i].rect.intersects(rects[j].rect), "\(id): \(rects[i].id) / \(rects[j].id)")
+            } }
+        }
+        XCTAssertGreaterThan(checked, 0)
     }
 }

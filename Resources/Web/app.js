@@ -1062,7 +1062,8 @@
     const obstacles = [];
     for (const sh of shown) {
       const a = sh.o.a;
-      obstacles.push(drawLabel(a, sh.o.lk, sh.sx, sh.sy, labelPlace.get(a.member.id)));
+      const lp = labelPlace.get(a.member.id);
+      if (!lp || !lp.hidden) obstacles.push(drawLabel(a, sh.o.lk, sh.sx, sh.sy, lp));
       const bub = bubbleOf(a);
       if (bub && a.alpha >= 0.9) bubbles.push({ a, bub, sx: sh.sx, hy: sh.sy - 29 * S * sh.o.k });
     }
@@ -1121,7 +1122,8 @@
   // Soldan sağa yerleştirme; çakışan etiket en çok 2 kademe (16 px) kaydırılır; yetmezse tüm odada metin biçimi kısalır:
   // tam ad -> `eklenti:` öneki atılmış ad -> 14 karakter + "…"; yine olmazsa en az örtüşen kademe. Kademe yönü: web'de etiket
   // ayakların ALTINDA durduğu için kademeler aşağı doğrudur (macOS'ta baş üstü olduğundan yukarı).
-  const LABEL = { maxLevel: 2, shortLimit: 14 };
+  // Öncelik: oturum (2, gizlenmez) > çalışan alt ajan (1) > boşta (0); son biçimde de sığmayan düşük öncelikli etiket gizlenir.
+  const LABEL = { maxLevel: 2, shortLimit: 14, protectedPriority: 2 };
 
   function labelVariants(title) {
     const out = [title];
@@ -1145,7 +1147,8 @@
   }
 
   function resolveLabels(items, m) {
-    const sorted = items.filter((i) => i.widths.length).sort((p, q) => (p.x - q.x) || (p.y - q.y) || (p.id < q.id ? -1 : p.id > q.id ? 1 : 0));
+    const prio = (i) => (i.priority === undefined ? LABEL.protectedPriority : i.priority);
+    const sorted = items.filter((i) => i.widths.length).sort((p, q) => (prio(q) - prio(p)) || (p.x - q.x) || (p.y - q.y) || (p.id < q.id ? -1 : p.id > q.id ? 1 : 0));
     if (!sorted.length) return { placements: new Map(), overlaps: 0 };
     const stages = Math.max(...sorted.map((i) => i.widths.length));
     let result = new Map();
@@ -1163,6 +1166,7 @@
         if (chosen === null) {
           failed = true;
           if (!last) break;
+          if (prio(item) < LABEL.protectedPriority) { out.set(item.id, { variant, level: 0, hidden: true }); continue; }
           let best = { level: 0, area: Infinity };   // kabul edilen çakışma: en az kesişim alanı, eşitlikte en düşük kademe
           for (let level = 0; level <= LABEL.maxLevel; level++) {
             const r = labelRect(item, variant, level, m);
@@ -1177,7 +1181,7 @@
       if (!failed || last) result = out;
       if (!failed) break;
     }
-    const rects = sorted.map((i) => { const p = result.get(i.id); return p ? labelRect(i, p.variant, p.level, m) : null; }).filter(Boolean);
+    const rects = sorted.map((i) => { const p = result.get(i.id); return p && !p.hidden ? labelRect(i, p.variant, p.level, m) : null; }).filter(Boolean);
     let overlaps = 0;
     for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) if (rectsOverlap(rects[i], rects[j])) overlaps++;
     return { placements: result, overlaps };
@@ -1200,11 +1204,12 @@
     if (room.labelCache && room.labelCache.key === key) return room.labelCache.map;
     const items = cands.map((sh) => {
       const variants = labelVariants(labelText(sh.o.a.member));
-      return { id: sh.o.a.member.id, x: Math.round(sh.sx), y: Math.round(sh.sy + 2 * U), variants, widths: variants.map(labelWidth) };
+      const am = sh.o.a.member, priority = am.kind !== 'subagent' ? LABEL.protectedPriority : (isWorking(am) ? 1 : 0);
+      return { id: am.id, x: Math.round(sh.sx), y: Math.round(sh.sy + 2 * U), variants, widths: variants.map(labelWidth), priority };
     });
     const res = resolveLabels(items, labelMetrics());
     const map = new Map();
-    for (const it of items) { const p = res.placements.get(it.id); if (p) map.set(it.id, { text: it.variants[p.variant], level: p.level }); }
+    for (const it of items) { const p = res.placements.get(it.id); if (p) map.set(it.id, { text: it.variants[p.variant], level: p.level, hidden: !!p.hidden }); }
     room.labelCache = { key, map, overlaps: res.overlaps };
     return map;
   }

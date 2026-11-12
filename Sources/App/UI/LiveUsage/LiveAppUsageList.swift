@@ -11,11 +11,15 @@ struct LiveAppUsageList: View {
         var rows: @MainActor (LiveRange, LiveInterface) -> [LiveAppUsage]
         /// Bugünün toplamları (yalnızca `showsToday` açıkken seçilebilir; ↓/↑ ayrımı yok).
         var today: (@MainActor (LiveInterface) -> [LiveAppUsage])? = nil
+        /// Liste kullanıcıya görünüyor mu? Değilse (ana pencere küçültülmüş/örtülü, panel kapalı) saniyelik okuma ve
+        /// durum yazımı atlanır; pencere görünür olunca en geç ~1 sn içinde yenilenir (pil).
+        var isActive: @MainActor () -> Bool = { true }
 
         @MainActor
         static func live(_ model: AppModel) -> Source {
             Source(rows: { [weak model] range, interface in model?.usage.liveRows(range: range, interface: interface) ?? [] },
-                   today: { [weak model] interface in model?.usage.todayRows(interface: interface) ?? [] })
+                   today: { [weak model] interface in model?.usage.todayRows(interface: interface) ?? [] },
+                   isActive: { [weak model] in model.map { $0.mainWindowVisible || $0.panelVisible } ?? false })
         }
 
         /// Önizleme/test: aralıktan bağımsız sabit satırlar.
@@ -260,14 +264,21 @@ struct LiveAppUsageList: View {
             : "\(phrase.prefix(1).uppercased())\(phrase.dropFirst()) kayda değer trafik yok."
     }
 
+    /// Saniyelik turda satırlar okunsun mu: görünürken her tur; görünmezken yalnızca ilk yükleme (iskelet kalmasın).
+    nonisolated static func shouldRefresh(active: Bool, loaded: Bool) -> Bool { active || !loaded }
+
     private func refreshWhileVisible() async {
         while !Task.isCancelled {
+            guard Self.shouldRefresh(active: source.isActive(), loaded: loaded) else {
+                try? await Task.sleep(for: .seconds(1), tolerance: .milliseconds(300))
+                continue
+            }
             let next: [LiveAppUsage] = switch window {
             case .range(let range): source.rows(range, interface)
             case .today: source.today?(interface) ?? []
             }
             if next != rows { rows = next }
-            loaded = true
+            if !loaded { loaded = true }
             try? await Task.sleep(for: .seconds(1), tolerance: .milliseconds(300))
         }
     }

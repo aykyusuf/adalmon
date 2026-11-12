@@ -1169,7 +1169,8 @@ final class OfficeRoomNode {
         var items: [OfficeLabelItem] = []
         for a in actors.values where a.labelBuilt && !a.labelWidths.isEmpty && !a.label.isHidden {
             if a.moving || a.hopping || a.leaving { continue }
-            items.append(OfficeLabelItem(id: a.member.id, x: a.root.position.x, y: a.root.position.y + labelBaseY(a), widths: a.labelWidths))
+            let priority = a.member.kind == .session ? OfficeLabelLayout.protectedPriority : (a.member.status.isWorking ? OfficeLabelLayout.runningPriority : OfficeLabelLayout.idlePriority)
+            items.append(OfficeLabelItem(id: a.member.id, x: a.root.position.x, y: a.root.position.y + labelBaseY(a), widths: a.labelWidths, priority: priority))
         }
         items.sort { $0.id < $1.id }
         guard items != lastLabelItems || labelZoom != lastLabelZoom else { return }
@@ -1179,7 +1180,17 @@ final class OfficeRoomNode {
             guard let a = actors[item.id], let p = result[item.id] else { continue }
             if a.labelVariant != p.variant { applyLabelVariant(a, p.variant) }
             a.labelLevel = p.level
+            a.label.alpha = p.hidden ? 0 : 1   // isHidden'a dokunulmaz: yer açılınca etiket bir sonraki çözümde geri gelir
             a.label.position = CGPoint(x: 0, y: labelY(a))
+        }
+    }
+
+    /// Görünür (gizlenmemiş) ad etiketlerinin oda koordinatındaki dikdörtgenleri (çakışma testi için).
+    var visibleLabelRects: [(id: String, rect: CGRect)] {
+        let z = labelZoom
+        return actors.values.filter { $0.labelBuilt && !$0.label.isHidden && $0.label.alpha > 0 }.map { a in
+            let w = (a.labelWidths.indices.contains(a.labelVariant) ? a.labelWidths[a.labelVariant] : 0) + OfficeLabelLayout.margin
+            return (a.member.id, CGRect(x: a.root.position.x - w / 2 / z, y: a.root.position.y + labelY(a), width: w / z, height: OfficeLabelLayout.height / z))
         }
     }
 
@@ -1190,7 +1201,7 @@ final class OfficeRoomNode {
         var placed: [(rect: CGRect, owner: String?)] = []
         if theme == .vector {
             // Etiketler engeldir (kendi etiketi hariç): balon komşunun etiketine binmez.
-            for a in actors.values where a.labelBuilt && !a.label.isHidden {
+            for a in actors.values where a.labelBuilt && !a.label.isHidden && a.label.alpha > 0 {
                 let w = (a.labelWidths.indices.contains(a.labelVariant) ? a.labelWidths[a.labelVariant] : 0) + OfficeLabelLayout.margin
                 placed.append((CGRect(x: a.root.position.x - w / 2 / z, y: a.root.position.y + labelY(a), width: w / z, height: OfficeLabelLayout.height / z), a.member.id))
             }

@@ -125,8 +125,9 @@ enum BoltRenderer {
         BatteryGlyph.boltRect(size, capsule: capsule).insetBy(dx: -pad, dy: -pad)
     }
 
-    static func image(_ state: BatteryGlyphState, statusColors: Bool, size: BatteryGlyphOptions.Size,
-                      appearance: NSAppearance, scale: CGFloat) -> NSImage {
+    /// `alpha` < 1: "Akış" stilinin soluk tabanı (parlak dolgu üstüne bir maske ile büyür).
+    static func image(_ state: BatteryGlyphState, bolt: BatteryBoltOptions = BatteryBoltOptions(), statusColors: Bool,
+                      size: BatteryGlyphOptions.Size, appearance: NSAppearance, scale: CGFloat, alpha: CGFloat = 1) -> NSImage {
         let s = BatteryGlyph.boltSize(BatteryGlyph.metrics(size))
         let imageSize = CGSize(width: s.width + 2 * pad, height: s.height + 2 * pad)
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(ceil(imageSize.width * scale)),
@@ -137,7 +138,7 @@ enum BoltRenderer {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         appearance.performAsCurrentDrawingAppearance {
-            BatteryGlyph.boltColor(statusColors: statusColors, state).setFill()
+            BatteryGlyph.boltColor(bolt, statusColors: statusColors, state).withAlphaComponent(alpha).setFill()
             BatteryGlyph.boltPath(in: CGRect(origin: CGPoint(x: pad, y: pad), size: s)).fill()
         }
         NSGraphicsContext.restoreGraphicsState()
@@ -164,6 +165,8 @@ final class BatteryLiquidAnimator {
         var appearance: NSAppearance? = nil
         /// Şimşeği olan tam pil durumu (güç kademesi dahil); `nil` → şimşek yok. Şimşek tabanda değil, ayrı katmandadır.
         var bolt: BatteryGlyphState? = nil
+        /// Şimşeğin stili ve rengi.
+        var boltOptions = BatteryBoltOptions()
     }
 
     /// Hareket izni değişti (Hareketi Azalt / Düşük Güç): denetleyici statik ↔ canlı yeniden çizsin.
@@ -198,10 +201,16 @@ final class BatteryLiquidAnimator {
         var plugged: Bool
         var tier: ChargeTier?
         var statusColors: Bool
+        var bolt: BatteryBoltOptions
+        /// Soluk taban ("Akış" çalışırken).
+        var dim: Bool
         var size: BatteryGlyphOptions.Size
         var scale: CGFloat
         var appearance: String
     }
+    /// Parıltı / Akış alt katmanları (ana şimşek katmanının çocukları); yalnızca ilgili stil çalışırken vardır.
+    private var boltSheen: CALayer?
+    private var boltFill: CALayer?
 
     init() {
         env.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -317,19 +326,33 @@ final class BatteryLiquidAnimator {
         }
         let appearance = target.appearance ?? NSAppearance(named: .darkAqua)!
         let scale = target.frameKey.scale
-        let key = BoltImageKey(charging: state.isCharging, plugged: state.isPluggedIn, tier: state.chargeTier,
-                               statusColors: target.frameKey.statusColors, size: target.frameKey.size, scale: scale,
-                               appearance: appearance.name.rawValue)
-        if boltImage?.key != key {
-            boltImage = (key, BoltRenderer.image(state, statusColors: key.statusColors, size: key.size,
-                                                 appearance: appearance, scale: scale))
-        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layer.contentsScale = scale
-        layer.contents = boltImage.flatMap { Self.cgImage($0.image) }
         CATransaction.commit()
+        applyBoltImage(layer: layer, state: state, target: target, appearance: appearance, scale: scale)
         updateBoltAnimation()
+    }
+
+    /// Şimşek görüntüsü anahtarı değiştiyse yeniden çizilir (renk / görünüm / "Akış" için soluk taban).
+    private func applyBoltImage(layer: CALayer, state: BatteryGlyphState, target: Target, appearance: NSAppearance, scale: CGFloat) {
+        let key = BoltImageKey(charging: state.isCharging, plugged: state.isPluggedIn, tier: state.chargeTier,
+                               statusColors: target.frameKey.statusColors, bolt: target.boltOptions,
+                               dim: desiredBoltAnimation()?.style == .flow, size: target.frameKey.size, scale: scale,
+                               appearance: appearance.name.rawValue)
+        guard boltImage?.key != key else { return }
+        let image = BoltRenderer.image(state, bolt: key.bolt, statusColors: key.statusColors, size: key.size,
+                                       appearance: appearance, scale: scale, alpha: key.dim ? 0.3 : 1)
+        boltImage = (key, image)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.contents = Self.cgImage(image)
+        CATransaction.commit()
+    }
+
+    private func desiredBoltAnimation() -> BatteryGlyph.BoltAnimation? {
+        guard let state = target?.bolt, let frameKey = target?.frameKey, let options = target?.boltOptions else { return nil }
+        return plan != nil && !env.lowPower ? BatteryGlyph.boltAnimation(state, motion: frameKey.animation, style: options.style) : nil
     }
 
     private func removeBolt() {
@@ -338,32 +361,146 @@ final class BatteryLiquidAnimator {
         boltLayer = nil
         boltImage = nil
         boltAnimation = nil
+        boltSheen = nil
+        boltFill = nil
     }
 
-    /// Nefes yalnızca zamanlayıcı planı varsa (görünür, uyanık, kilitsiz, Hareketi Azalt kapalı) ve Düşük Güç kapalıyken çalışır;
+    /// Hareket yalnızca zamanlayıcı planı varsa (görünür, uyanık, kilitsiz, Hareketi Azalt kapalı) ve Düşük Güç kapalıyken çalışır;
     /// değişmediyse dokunulmaz (her `show`'da yeniden başlayıp takılmasın), değiştiyse kesintisiz yeniden kurulur.
+    /// Tüm stiller Core Animation'dır (render sunucusunda döner): uygulama tarafında timer/çizim yok.
     private func updateBoltAnimation() {
-        guard let boltLayer, let state = target?.bolt, let frameKey = target?.frameKey else { return }
-        let desired = plan != nil && !env.lowPower ? BatteryGlyph.boltAnimation(state, motion: frameKey.animation) : nil
-        let running = !(boltLayer.animationKeys() ?? []).isEmpty
+        guard let boltLayer, let state = target?.bolt, let target else { return }
+        let desired = desiredBoltAnimation()
+        // "Akış" soluk tabanı ya da renk değiştiyse görüntüyü yenile.
+        let appearance = target.appearance ?? NSAppearance(named: .darkAqua)!
+        applyBoltImage(layer: boltLayer, state: state, target: target, appearance: appearance, scale: target.frameKey.scale)
+        let running = !(boltLayer.animationKeys() ?? []).isEmpty || boltSheen != nil || boltFill != nil
         guard desired != boltAnimation || running != (desired != nil) else { return }
         boltLayer.removeAllAnimations()
+        removeBoltSublayers()
         boltAnimation = desired
         guard let desired else { return }
+        switch desired.style {
+        case .auto, .still, .pulse:
+            let ease = CAMediaTimingFunction(name: .easeInEaseOut)
+            func breath(_ keyPath: String, rest: Float, peak: Float) -> CAKeyframeAnimation {
+                let a = CAKeyframeAnimation(keyPath: keyPath)
+                a.values = [rest, peak, rest]
+                a.keyTimes = [0, 0.5, 1]
+                a.timingFunctions = [ease, ease]
+                a.duration = desired.duration
+                a.repeatCount = .infinity
+                return a
+            }
+            if desired.style == .pulse {
+                // Çift vuruş: iki hızlı büyüme, ardından dinlenme.
+                func beat(_ keyPath: String, rest: Float, peak: Float) -> CAKeyframeAnimation {
+                    let a = CAKeyframeAnimation(keyPath: keyPath)
+                    a.values = [rest, peak, rest, rest + (peak - rest) * 0.6, rest, rest]
+                    a.keyTimes = [0, 0.12, 0.26, 0.4, 0.54, 1]
+                    a.timingFunctions = Array(repeating: ease, count: 5)
+                    a.duration = desired.duration
+                    a.repeatCount = .infinity
+                    return a
+                }
+                boltLayer.add(beat("opacity", rest: 1, peak: Float(desired.minOpacity)), forKey: "bolt.opacity")
+                if desired.scales { boltLayer.add(beat("transform.scale", rest: 1, peak: Float(desired.maxScale)), forKey: "bolt.scale") }
+            } else {
+                boltLayer.add(breath("opacity", rest: 1, peak: desired.minOpacity), forKey: "bolt.opacity")
+                if desired.scales {
+                    boltLayer.add(breath("transform.scale", rest: 1, peak: Float(desired.maxScale)), forKey: "bolt.scale")
+                }
+            }
+        case .shimmer: installShimmer(on: boltLayer, duration: desired.duration)
+        case .flow: installFlow(on: boltLayer, duration: desired.duration)
+        }
+    }
+
+    private func removeBoltSublayers() {
+        boltSheen?.removeAllAnimations()
+        boltSheen?.removeFromSuperlayer()
+        boltSheen = nil
+        boltFill?.removeAllAnimations()
+        boltFill?.removeFromSuperlayer()
+        boltFill = nil
+    }
+
+    /// Şimşek şeklinde bir maske katmanı (şimşek görüntüsüyle aynı; yalnızca alfa kullanılır).
+    private func boltMask(bounds: CGRect) -> CALayer {
+        let mask = CALayer()
+        mask.frame = bounds
+        mask.contentsGravity = .resize
+        mask.contentsScale = boltLayer?.contentsScale ?? 2
+        if let state = target?.bolt, let t = target {
+            let appearance = t.appearance ?? NSAppearance(named: .darkAqua)!
+            mask.contents = Self.cgImage(BoltRenderer.image(state, bolt: t.boltOptions, statusColors: t.frameKey.statusColors,
+                                                            size: t.frameKey.size, appearance: appearance, scale: t.frameKey.scale))
+        }
+        return mask
+    }
+
+    /// Parıltı: şimşeğin üstünde, yine şimşek şekline maskelenmiş açık bir huzme soldan sağa kayar; sonra kısa bekleme.
+    private func installShimmer(on layer: CALayer, duration: TimeInterval) {
+        let bounds = CGRect(origin: .zero, size: layer.bounds.size)
+        let sheen = CAGradientLayer()
+        sheen.actions = ["position": NSNull(), "bounds": NSNull(), "transform": NSNull()]
+        sheen.bounds = CGRect(x: 0, y: 0, width: bounds.width * 0.9, height: bounds.height)
+        sheen.position = CGPoint(x: -bounds.width * 0.5, y: bounds.midY)
+        sheen.colors = [NSColor.white.withAlphaComponent(0).cgColor, NSColor.white.withAlphaComponent(0.85).cgColor,
+                        NSColor.white.withAlphaComponent(0).cgColor]
+        sheen.startPoint = CGPoint(x: 0, y: 0.35)
+        sheen.endPoint = CGPoint(x: 1, y: 0.65)
+        let host = CALayer()
+        host.frame = bounds
+        host.mask = boltMask(bounds: CGRect(origin: .zero, size: bounds.size))
+        host.addSublayer(sheen)
+        layer.addSublayer(host)
+        boltSheen = host
+        let a = CAKeyframeAnimation(keyPath: "position.x")
+        a.values = [-bounds.width * 0.5, bounds.width * 1.5, bounds.width * 1.5]
+        a.keyTimes = [0, 0.55, 1]
+        a.timingFunctions = [CAMediaTimingFunction(name: .easeInEaseOut), CAMediaTimingFunction(name: .linear)]
+        a.duration = duration
+        a.repeatCount = .infinity
+        sheen.add(a, forKey: "bolt.sheen")
+    }
+
+    /// Akış: soluk tabanın üstünde parlak şimşek, alttan üste büyüyen bir maskeyle dolar; dolunca kısa bekler, söner, yeniden başlar.
+    private func installFlow(on layer: CALayer, duration: TimeInterval) {
+        let bounds = CGRect(origin: .zero, size: layer.bounds.size)
+        let fill = CALayer()
+        fill.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "opacity": NSNull()]
+        fill.frame = bounds
+        fill.contentsGravity = .resize
+        fill.contentsScale = layer.contentsScale
+        if let state = target?.bolt, let t = target {
+            let appearance = t.appearance ?? NSAppearance(named: .darkAqua)!
+            fill.contents = Self.cgImage(BoltRenderer.image(state, bolt: t.boltOptions, statusColors: t.frameKey.statusColors,
+                                                            size: t.frameKey.size, appearance: appearance, scale: t.frameKey.scale))
+        }
+        let wipe = CALayer()
+        wipe.backgroundColor = NSColor.black.cgColor
+        wipe.anchorPoint = CGPoint(x: 0.5, y: 0)
+        wipe.bounds = CGRect(origin: .zero, size: bounds.size)
+        wipe.position = CGPoint(x: bounds.midX, y: 0)
+        wipe.actions = ["transform": NSNull(), "position": NSNull(), "bounds": NSNull()]
+        fill.mask = wipe
+        layer.addSublayer(fill)
+        boltFill = fill
         let ease = CAMediaTimingFunction(name: .easeInEaseOut)
-        func breath(_ keyPath: String, rest: Float, peak: Float) -> CAKeyframeAnimation {
-            let a = CAKeyframeAnimation(keyPath: keyPath)
-            a.values = [rest, peak, rest]
-            a.keyTimes = [0, 0.5, 1]
-            a.timingFunctions = [ease, ease]
-            a.duration = desired.duration
-            a.repeatCount = .infinity
-            return a
-        }
-        boltLayer.add(breath("opacity", rest: 1, peak: desired.minOpacity), forKey: "bolt.opacity")
-        if desired.scales {
-            boltLayer.add(breath("transform.scale", rest: 1, peak: Float(desired.maxScale)), forKey: "bolt.scale")
-        }
+        let grow = CAKeyframeAnimation(keyPath: "transform.scale.y")
+        grow.values = [0.001, 1, 1, 1]
+        grow.keyTimes = [0, 0.6, 0.85, 1]
+        grow.timingFunctions = [ease, CAMediaTimingFunction(name: .linear), CAMediaTimingFunction(name: .linear)]
+        grow.duration = duration
+        grow.repeatCount = .infinity
+        wipe.add(grow, forKey: "bolt.flow")
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [1, 1, 1, 0]
+        fade.keyTimes = [0, 0.6, 0.85, 1]
+        fade.duration = duration
+        fade.repeatCount = .infinity
+        fill.add(fade, forKey: "bolt.flow.fade")
     }
 
     /// Katmanı düğme içinde, görüntünün (ortalanmış) üstünde gövde dikdörtgenine yerleştirir; yalnızca düğme boyutu değişince.
@@ -380,11 +517,19 @@ final class BatteryLiquidAnimator {
             let y = button.isFlipped ? o.y + target.base.size.height - r.maxY : o.y + r.minY
             return CGRect(x: o.x + r.minX, y: y, width: r.width, height: r.height)
         }
+        let oldBoltSize = boltLayer?.bounds.size
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         overlay?.frame = layerFrame(target.rect)
         boltLayer?.frame = layerFrame(BoltRenderer.frame(capsule: target.rect, size: target.frameKey.size))
         CATransaction.commit()
+        // Parıltı / Akış alt katmanları şimşek boyutuna göre kurulur; boyut değiştiyse yeniden kur.
+        if let boltLayer, boltSheen != nil || boltFill != nil, boltLayer.bounds.size != oldBoltSize {
+            boltLayer.removeAllAnimations()
+            removeBoltSublayers()
+            boltAnimation = nil
+            updateBoltAnimation()
+        }
     }
 
     private func applyOverlay() {
@@ -419,8 +564,8 @@ final class BatteryLiquidAnimator {
         guard target.button == nil, let state = target.bolt, BatteryGlyph.showsBolt(state) else { return target.base }
         if let staticBase { return staticBase }
         let appearance = target.appearance ?? NSAppearance(named: .darkAqua)!
-        let bolt = BoltRenderer.image(state, statusColors: target.frameKey.statusColors, size: target.frameKey.size,
-                                      appearance: appearance, scale: target.frameKey.scale)
+        let bolt = BoltRenderer.image(state, bolt: target.boltOptions, statusColors: target.frameKey.statusColors,
+                                      size: target.frameKey.size, appearance: appearance, scale: target.frameKey.scale)
         let image = MenuBarComposer.composite(base: target.base, overlay: bolt,
                                               at: BoltRenderer.frame(capsule: target.rect, size: target.frameKey.size))
         staticBase = image

@@ -80,6 +80,7 @@ struct MetricCardView: View {
             .help("Pildeki sıvının hareketi. Canlı: sürekli dalga; Hafif: daha sakin. Hareketi Azalt açıkken durur, Düşük Güç Modunda yavaşlar.")
             BatteryStylePicker(style: $card.batteryStyle, fillColor: $card.batteryFill, secondColor: $card.batterySecond,
                                statusColors: card.thresholdColor, motion: card.batteryAnimation, values: values)
+            BatteryBoltPicker(bolt: $card.batteryBolt)
             Text("Mac pilini kapsül içinde yüzde olarak gösterir. Cihaz pilleri (iPhone, AirPods…) ayrı menü çubuğu öğeleri olarak, pil panelinden eklenir.")
                 .font(.caption).foregroundStyle(.secondary)
         } else {

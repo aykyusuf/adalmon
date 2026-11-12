@@ -73,7 +73,10 @@ final class MainWindowController: NSObject, NSWindowDelegate {
     func show() {
         if window.contentViewController == nil {
             let hosting = NSHostingController(rootView: MainWindowRoot(model: model, router: router))
-            hosting.sizingOptions = [.minSize]
+            // `.minSize` her görünüm güncellemesinde (saniyelik canlı liste, her ölçüm adımı) tüm sayfanın en küçük boyutunu
+            // yeniden ölçüyordu (NSHostingView.minSize → tam yerleşim; boşta ana iş parçacığının ~%30'u). En küçük boyut
+            // zaten `contentMinSize` ile sabit (pil).
+            hosting.sizingOptions = []
             // `contentViewController` atanınca AppKit pencereyi içeriğin tercih ettiği (en küçük) boyuta çeker; her açılışta
             // büyük varsayılan/kullanıcı boyutu böylece 940x652'ye iniyordu. Atamadan önceki çerçeve geri konur.
             let frame = window.frame

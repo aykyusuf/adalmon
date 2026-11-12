@@ -37,10 +37,29 @@ enum AgentStatus: Equatable, Sendable {
         }
     }
 
+    /// Araç adı → okunur Türkçe durum. Yalnızca araç adı kullanılır (komut/argüman/içerik asla); MCP: "<sunucu> aracı".
+    static func toolLabel(_ raw: String) -> String {
+        switch raw {
+        case "Bash": return "Komut çalıştırıyor"
+        case "Read": return "Dosya okuyor"
+        case "Edit", "Write", "MultiEdit", "NotebookEdit": return "Dosya düzenliyor"
+        case "Grep", "Glob": return "Arama yapıyor"
+        case "WebFetch", "WebSearch": return "Web'e bakıyor"
+        case "Agent", "Task": return "Alt ajan başlatıyor"
+        case "AskUserQuestion": return "Soru soruyor"
+        default: break
+        }
+        if raw.hasPrefix("mcp__") {
+            let parts = raw.components(separatedBy: "__")
+            if parts.count >= 2, let server = OfficeBubbleText.sanitizedToolName(parts[1]) { return "\(server) aracı" }
+        }
+        return OfficeBubbleText.sanitizedToolName(raw).map { "Araç: \($0)" } ?? "Araç kullanıyor"
+    }
+
     var label: String {
         switch self {
         case .thinking: "düşünüyor"
-        case .tool(let name): name
+        case .tool(let name): Self.toolLabel(name)
         case .waitingPermission: "izin bekliyor"
         case .idle: "boşta"
         case .done: "bitti"

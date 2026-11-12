@@ -234,7 +234,8 @@ final class AgentEventServer: @unchecked Sendable {
         sseClients[ObjectIdentifier(connection)] = connection
         reportStreams()
         updateKeepAlive()
-        send(AgentWebRouter.sseOpening(snapshot), on: connection)
+        // Bayat görüntü gönderilmez: istemci sayısı bildirimi ana aktörde taze görüntüyü üretip yayınlar.
+        send(AgentWebRouter.sseOpening(web?.isStale == true ? nil : snapshot), on: connection)
         drain(connection)
     }
 

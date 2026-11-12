@@ -74,6 +74,7 @@ struct ComponentInspector: View {
             BatteryStylePicker(style: $component.battery.style, fillColor: $component.battery.fillColor,
                                secondColor: $component.battery.secondColor, statusColors: component.battery.statusColors,
                                motion: component.battery.motion, values: values)
+            BatteryBoltPicker(bolt: $component.battery.bolt)
         }
         Toggle("Etiket göster", isOn: $component.showLabel)
         if component.visual.hasGraphic {
@@ -171,6 +172,61 @@ struct ComponentInspector: View {
             }
             .pickerStyle(.segmented)
         }
+    }
+}
+
+/// Şarj şimşeği: stil (Otomatik / Sabit / Nabız / Parıltı / Akış) ve renk (Otomatik / Sarı / Yeşil / Beyaz / Özel).
+/// Hareket "Animasyon" ayarına tabidir (Kapalı, Hareketi Azalt ve Düşük Güç Modunda şimşek statik kalır).
+struct BatteryBoltPicker: View {
+    @Binding var bolt: BatteryBoltOptions
+
+    private static let customDefault = RGBAColor(hex: "#FF4FA3") ?? BatteryGlyphOptions.Swatch.pink.color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Şimşek", selection: $bolt.style) {
+                ForEach(BatteryBoltOptions.Style.allCases) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .help("Şarj olurken pilin solundaki şimşek. " + bolt.style.help + ". Fişteyken ama şarj olmazken şimşek hareket etmez.")
+            HStack(spacing: 6) {
+                Text("Şimşek rengi")
+                ForEach(BatteryBoltOptions.Tone.allCases.filter { $0 != .custom }) { tone in
+                    chip(tone.displayName, selected: bolt.tone == tone) { bolt.tone = tone }
+                }
+                chip(BatteryBoltOptions.Tone.custom.displayName, selected: bolt.tone == .custom) {
+                    bolt.tone = .custom
+                    if bolt.custom == nil { bolt.custom = Self.customDefault }
+                }
+                ColorPicker("Özel şimşek rengi", selection: customBinding, supportsOpacity: false)
+                    .labelsHidden()
+                    .opacity(bolt.tone == .custom ? 1 : 0.4)
+            }
+            if bolt.tone != .auto {
+                Text("Seçili renk, şarj gücüne göre değişen otomatik rengin yerine geçer.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var customBinding: Binding<Color> {
+        Binding {
+            Color(nsColor: (bolt.custom ?? Self.customDefault).nsColor)
+        } set: {
+            bolt.custom = RGBAColor(NSColor($0))
+            bolt.tone = .custom
+        }
+    }
+
+    private func chip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.caption)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(selected ? Color.accentColor.opacity(0.2) : Color.clear, in: .capsule)
+            .overlay(Capsule().strokeBorder(selected ? Color.accentColor : Color(nsColor: .separatorColor), lineWidth: selected ? 1.5 : 0.5))
     }
 }
 

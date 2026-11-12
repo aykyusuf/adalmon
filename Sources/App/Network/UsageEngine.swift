@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import os
+
+private let usageLog = Logger(subsystem: AdalmonIdentity.appBundleID, category: "usage")
 
 /// Bir uygulamanın (ve alan adlarının) kullanım özeti.
 struct AppUsage: Identifiable, Sendable, Equatable {
@@ -28,6 +31,8 @@ final class UsageEngine {
     private(set) var attributedMobileToday: UInt64 = 0
     /// Proxy'nin (SpoofDPI) bugünkü dış trafiği — kontrol amaçlı.
     private(set) var proxyEgressToday: UInt64 = 0
+    /// Arayüz sınırını aştığı için mobilden düşülen toplam byte (tanı sayacı; uygulama açıkken birikir).
+    @ObservationIgnored private(set) var droppedMobileExcess: UInt64 = 0
 
     private struct Totals { var bytes: UInt64 = 0; var mobile: UInt64 = 0; var hosts: [String: UInt64] = [:] }
 
@@ -68,7 +73,9 @@ final class UsageEngine {
 
     /// Her saniye çağrılır; çekilen kovalar o saniyenin trafiği sayılır.
     /// - Parameter seconds: Son çağrıdan beri geçen saniye; halka o kadar kaydırılır, pencere hep 60 sn kalır.
-    func ingest(_ buckets: [UsageBucket], seconds: Int = 1, now: Date = .now) {
+    /// - Parameter mobileCap: Bu adımda fiziksel arayüzden geçen mobil byte; uygulamalara yazılan mobil toplam bunu aşamaz.
+    ///   `nil` = sınır yok (testler / arayüz ölçümü olmayan çağrılar).
+    func ingest(_ buckets: [UsageBucket], seconds: Int = 1, now: Date = .now, mobileCap: UInt64? = nil) {
         rollDayIfNeeded(now: now)
         let hour = Int(now.timeIntervalSince1970) / 3600 * 3600
         for _ in 0..<min(max(1, seconds), ring.count) {
@@ -78,35 +85,50 @@ final class UsageEngine {
         live.advance(seconds: seconds)
         live.prune(nowMinute: Int(now.timeIntervalSince1970) / 60)
 
-        for b in buckets {
+        let mobileShare = Self.mobileShares(buckets, cap: mobileCap)
+        if mobileShare.dropped > 0 {
+            droppedMobileExcess += mobileShare.dropped
+            usageLog.debug("mobile cap: dropped \(mobileShare.dropped, privacy: .public) B (total \(self.droppedMobileExcess, privacy: .public) B)")
+        }
+
+        for (i, b) in buckets.enumerated() {
             let bytes = b.bytesIn + b.bytesOut
             if b.kind == .proxyEgress { proxyEgressToday += bytes; continue }
             let host = DomainGrouper.group(b.host)
-            live.record(app: b.app, bytesIn: b.bytesIn, bytesOut: b.bytesOut, mobile: b.expensive, minute: b.minute)
+            let mobile = mobileShare.bytes[i]
 
             ring[ringIndex][b.app, default: Totals()].bytes += bytes
+            ring[ringIndex][b.app, default: Totals()].mobile += mobile
             ring[ringIndex][b.app, default: Totals()].hosts[host, default: 0] += bytes
 
             todayTotals[b.app, default: Totals()].bytes += bytes
             todayTotals[b.app, default: Totals()].hosts[host, default: 0] += bytes
-            if b.expensive {
-                todayTotals[b.app, default: Totals()].mobile += bytes
-                attributedMobileToday += bytes
+            if mobile > 0 {
+                todayTotals[b.app, default: Totals()].mobile += mobile
+                attributedMobileToday += mobile
             }
 
-            let key = "\(b.app)\u{1F}\(b.host)\u{1F}\(b.expensive)"
-            var row = pending[key] ?? UsageStore.Row(app: b.app, host: b.host, mobile: b.expensive, bytesIn: 0, bytesOut: 0)
-            row.bytesIn += b.bytesIn
-            row.bytesOut += b.bytesOut
-            pending[key] = row
+            // Kova mobil ve mobil olmayan iki parçaya bölünür (↓/↑ oranı korunur); satırlar parça başına yazılır.
+            let mobileIn = bytes == 0 ? 0 : min(UInt64((Double(b.bytesIn) * Double(mobile) / Double(bytes)).rounded()), b.bytesIn, mobile)
+            let mobileOut = min(mobile - mobileIn, b.bytesOut)
+            for (isMobile, bIn, bOut) in [(true, mobileIn, mobileOut), (false, b.bytesIn - mobileIn, b.bytesOut - mobileOut)] {
+                guard bIn + bOut > 0 else { continue }
+                live.record(app: b.app, bytesIn: bIn, bytesOut: bOut, mobile: isMobile, minute: b.minute)
 
-            let domain = b.host.isEmpty ? "" : host
-            let hk = HourlyKey(hour: hour, app: b.app, domain: domain, mobile: b.expensive)
-            var hr = pendingHourly[hk] ?? UsageStore.HourlyRow(hour: hour, app: b.app, domain: domain.isEmpty ? nil : domain,
-                                                               mobile: b.expensive, bytesIn: 0, bytesOut: 0)
-            hr.bytesIn += b.bytesIn
-            hr.bytesOut += b.bytesOut
-            pendingHourly[hk] = hr
+                let key = "\(b.app)\u{1F}\(b.host)\u{1F}\(isMobile)"
+                var row = pending[key] ?? UsageStore.Row(app: b.app, host: b.host, mobile: isMobile, bytesIn: 0, bytesOut: 0)
+                row.bytesIn += bIn
+                row.bytesOut += bOut
+                pending[key] = row
+
+                let domain = b.host.isEmpty ? "" : host
+                let hk = HourlyKey(hour: hour, app: b.app, domain: domain, mobile: isMobile)
+                var hr = pendingHourly[hk] ?? UsageStore.HourlyRow(hour: hour, app: b.app, domain: domain.isEmpty ? nil : domain,
+                                                                   mobile: isMobile, bytesIn: 0, bytesOut: 0)
+                hr.bytesIn += bIn
+                hr.bytesOut += bOut
+                pendingHourly[hk] = hr
+            }
         }
 
         // Boşta (kova yok, halka boş) 60 sn'lik pencereyi yeniden toplamanın anlamı yok.
@@ -115,6 +137,7 @@ final class UsageEngine {
         for second in ring {
             for (app, t) in second {
                 window[app, default: Totals()].bytes += t.bytes
+                window[app, default: Totals()].mobile += t.mobile
                 for (h, v) in t.hosts { window[app, default: Totals()].hosts[h, default: 0] += v }
             }
         }
@@ -164,6 +187,55 @@ final class UsageEngine {
         attributedMobileToday = 0
         proxyEgressToday = 0
         today = []
+    }
+
+    /// Kova başına (aynı sırayla) uygulamaya yazılacak mobil byte.
+    /// - `.proxied` (uygulama → yerel proxy, loopback): kendi `expensive` bayrağı genel yol bayrağıdır, güvenilmez.
+    ///   Bu penceredeki mobil `.proxyEgress` (Mac'ten gerçekten çıkan) byte'ları, proxied kovalara loopback byte'ları
+    ///   oranında dağıtılır: toplam = min(proxied, mobil egress). Egress yoksa proxied mobil değildir.
+    /// - Diğerleri: `expensive` ise tamamı mobil. `.proxyEgress` kovaları 0 alır.
+    /// - `cap` verilirse toplam mobil onu aşamaz; aşan kısım oranla düşülür (`dropped`).
+    nonisolated static func mobileShares(_ buckets: [UsageBucket], cap: UInt64?) -> (bytes: [UInt64], dropped: UInt64) {
+        var shares = [UInt64](repeating: 0, count: buckets.count)
+        var egressMobile: UInt64 = 0
+        var proxied: [Int] = []
+        for (i, b) in buckets.enumerated() {
+            switch b.kind {
+            case .proxyEgress: if b.expensive { egressMobile += b.bytesIn + b.bytesOut }
+            case .proxied: proxied.append(i)
+            case .direct: if b.expensive { shares[i] = b.bytesIn + b.bytesOut }
+            }
+        }
+        let proxiedTotal = proxied.reduce(UInt64(0)) { $0 + buckets[$1].bytesIn + buckets[$1].bytesOut }
+        let proxiedMobile = min(proxiedTotal, egressMobile)
+        for (k, part) in distribute(proxiedMobile, weights: proxied.map { buckets[$0].bytesIn + buckets[$0].bytesOut }).enumerated() {
+            shares[proxied[k]] = part
+        }
+        let total = shares.reduce(0, +)
+        guard let cap, total > cap else { return (shares, 0) }
+        let indices = shares.indices.filter { shares[$0] > 0 }
+        for (k, part) in distribute(cap, weights: indices.map { shares[$0] }).enumerated() { shares[indices[k]] = part }
+        return (shares, total - cap)
+    }
+
+    /// `total`'ı ağırlıklara oranla böler (toplam tam `total`; yuvarlama artığı en büyük kesirlilere).
+    nonisolated static func distribute(_ total: UInt64, weights: [UInt64]) -> [UInt64] {
+        let sum = weights.reduce(0, +)
+        guard sum > 0, total > 0 else { return weights.map { _ in 0 } }
+        var parts: [UInt64] = []
+        var remainders: [(index: Int, rem: UInt64)] = []
+        for (i, w) in weights.enumerated() {
+            let product = w.multipliedFullWidth(by: total)
+            let (q, r) = sum.dividingFullWidth((high: product.high, low: product.low))
+            parts.append(q)
+            remainders.append((i, r))
+        }
+        var left = total - parts.reduce(0, +)
+        for (i, _) in remainders.sorted(by: { $0.rem != $1.rem ? $0.rem > $1.rem : $0.index < $1.index }) where left > 0 {
+            parts[i] += 1
+            left -= 1
+        }
+        return parts
     }
 
     private static func summaries(_ totals: [String: Totals], limit: Int) -> [AppUsage] {

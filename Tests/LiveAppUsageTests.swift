@@ -9,6 +9,20 @@ final class LiveAppUsageTests: XCTestCase {
     private let mds = "/System/Library/Frameworks/CoreServices.framework/mds"
     private let m0 = 29_000_000 // bir Unix dakikası
 
+    // MARK: Görünürlük (pil)
+
+    func testRefreshSkippedWhileHiddenExceptFirstLoad() {
+        XCTAssertTrue(LiveAppUsageList.shouldRefresh(active: true, loaded: true))
+        XCTAssertTrue(LiveAppUsageList.shouldRefresh(active: true, loaded: false))
+        XCTAssertTrue(LiveAppUsageList.shouldRefresh(active: false, loaded: false), "ilk yükleme gizliyken de yapılır (iskelet kalmasın)")
+        XCTAssertFalse(LiveAppUsageList.shouldRefresh(active: false, loaded: true), "görünmezken saniyelik okuma yok")
+    }
+
+    @MainActor
+    func testFixedSourceIsAlwaysActive() {
+        XCTAssertTrue(LiveAppUsageList.Source.fixed([]).isActive())
+    }
+
     // MARK: Toplama ve sıralama
 
     func testSixtySecondRangeUsesSecondRingAndExpiresAfterSixtySeconds() {

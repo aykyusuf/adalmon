@@ -96,9 +96,16 @@ final class AgentService {
         publishWeb()
     }
 
+    /// Test/teşhis: tarayıcı görünümü için kaç kez anlık görüntü (JSON) üretildi.
+    @ObservationIgnored private(set) var webSnapshotBuilds = 0
+
     /// Yalnızca durum değişince (monitor.onStateChange) çalışır; özellik kapalıyken hiçbir şey üretmez.
+    /// Bağlı tarayıcı (SSE) yoksa JSON üretilmez, yalnızca bayat işaretlenir; ilk istemci bağlanınca bir kez üretilir (pil:
+    /// her hook olayında tüm ofis görüntüsünü kurup kimseye göndermemek).
     private func publishWeb() {
         guard prefs.agentsWebEnabled, server != nil, let webBuilder else { return }
+        guard webObserving else { web.markStale(); return }
+        webSnapshotBuilds += 1
         let dock = monitor.dock
         let data = webBuilder.snapshot(sessions: dock.open, minimized: dock.minimized)
         web.setState(data)
@@ -186,6 +193,7 @@ final class AgentService {
         guard on != webObserving else { return }
         webObserving = on
         if on { monitor.addShellObserver() } else { monitor.removeShellObserver() }
+        if on, web.isStale { publishWeb() }
     }
 
     private func stopListening() {

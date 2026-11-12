@@ -513,6 +513,76 @@ final class BatteryLiquidGlyphTests: XCTestCase {
         return false
     }
 
+    func testBoltStylesAnimationTable() {
+        let G = BatteryGlyph.self
+        let charging = state(50, charging: true, watts: 15)
+        let plugged = state(100, plugged: true, full: true, watts: 0)
+        XCTAssertNil(G.boltAnimation(charging, motion: .live, style: .still), "Sabit → hareket yok")
+        XCTAssertEqual(G.boltAnimation(charging, motion: .live, style: .auto), G.boltAnimation(charging, motion: .live), "Otomatik = bugünkü")
+        for style in [BatteryBoltOptions.Style.pulse, .shimmer, .flow] {
+            let live = G.boltAnimation(charging, motion: .live, style: style)
+            XCTAssertEqual(live?.style, style)
+            XCTAssertEqual((G.boltAnimation(charging, motion: .light, style: style)?.duration ?? 0) / (live?.duration ?? 1), 1.5, accuracy: 1e-9)
+            XCTAssertNil(G.boltAnimation(charging, motion: .off, style: style), "Animasyon Kapalı → statik")
+            XCTAssertNil(G.boltAnimation(plugged, motion: .live, style: style), "şarj yok → statik")
+            XCTAssertNil(G.boltAnimation(state(60), motion: .live, style: style), "pilde şimşek yok")
+        }
+    }
+
+    func testBoltColorChoices() {
+        let G = BatteryGlyph.self
+        let charging = state(50, charging: true, watts: 15)
+        let dark = NSAppearance(named: .darkAqua)!
+        func rgb(_ c: NSColor) -> [CGFloat] {
+            var out: [CGFloat] = []
+            dark.performAsCurrentDrawingAppearance {
+                let s = c.usingColorSpace(.sRGB) ?? c
+                out = [s.redComponent, s.greenComponent, s.blueComponent, s.alphaComponent].map { ($0 * 100).rounded() / 100 }
+            }
+            return out
+        }
+        XCTAssertEqual(rgb(G.boltColor(.init(), statusColors: true, charging)), rgb(G.boltColor(statusColors: true, charging)), "Otomatik = bugünkü")
+        XCTAssertNotEqual(rgb(G.boltColor(.init(tone: .yellow), statusColors: true, charging)), rgb(G.boltColor(statusColors: true, charging)))
+        XCTAssertEqual(rgb(G.boltColor(.init(tone: .custom, custom: .blue), statusColors: false, charging)), rgb(RGBAColor.blue.nsColor))
+        XCTAssertEqual(rgb(G.boltColor(.init(tone: .custom), statusColors: true, charging)), rgb(G.boltColor(statusColors: true, charging)), "özel renk yoksa otomatik")
+    }
+
+    @MainActor
+    func testBoltStyleLayers() throws {
+        let animator = BatteryLiquidAnimator()
+        animator.visibilityOverride = true
+        var f = boltFixture(state(64, charging: true, watts: 30))
+        f.target.boltOptions = BatteryBoltOptions(style: .shimmer)
+        _ = animator.show(f.target)
+        var layer = try XCTUnwrap(animator.boltLayer)
+        XCTAssertEqual(animator.boltAnimation?.style, .shimmer)
+        XCTAssertEqual(layer.sublayers?.count, 1, "Parıltı: tek alt katman")
+        XCTAssertTrue((layer.animationKeys() ?? []).isEmpty, "ana katmanda animasyon yok; huzme alt katmanda")
+        f.target.boltOptions = BatteryBoltOptions(style: .flow)
+        _ = animator.show(f.target)
+        layer = try XCTUnwrap(animator.boltLayer)
+        XCTAssertEqual(animator.boltAnimation?.style, .flow)
+        XCTAssertEqual(layer.sublayers?.count, 1, "önceki alt katman temizlendi; Akış: tek alt katman")
+        XCTAssertNotNil(layer.sublayers?.first?.mask)
+        f.target.boltOptions = BatteryBoltOptions(style: .pulse)
+        _ = animator.show(f.target)
+        layer = try XCTUnwrap(animator.boltLayer)
+        XCTAssertNil(layer.sublayers?.first)
+        XCTAssertEqual(Set(layer.animationKeys() ?? []), ["bolt.opacity", "bolt.scale"])
+        f.target.boltOptions = BatteryBoltOptions(style: .still)
+        _ = animator.show(f.target)
+        layer = try XCTUnwrap(animator.boltLayer)
+        XCTAssertNil(animator.boltAnimation)
+        XCTAssertTrue((layer.animationKeys() ?? []).isEmpty)
+        XCTAssertNil(layer.sublayers?.first)
+        // Animasyon Kapalı: ayrı katman yok (animatör temizlenir) — burada yalnızca plan yokken animasyon kurulmaz.
+        animator.visibilityOverride = false
+        f.target.boltOptions = BatteryBoltOptions(style: .flow)
+        _ = animator.show(f.target)
+        XCTAssertNil(animator.boltAnimation, "görünmezken Akış kurulmaz")
+        XCTAssertNil(animator.boltLayer?.sublayers?.first)
+    }
+
     @MainActor
     func testBoltLayerBuiltOnRealButtonWhileCharging() throws {
         let animator = BatteryLiquidAnimator()

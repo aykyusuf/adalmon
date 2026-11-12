@@ -258,10 +258,11 @@ enum AgentWebRouter {
         return out
     }
 
-    static func sseOpening(_ json: Data) -> Data {
+    /// `json` nil ise (anlık görüntü bayat) yalnızca başlıklar gider; taze görüntü ana aktörden hemen ardından yayınlanır.
+    static func sseOpening(_ json: Data?) -> Data {
         var out = Data(sseHeaders.utf8)
         out.append(Data("retry: 3000\n\n".utf8))
-        out.append(sseEvent(json))
+        if let json { out.append(sseEvent(json)) }
         return out
     }
 }
@@ -271,6 +272,8 @@ final class AgentWebStore: @unchecked Sendable {
     private let lock = NSLock()
     private var enabled = false
     private var state = Data(#"{"v":1,"rooms":[]}"#.utf8)
+    /// İzleyen tarayıcı yokken durum JSON'u hiç üretilmez (pil); bu bayrak saklı görüntünün eskidiğini söyler.
+    private var stale = false
     private var layout: Data?
     let webRoot: URL?
     let officeRoot: URL?
@@ -291,7 +294,9 @@ final class AgentWebStore: @unchecked Sendable {
     var isEnabled: Bool { lock.lock(); defer { lock.unlock() }; return enabled }
     func setEnabled(_ on: Bool) { lock.lock(); enabled = on; lock.unlock() }
     var stateJSON: Data { lock.lock(); defer { lock.unlock() }; return state }
-    func setState(_ data: Data) { lock.lock(); state = data; lock.unlock() }
+    func setState(_ data: Data) { lock.lock(); state = data; stale = false; lock.unlock() }
+    var isStale: Bool { lock.lock(); defer { lock.unlock() }; return stale }
+    func markStale() { lock.lock(); stale = true; lock.unlock() }
     func setLayout(_ data: Data?) { lock.lock(); layout = data; lock.unlock() }
 
     func context(token: String, port: UInt16, sseClients: Int) -> AgentWebRouter.Context {

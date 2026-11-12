@@ -74,6 +74,8 @@ final class AppModel {
     @ObservationIgnored private var lastConfig: FilterConfig?
     @ObservationIgnored private var dayKey = UsageStore.dayKey()
     @ObservationIgnored private var pendingIface: (mobile: UInt64, wifi: UInt64) = (0, 0)
+    /// Son `usage.ingest`'ten beri arayüzden geçen mobil byte (uygulamalara yazılan mobilin üst sınırı).
+    @ObservationIgnored private var stepMobileDelta: UInt64 = 0
     @ObservationIgnored private var cycleKey = ""
     @ObservationIgnored private var lastRuleOutput = RuleOutput()
     @ObservationIgnored private var lastPushedMobile = false
@@ -614,7 +616,8 @@ final class AppModel {
 
         let buckets = await filter.drain()
         updateFilterLink(now: .now)
-        usage.ingest(buckets, seconds: elapsed)
+        usage.ingest(buckets, seconds: elapsed, mobileCap: stepMobileDelta)
+        stepMobileDelta = 0
         alerts.checkBursts(usage.last60, threshold: prefs.burstThresholdBytes, isMobile: isMobile)
         // Kademeli limit açıkken uyarı bildirimlerini merdiven yönetir (çift bildirim olmasın).
         if !prefs.tierLadder.enabled { alerts.checkCap(used: mobileToday, cap: prefs.dailyCapBytes) }
@@ -682,7 +685,7 @@ final class AppModel {
         windowSamples.removeAll { $0.time < cutoff }
         downLast60 = windowSamples.reduce(0) { $0 + $1.down }
         upLast60 = windowSamples.reduce(0) { $0 + $1.up }
-        if isMobile { mobileToday += delta; pendingIface.mobile += delta } else { wifiToday += delta; pendingIface.wifi += delta }
+        if isMobile { mobileToday += delta; pendingIface.mobile += delta; stepMobileDelta += delta } else { wifiToday += delta; pendingIface.wifi += delta }
         traffic.add(bytes: delta, mobile: isMobile, at: s.timestamp)
     }
 

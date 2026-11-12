@@ -39,8 +39,8 @@
       "title": "Kucuk iyilestirmeler: 'arac: Bash' durum metni, 10x10 kalabalikta etiket cakismasi",
       "priority": 4,
       "done_when": "Durum metni daha acik yaziyor ve 10x10 kalabalik sahnede etiketler okunur; ilgili testler geciyor",
-      "status": "todo",
-      "evidence": ""
+      "status": "in_progress",
+      "evidence": "2026-11-12: AgentStatus.toolLabel (Komut calistiriyor/Dosya okuyor/... ; yalniz arac adi), etiket cozucu oncelik + sigmayan dusuk oncelikli etiketi gizleme (Swift + JS); kalabalik demoda cakisma yok testi. 138 test + node testi. Kuruldu."
     },
     {
       "id": "DORM-01",
@@ -63,8 +63,8 @@
       "title": "Saver/duvar kagidi: 16:10 ekranda 16:9 video kirpilmasi icin Doldur/Sigdir secenegi",
       "priority": 3,
       "done_when": "Ayarlarda Doldur ve Sigdir secimi var; MacBook Pro 14'te Sigdir secilince video kirpilmadan siyah barlarla gorunur; saver ve duvar kagidinda calisir; kullanici onayladi",
-      "status": "in_progress",
-      "evidence": "2026-11-11: Duvar kagidi > Oynatma kartinda 'Video sigdirma' Doldur (varsayilan) / Sigdir; duvar kagidina aninda, ekran koruyucuya playlist.json videoFit + mevcut otomatik esitleme ile gider. Kod: SaverShared/LoopFit.swift, VideoHostLayer, backend'ler, LoopSettings, SaverPlaylist, AdalmonSaverView. Testler: 65 ilgili test + LoopFitTests 4/4, saver hedefi derleniyor. Review: fit verilmezse Doldur'a donme riski duzeltildi (mevcut deger korunur). Kuruldu 23:28. Gercek 16:10 ekranda gozle bakilmadi. KALAN: kullanici onayi; karar: Sigdir sabit resim duvar kagitlarina da uygulaniyor (su an evet)."
+      "status": "done",
+      "evidence": "2026-11-11: Duvar kagidi > Oynatma kartinda 'Video sigdirma' Doldur (varsayilan) / Sigdir; duvar kagidina aninda, ekran koruyucuya playlist.json videoFit + mevcut otomatik esitleme ile gider. Kod: SaverShared/LoopFit.swift, VideoHostLayer, backend'ler, LoopSettings, SaverPlaylist, AdalmonSaverView. Testler: 65 ilgili test + LoopFitTests 4/4, saver hedefi derleniyor. Review: fit verilmezse Doldur'a donme riski duzeltildi (mevcut deger korunur). Kuruldu 23:28. Gercek 16:10 ekranda gozle bakilmadi. KALAN: kullanici onayi; karar: Sigdir sabit resim duvar kagitlarina da uygulaniyor (su an evet). | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "BROWSER-01",
@@ -128,7 +128,7 @@
       "priority": 2,
       "done_when": "Panelde/ofiste Claude Code (5 saatlik ve haftalik pencere), Codex abonelik limiti ve API kredi bakiyesi kalan miktarla gorunuyor; esik altina inince ekranda bildirim/uyari cikiyor (esikler ayarlanabilir, 5 saatlik pencere icin ayri); kullanici onayladi",
       "status": "in_progress",
-      "evidence": "2026-11-12: Ayarlar > Claude ajanlari > Abonelik limitleri: 'Claude limitlerini bagla' (kullanicinin statusLine'i byte-byte korunarak sarmalanir, yedekli, geri alinabilir; wrapper Application Support/Adalmon/ClaudeStatusLine/), POST /v1/limits (token+Host+Origin), Codex rollout kuyruk okuma (en fazla 3 dk'da bir, yalniz kart gorunurken), Ajanlar panelinde 'Abonelik limitleri' karti, ayarlanabilir 5 saat/haftalik uyari esikleri + bildirim. Bagimsiz review: settings.json okunamazsa ezme riski, Codex'in yuklenmemesi, eszamanli yazma, yedek izinleri, gereksiz yazma, nil-reset uyari tekrar kurma -> hepsi duzeltildi + testler (SubscriptionLimitsTests 28). Tam suite 1279/1282. Gercek ~/.claude/settings.json ve config.json'a dokunulmadi (md5 ayni). Kuruldu. KALAN: kullanicinin 'Bagla'ya basmasi + canli gorus + onay. API kredi bakiyesi resmi endpoint olmadigi icin yok. 2026-11-12 08:00: statusLine sarmalayicisi sadelestirildi: degerler ayniysa 0 ek surec, degistiyse tek arka plan curl (onceden her yenilemede ~8 surec: 6 plutil, sed, curl); JSON ayristirma Adalmon tarafinda (JSONDecoder, 4 KB siniri); acilista last-sent silinir (Adalmon kapaliyken gonderilen tekrar gelir); bagli kullanicida betik acilista yenilenir, settings.json'a dokunulmaz. SubscriptionLimitsTests 31, ilgili 64/64. Kuruldu."
+      "evidence": "2026-11-12: Ayarlar > Claude ajanlari > Abonelik limitleri: 'Claude limitlerini bagla' (kullanicinin statusLine'i byte-byte korunarak sarmalanir, yedekli, geri alinabilir; wrapper Application Support/Adalmon/ClaudeStatusLine/), POST /v1/limits (token+Host+Origin), Codex rollout kuyruk okuma (en fazla 3 dk'da bir, yalniz kart gorunurken), Ajanlar panelinde 'Abonelik limitleri' karti, ayarlanabilir 5 saat/haftalik uyari esikleri + bildirim. Bagimsiz review: settings.json okunamazsa ezme riski, Codex'in yuklenmemesi, eszamanli yazma, yedek izinleri, gereksiz yazma, nil-reset uyari tekrar kurma -> hepsi duzeltildi + testler (SubscriptionLimitsTests 28). Tam suite 1279/1282. Gercek ~/.claude/settings.json ve config.json'a dokunulmadi (md5 ayni). Kuruldu. KALAN: kullanicinin 'Bagla'ya basmasi + canli gorus + onay. API kredi bakiyesi resmi endpoint olmadigi icin yok. 2026-11-12 08:00: statusLine sarmalayicisi sadelestirildi: degerler ayniysa 0 ek surec, degistiyse tek arka plan curl (onceden her yenilemede ~8 surec: 6 plutil, sed, curl); JSON ayristirma Adalmon tarafinda (JSONDecoder, 4 KB siniri); acilista last-sent silinir (Adalmon kapaliyken gonderilen tekrar gelir); bagli kullanicida betik acilista yenilenir, settings.json'a dokunulmaz. SubscriptionLimitsTests 31, ilgili 64/64. Kuruldu. | 2026-11-12: kullanici karti bulamadi ('nerde gorcem, genel bakista yok'); kart yalniz menu cubugu paneli > Ajanlar'da. USAGE-03 ile ana pencereye tasinacak."
     },
     {
       "id": "OFFICE-CTRL-01",
@@ -144,55 +144,55 @@
       "priority": 3,
       "done_when": "Aday acik kaynak projeler (lisans, bakim durumu, ne yapiyor, guvenlik riski) arastirildi ve karsilastirildi; kullanici ile konusulup entegrasyon yaklasimi (kod kullanma, arac cagirma, kendi yazma) secildi; secilirse ayri gorev olarak planlandi",
       "status": "in_progress",
-      "evidence": "2026-11-12: Surecler > 'Temizlik' sekmesi: yalniz istekle tarama (iptal edilebilir), kategoriler (uygulama onbellekleri, DerivedData, arsivler, cihaz destek, simulator, paket onbellekleri, iOS yedekleri/Indirilenler yalniz listelenir, Cop boyutu), onizleme + onay + yalniz FileManager.trashItem (kalici silme yok), tek CleanupTrasher 9 korumayla, JSONL log. Plan docs/plans/CLEAN-01-plan.md. CleanupTests 20/20, ilgili 41/41, tam suite 1279/1282. Grep: removeItem/unlink yok, trashItem tek yerde. Kuruldu. KALAN: kullanicinin canli denemesi + onay."
+      "evidence": "2026-11-12: Surecler > 'Temizlik' sekmesi: yalniz istekle tarama (iptal edilebilir), kategoriler (uygulama onbellekleri, DerivedData, arsivler, cihaz destek, simulator, paket onbellekleri, iOS yedekleri/Indirilenler yalniz listelenir, Cop boyutu), onizleme + onay + yalniz FileManager.trashItem (kalici silme yok), tek CleanupTrasher 9 korumayla, JSONL log. Plan docs/plans/CLEAN-01-plan.md. CleanupTests 20/20, ilgili 41/41, tam suite 1279/1282. Grep: removeItem/unlink yok, trashItem tek yerde. Kuruldu. KALAN: kullanicinin canli denemesi + onay. | 2026-11-12: kullanici geri bildirimi: 'erisim yok' goruyor; CleanMyMac tarzi tam bir bolum istiyor, acik kaynaklarin ozellikleri arastirilip eklenmeli, kendisine sorularak listelemeli. CLEAN-02 acildi."
     },
     {
       "id": "MENUBAR-01",
       "title": "Menu cubugunda ogelerin yeri degisince Adalmon ayarlarindaki siranin da ayni kalmasi (zorsa yapilmaz)",
       "priority": 3,
       "done_when": "macOS menu cubugunda (Cmd+surukle) ogelerin sirasi degisince Adalmon'un kendi siralama ayari bununla tutarli; ya da teknik olarak mumkun degilse nedeni belgelendi ve kullanici 'yapma' dedi",
-      "status": "in_progress",
-      "evidence": "2026-11-12: 'Sirayi menu cubugundan al' dugmesi (yalniz Ayri modda; tek seferlik minX okuma; replaceConfig ile yedek+geri al). MenuBarScreenOrderTests 7/7; tam suite 1279/1282 (3 bilinen kararsiz). Kuruldu 07:20. KALAN: kullanici onayi (Tahoe'da gizli/coklu ekran davranisi canli denenmedi)."
+      "status": "done",
+      "evidence": "2026-11-12: 'Sirayi menu cubugundan al' dugmesi (yalniz Ayri modda; tek seferlik minX okuma; replaceConfig ile yedek+geri al). MenuBarScreenOrderTests 7/7; tam suite 1279/1282 (3 bilinen kararsiz). Kuruldu 07:20. KALAN: kullanici onayi (Tahoe'da gizli/coklu ekran davranisi canli denenmedi). | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "MENUBAR-02",
       "title": "Menu cubugu yerlesim/tasarimini kaydetme, yedekleme ve geri yukleme",
       "priority": 2,
       "done_when": "Menu cubugu siralamasi ve oge tasarimlari adlandirilmis olarak kaydedilebiliyor, otomatik yedek aliniyor, disari/iceri aktarilabiliyor; yanlislikla kaybedilen tasarim yedekten geri getiriliyor; kullanici onayladi",
-      "status": "in_progress",
-      "evidence": "2026-11-11: Kayitli duzenler (ad ile kaydet/ustune yaz/sil), otomatik yedek (acilista, saatte bir, her toptan degisiklikten once; son 20, ayni duzen tekrarlanmaz), JSON disa/ice aktarma, yedekten Geri yukle. Dosya: ~/Library/Application Support/Adalmon/MenuBarLayouts.json (repoya girmez). Kod: MenuBarLayoutArchive.swift, MenuBarLayoutsSection.swift, MenuBarConfigStore.replaceConfig. Testler: MenuBarLayoutArchiveTests 13/13; tam suite 1212 gecti (tek dusen yeni test duzeltildi, ilgili 51/51). Kuruldu; canli: acilista gercek duzen yedege yazildi. Bagimsiz reviewer bulgulari (yedek siniri ozgun tasarimi dusurebiliyordu, yazma hatasi sessizdi, geri al elle duzenlemeyi silebiliyordu) duzeltildi. KALAN: kullanici onayi."
+      "status": "done",
+      "evidence": "2026-11-11: Kayitli duzenler (ad ile kaydet/ustune yaz/sil), otomatik yedek (acilista, saatte bir, her toptan degisiklikten once; son 20, ayni duzen tekrarlanmaz), JSON disa/ice aktarma, yedekten Geri yukle. Dosya: ~/Library/Application Support/Adalmon/MenuBarLayouts.json (repoya girmez). Kod: MenuBarLayoutArchive.swift, MenuBarLayoutsSection.swift, MenuBarConfigStore.replaceConfig. Testler: MenuBarLayoutArchiveTests 13/13; tam suite 1212 gecti (tek dusen yeni test duzeltildi, ilgili 51/51). Kuruldu; canli: acilista gercek duzen yedege yazildi. Bagimsiz reviewer bulgulari (yedek siniri ozgun tasarimi dusurebiliyordu, yazma hatasi sessizdi, geri al elle duzenlemeyi silebiliyordu) duzeltildi. KALAN: kullanici onayi. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "MENUBAR-03",
       "title": "Menu cubugu yerlesimi geri yuklenirken/sifirlanirken onay uyarisi",
       "priority": 1,
       "done_when": "Sifirla ve Geri yukle islemleri once ne kaybolacagini yazan bir onay penceresi gosteriyor; onaydan once otomatik yedek aliniyor ve 'geri al' sunuluyor; yanlislikla tiklama veriyi silmiyor; kullanici onayladi",
-      "status": "in_progress",
-      "evidence": "2026-11-11: Varsayilana don, Basit duzene don, ozel tasarim ustune hazir duzen, Geri yukle ve Sil once onay penceresi gosteriyor (ne kaybolacagi + yedek alinacagi yazili); onaydan once otomatik yedek, sonra ustte 'Geri al' seridi. Testler: testResetToDefaultBacksUpAndCanBeUndone, testPresetAndRestoreGoThroughBackup, testManualEditAfterReplaceClearsUndo. KALAN: kullanici onayi."
+      "status": "done",
+      "evidence": "2026-11-11: Varsayilana don, Basit duzene don, ozel tasarim ustune hazir duzen, Geri yukle ve Sil once onay penceresi gosteriyor (ne kaybolacagi + yedek alinacagi yazili); onaydan once otomatik yedek, sonra ustte 'Geri al' seridi. Testler: testResetToDefaultBacksUpAndCanBeUndone, testPresetAndRestoreGoThroughBackup, testManualEditAfterReplaceClearsUndo. KALAN: kullanici onayi. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "BATT-02",
       "title": "Batarya simsek simgesini animasyonlu yapma; renk ve animasyon alternatifleri",
       "priority": 3,
       "done_when": "Sarj simsegi birkac animasyon stilinden (ornegin nabiz, akis, parilti, kapali) ve renkten secilebiliyor, ayarlardan degistirilebiliyor; pil/CPU maliyeti Constraints'e uygun (idle CPU ~<%1); kullanici onayladi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-10. Mevcut BatteryLiquidGlyph yapisi uzerine kurulacak. Animasyon sadece gorunurken ve sarjdayken calismali (pil kuralı)."
+      "status": "in_progress",
+      "evidence": "2026-11-12: Simsek: Otomatik (bugunku) / Sabit / Nabiz / Parilti / Akis; renk Otomatik/Sari/Yesil/Beyaz/Ozel; Core Animation, yeni zamanlayici yok, sarj olmuyorken/Hareketi Azalt/Dusuk Guc'te durur. 67 test; onizleme PNG'leri ui/bolt. Kuruldu."
     },
     {
       "id": "MEM-COLOR-01",
       "title": "Bellek (memory) renkleri: tum renkler ve esikler ayarlanabilir, renksiz varsayilan secenegi",
       "priority": 2,
       "done_when": "Bellek gostergesinin (menu cubugu ve panel) her seviye rengi (dusuk/orta/yuksek/kritik) ve esikleri ayarlardan degistirilebiliyor; 'renksiz' (sistem rengi) secilebiliyor; varsayilan yesil zorunlu degil; kullanici onayladi",
-      "status": "in_progress",
-      "evidence": "2026-11-11: Her seviye (Normal/Uyari/Kritik) icin Varsayilan / Renksiz / Ozel renk + esikler; basit kartta 'Renkler ve esikler' (Renk: esige gore acikken), gelismis duzenleyicide ayni editor; panel bellek basinci renkleri esik modundaki ilk bellek ogesinin renklerini kullanir. Varsayilan gorunum degismedi (testle sabit). Kod: ThresholdColors.swift, ThresholdColorsEditor.swift, WidgetPalette, MetricCardConfig(+Mapping), Memory panel. Testler: ilgili 87 test + tam suite 1223/1226 (3 dusen bilinen kararsiz, tek basina 42/42 gecti). Bagimsiz review: engelleyici yok. Kuruldu 23:28. Not: gorevde 4 seviye yaziyordu, kodda 3 seviye var -> 3 tutuldu. KALAN: kullanici onayi + panel/menu cubugu baglantisi karari."
+      "status": "done",
+      "evidence": "2026-11-11: Her seviye (Normal/Uyari/Kritik) icin Varsayilan / Renksiz / Ozel renk + esikler; basit kartta 'Renkler ve esikler' (Renk: esige gore acikken), gelismis duzenleyicide ayni editor; panel bellek basinci renkleri esik modundaki ilk bellek ogesinin renklerini kullanir. Varsayilan gorunum degismedi (testle sabit). Kod: ThresholdColors.swift, ThresholdColorsEditor.swift, WidgetPalette, MetricCardConfig(+Mapping), Memory panel. Testler: ilgili 87 test + tam suite 1223/1226 (3 dusen bilinen kararsiz, tek basina 42/42 gecti). Bagimsiz review: engelleyici yok. Kuruldu 23:28. Not: gorevde 4 seviye yaziyordu, kodda 3 seviye var -> 3 tutuldu. KALAN: kullanici onayi + panel/menu cubugu baglantisi karari. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "SETTINGS-BUG-01",
       "title": "Hata: menu cubugunda bir oge degisince bellek esikleri varsayilana donuyor; benzer ayar-sifirlanma hatalarini tara ve duzelt",
       "priority": 1,
       "done_when": "Kok neden bulunup duzeltildi; menu cubugu ogesi degistirilince bellek (ve diger) esikleri/ayarlari sifirlanmiyor; ayarlarin kaydet/yukle/yeniden yazma yollari taranip benzer hatalar listelendi ve duzeltildi; regresyon testi var",
-      "status": "in_progress",
-      "evidence": "2026-11-11: Kok neden (koddan dogrulandi): ComponentInspector'da .onChange(of: component.primary) esikleri varsayilana cekiyordu; view .id'siz oldugu icin baska bilesen secilince ayni view yeni bilesene baglaniyor, primary degismis gorunuyor ve YENI secilen bilesenin esikleri sifirlaniyordu. Duzeltme: ComponentFieldKey(id+alan) ile yalnizca ayni bilesendeki duzenlemeye tepki; MenuBarComponent.applyPrimaryEdit esikleri yalnizca olcek degisince (%->°C) sifirlar; MenuBarSettingsTab'da inspector'a .id. Benzer riskler: MenuBarConfig tek cozulemeyen bilesende tum listeyi dusuruyordu -> Lossy (PanelConfig'teki ortak); MenuBarConfigStore cozulemeyen kaydi varsayilanla eziyordu -> once 'menuBarConfig.unreadableBackup' anahtarina yedek. Testler: MenuBarConfigTests'e 5 regresyon testi; MenuBarConfig/Component/MetricCard/SettingsSnapshot/PanelConfig testleri 46/46 gecti. KALAN: uygulamaya kurup canli dogrulama (Ayarlar > Menu cubugu > Gelismis: bellek esigini degistir, baska bilesen sec, geri don). Commit edilmedi. 2026-11-11 23:14: kuruldu (dd53044); tam suite'te ilgili testler gecti. KALAN: kullanicinin canli denemesi."
+      "status": "done",
+      "evidence": "2026-11-11: Kok neden (koddan dogrulandi): ComponentInspector'da .onChange(of: component.primary) esikleri varsayilana cekiyordu; view .id'siz oldugu icin baska bilesen secilince ayni view yeni bilesene baglaniyor, primary degismis gorunuyor ve YENI secilen bilesenin esikleri sifirlaniyordu. Duzeltme: ComponentFieldKey(id+alan) ile yalnizca ayni bilesendeki duzenlemeye tepki; MenuBarComponent.applyPrimaryEdit esikleri yalnizca olcek degisince (%->°C) sifirlar; MenuBarSettingsTab'da inspector'a .id. Benzer riskler: MenuBarConfig tek cozulemeyen bilesende tum listeyi dusuruyordu -> Lossy (PanelConfig'teki ortak); MenuBarConfigStore cozulemeyen kaydi varsayilanla eziyordu -> once 'menuBarConfig.unreadableBackup' anahtarina yedek. Testler: MenuBarConfigTests'e 5 regresyon testi; MenuBarConfig/Component/MetricCard/SettingsSnapshot/PanelConfig testleri 46/46 gecti. KALAN: uygulamaya kurup canli dogrulama (Ayarlar > Menu cubugu > Gelismis: bellek esigini degistir, baska bilesen sec, geri don). Commit edilmedi. 2026-11-11 23:14: kuruldu (dd53044); tam suite'te ilgili testler gecti. KALAN: kullanicinin canli denemesi. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "WINTRAY-01",
@@ -207,48 +207,48 @@
       "title": "Limit tahmini: bu hizla 5 saatlik / haftalik limit pencere bitmeden dolacaksa uyari (yalnizca gercekten yuksek kullanimda)",
       "priority": 1,
       "done_when": "5 saatlik ve haftalik pencere icin tuketim hizindan dolma zamani tahmin ediliyor; dolma, yenilenmeden belirgin once olacaksa ve kullanim yuksekse tek bildirim geliyor (spam yok); esik/duyarlilik ayarlanabilir; testli; kullanici onayladi",
-      "status": "in_progress",
-      "evidence": "2026-11-12: LimitForecast.swift (en kucuk kareler hizi, pencere basina tek uyari, hassasiyet Dusuk/Orta/Yuksek; Orta: 5s >=%50 & >=3 ornek/10 dk & >=45 dk erken; haftalik >=%40 & >=3 ornek/2 sa & >=12 sa erken). Kartta 'bu hizla ~14:20'de dolar'. LimitForecastTests 10/10. Kuruldu 2026-11-12 ~09:00."
+      "status": "done",
+      "evidence": "2026-11-12: LimitForecast.swift (en kucuk kareler hizi, pencere basina tek uyari, hassasiyet Dusuk/Orta/Yuksek; Orta: 5s >=%50 & >=3 ornek/10 dk & >=45 dk erken; haftalik >=%40 & >=3 ornek/2 sa & >=12 sa erken). Kartta 'bu hizla ~14:20'de dolar'. LimitForecastTests 10/10. Kuruldu 2026-11-12 ~09:00. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "NOTIF-01",
       "title": "Bildirimler: uygulama ici (pil uyarisi gibi) + istege bagli macOS sistem bildirimi",
       "priority": 2,
       "done_when": "Limit/mobil/pil uyarilari icin ayarlardan 'Uygulama ici', 'Sistem bildirimi' ya da ikisi secilebiliyor; sistem bildirimi izni yoksa uygulama ici kalir; kullanici onayladi",
-      "status": "in_progress",
-      "evidence": "2026-11-12: Ayarlar > Genel > Bildirimler: Uygulama ici / Sistem bildirimi / Ikisi de; varsayilan Sistem bildirimi (onceki davranis; ajan .inApp yapmisti, ana oturum geri cekti); izin reddedilirse uygulama ici + Sistem Ayarlari dugmesi; pil uyarilari kendi satir ayarlarinda kaldi. AlertDeliveryTests 7/7. Kuruldu 2026-11-12 ~09:00."
+      "status": "done",
+      "evidence": "2026-11-12: Ayarlar > Genel > Bildirimler: Uygulama ici / Sistem bildirimi / Ikisi de; varsayilan Sistem bildirimi (onceki davranis; ajan .inApp yapmisti, ana oturum geri cekti); izin reddedilirse uygulama ici + Sistem Ayarlari dugmesi; pil uyarilari kendi satir ayarlarinda kaldi. AlertDeliveryTests 7/7. Kuruldu 2026-11-12 ~09:00. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "MOBILE-LIVE-01",
       "title": "Mobil veri sayfasi: uygulama basina anlik tuketim, 60 sn / 5 dk / 15 dk / 30 dk / 1 sa araliklari, o an sinir/engel koyma",
       "priority": 1,
       "done_when": "Mobil veri sayfasinda panel widget'indaki gibi aralik secici var; secili aralikta uygulama basina mobil tuketim siralaniyor; her satirdan tek tikla hiz siniri ya da engel konabiliyor (mevcut kural/hiz siniri altyapisi); pil kurali korunuyor; kullanici onayladi",
-      "status": "in_progress",
-      "evidence": "2026-11-12: Ortak LiveAppUsageList (60 sn/5/15/30 dk/1 sa; UsageEngine.ingest'ten bellek ici gecmis, yeni ornekleyici yok; yalniz gorunurken <=1 Hz) Mobil veri sayfasinda 'Bugun' kartindan sonra; satirdan hiz siniri (100 KB/500 KB/1 MB/5 MB/ozel) + Mobilde engelle, 8 sn Geri al, rozetler, sistem sureci onayi. LiveAppUsageTests 13 + ilgili 86/86. Engelle secimi (mobil/Wi-Fi/her yer) ayri ajanda. Kuruldu 2026-11-12 ~09:00."
+      "status": "done",
+      "evidence": "2026-11-12: Ortak LiveAppUsageList (60 sn/5/15/30 dk/1 sa; UsageEngine.ingest'ten bellek ici gecmis, yeni ornekleyici yok; yalniz gorunurken <=1 Hz) Mobil veri sayfasinda 'Bugun' kartindan sonra; satirdan hiz siniri (100 KB/500 KB/1 MB/5 MB/ozel) + Mobilde engelle, 8 sn Geri al, rozetler, sistem sureci onayi. LiveAppUsageTests 13 + ilgili 86/86. Engelle secimi (mobil/Wi-Fi/her yer) ayri ajanda. Kuruldu 2026-11-12 ~09:00. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "NET-LIVE-01",
       "title": "Ag kullanimi sayfasi: ayni aralik secici ve aninda sinir/engel",
       "priority": 1,
       "done_when": "Ag kullanimi sayfasi MOBILE-LIVE-01 ile ayni aralik secici ve satirdan sinir/engel ozelligine sahip; kullanici onayladi",
-      "status": "in_progress",
-      "evidence": "2026-11-12: Ag kullanimi sayfasinda ayni canli liste (Tumu/Wi-Fi/Mobil, sinir her agda). Engelle menusu: Mobilde / Wi-Fi'de / Her yerde (filtre koduna dokunmadan: blockedOnMobile + blockedAlways; Wi-Fi'de ag degisimine gore), Her yerde icin onay, sistem servisleri yalniz Mobilde; Wi-Fi engelleri engelli listelerinde rozetle gorunur. Testler 102 + 110 gecti. Kuruldu. KALAN: kullanici onayi."
+      "status": "done",
+      "evidence": "2026-11-12: Ag kullanimi sayfasinda ayni canli liste (Tumu/Wi-Fi/Mobil, sinir her agda). Engelle menusu: Mobilde / Wi-Fi'de / Her yerde (filtre koduna dokunmadan: blockedOnMobile + blockedAlways; Wi-Fi'de ag degisimine gore), Her yerde icin onay, sistem servisleri yalniz Mobilde; Wi-Fi engelleri engelli listelerinde rozetle gorunur. Testler 102 + 110 gecti. Kuruldu. KALAN: kullanici onayi. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "OVERVIEW-UX-01",
       "title": "Genel bakis yeniden tasarim: kompakt pano",
       "priority": 1,
       "done_when": "Kullanici secimi 'Kompakt pano': ustte tiklanabilir ozet karolari (Bugun, Mobil, CPU, RAM, Disk...), altta tek 'En cok kullananlar' listesi [Ag|CPU|Bellek] sekmeli + aralik secici + satirdan sinir; altta ince durum seridi (ajanlar, acik kalma, Hotspot); kaydirmadan tek ekran; kullanici onayladi",
-      "status": "in_progress",
-      "evidence": "2026-11-12: Kompakt pano: tiklanabilir karolar (Bugun/Mobil/CPU/GPU/RAM/Disk; hover'da eski detaylar), tek 'En cok kullananlar' [Ag|CPU|Bellek] + son: menusu (Bugun dahil), satir sayisi pencere yuksekligine gore (kaydirma yok), alt durum seridi (dikkat cipleri, ajan sayisi, acik kalma, baglanti). Eski kart dosyalari silinmedi (testler kullaniyor; sonra temizlenecek). OverviewPageTests + ilgili 47 test gecti; onizleme PNG'leri kontrol edildi. Kuruldu 2026-11-12 ~09:00."
+      "status": "done",
+      "evidence": "2026-11-12: Kompakt pano: tiklanabilir karolar (Bugun/Mobil/CPU/GPU/RAM/Disk; hover'da eski detaylar), tek 'En cok kullananlar' [Ag|CPU|Bellek] + son: menusu (Bugun dahil), satir sayisi pencere yuksekligine gore (kaydirma yok), alt durum seridi (dikkat cipleri, ajan sayisi, acik kalma, baglanti). Eski kart dosyalari silinmedi (testler kullaniyor; sonra temizlenecek). OverviewPageTests + ilgili 47 test gecti; onizleme PNG'leri kontrol edildi. Kuruldu 2026-11-12 ~09:00. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "ICON-01",
       "title": "Ayarlar kenar cubugunda 'Claude ajanlari' simgesi tasiyor",
       "priority": 2,
       "done_when": "Simge diger satirlarla ayni boyutta/hizada; light/dark kontrol edildi",
-      "status": "in_progress",
-      "evidence": "2026-11-12: SettingsSection .agents simgesi person.3.fill -> person.2.fill (daha dar, karoya sigar). Kuruldu 2026-11-12 ~09:00."
+      "status": "done",
+      "evidence": "2026-11-12: SettingsSection .agents simgesi person.3.fill -> person.2.fill (daha dar, karoya sigar). Kuruldu 2026-11-12 ~09:00. | 2026-11-12: kullanici onayladi (AskUserQuestion)."
     },
     {
       "id": "FILTER-LINK-01",
@@ -257,6 +257,38 @@
       "done_when": "Baglanti koparsa artan araliklarla yeniden baglanir ve ayarlari filtreye tekrar gonderir; mobilde 60 sn'den uzun kopuklukta Mobil/Ag/Genel bakista kirmizi bant + bildirim (30 dk'da bir en fazla); panel altbilgisi kirmizi; kullanici onayladi",
       "status": "in_progress",
       "evidence": "2026-11-12: Kok neden: kurulumlarda CURRENT_PROJECT_VERSION degisince filtre uzantisi her seferinde yeniden yuklendi, uygulama yeni filtreye XPC ile baglanamadi (07:32-08:17), uygulama basina sayim ve sinir/engel ayarlari gitmedi; kullanici Filtre'yi kapat-ac yapti -> duzeldi. Kod: FilterClient backoff 2->30 sn + yeniden baglaninca config tekrar gonderilir; FilterLink durum modeli; FilterLinkBanner (Mobil/Ag/Genel bakis), panel altbilgisi kirmizi, AlertCenter.notifyFilterDown; 'Sistem/diger mobil' -> 'Dagitilamayan'. FilterLinkTests 13; ilgili 110. Kurulum artik aktif uzanti surumuyle (1794457926) yapiliyor: yeniden yukleme yok, lookup hatasi 0, curl 200. KALAN: kullanici onayi."
+    },
+    {
+      "id": "USAGE-03",
+      "title": "Abonelik limitleri ana pencerede: Genel bakista karo + detay",
+      "priority": 1,
+      "done_when": "Genel bakista Claude/Codex limit karosu (5 saat %, haftalik %, yenilenme) ve tiklayinca detay/ayar; bagli degilse 'Claude limitlerini bagla' yonlendirmesi; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-12."
+    },
+    {
+      "id": "CLEAN-02",
+      "title": "CleanMyMac tarzi tam Temizlik bolumu",
+      "priority": 1,
+      "done_when": "Acik kaynak temizleyicilerin (Mole, Pearcleaner vb.) ozellik listesi arastirildi; kullaniciya kategori kategori sorularak kapsam secildi; Tam Disk Erisimi akisi ('erisim yok' cozuldu); secilen kategoriler (sistem/uygulama onbellekleri, buyuk/eski dosyalar, uygulama kaldirici + artiklari, gelistirici artiklari vb.) onizleme+onay+Cop ile calisiyor; kullanici onayladi",
+      "status": "todo",
+      "evidence": "Istek 2026-11-12."
+    },
+    {
+      "id": "CPU-01",
+      "title": "Idle CPU %4-7 -> <%1 (pil kurali)",
+      "priority": 1,
+      "done_when": "Adalmon bosta (pencere kapali, duvar kagidi acik/kapali ayri olculur) CPU <%1-2; olcum komutu ve sonuc evidence'ta; kullanici onayladi",
+      "status": "in_progress",
+      "evidence": "2026-11-12: Kurulu surum DEBUG'du (adalmon.debug.dylib) -> artik Release kuruluyor (aktif filtre surumuyle). Duzeltmeler: ana pencere sizingOptions=[] (minSize hesabi ana is parcaciginin ~1/3'u), canli liste pencere gorunmezken yenilenmiyor, tarayici bagli degilken web snapshot uretilmiyor. Release olcumu (pencere acik Mobil sayfasi, video duvar kagidi oynuyor, ajan trafigi var): ort %7,3. Kalan: video duvar kagidi cozme (%85 kaplama < 0,9 esik), 1 Hz canli sayfa, pil sivi animasyonu fisteyken sarj olmasa da. Testler: tam suite 1365/1366."
+    },
+    {
+      "id": "USAGE-FIX-01",
+      "title": "Yerel proxy (SpoofDPI) uzerinden trafik mobil olarak fazla sayiliyordu",
+      "priority": 1,
+      "done_when": "Proxied trafik egress'e gore paylastirilir, arayuz deltasiyla sinirli, burst uyarisi mobil bayttan; testli; kullanici onayladi",
+      "status": "in_progress",
+      "evidence": "2026-11-12: UsageEngine.mobileShares (proxied mobil = min(proxied, mobil egress) orantili), ingest mobileCap (adim arayuz deltasi), AlertCenter.checkBursts mobilBytes, canli/saatlik/gunluk ayni sayilar. UsageLogicTests +6, AlertDeliveryTests +1; ilgili 115 test. Kalan: RuleEngine.swift:107 kural/merdiven hala ham bayrakla sayiyor; eski kayitlar duzeltilmedi. Kuruldu (Release)."
     }
   ]
 }
