@@ -11,6 +11,8 @@ final class AgentService {
     }
 
     let monitor = AgentMonitorModel(modelResolver: TranscriptModelResolver())
+    /// Abonelik limitleri (Claude statusLine sarmalayıcısı → `/v1/limits`, Codex yerel dosya). Dinleyiciden bağımsız yaşar.
+    let limits = SubscriptionLimitsModel()
     private(set) var listener: ListenerState = .off
     private(set) var pluginStatus: AgentPluginInstaller.PluginStatus = .unknown
     /// Kurulu plugin'in sürümü (`claude plugin list --json`); bilinmiyorsa nil.
@@ -109,6 +111,7 @@ final class AgentService {
         listener = .starting
         let monitor = monitor
         let prefs = prefs
+        let limits = limits
         let server = AgentEventServer(
             token: token,
             web: web,
@@ -120,7 +123,8 @@ final class AgentService {
                     monitor.ingest(event)
                 }
             },
-            onState: { [weak self] state in Task { @MainActor in self?.handle(state) } })
+            onState: { [weak self] state in Task { @MainActor in self?.handle(state) } },
+            onLimits: { value in Task { @MainActor in limits.ingestClaude(value) } })
         server.onStreamCount = { [weak self] count in Task { @MainActor in self?.setWebObserving(count > 0) } }
         self.server = server
         let saved = prefs.agentsPort

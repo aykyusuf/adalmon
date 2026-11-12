@@ -60,6 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AdalmonIntentHub.backend = LiveIntentBackend(model: model, openRoute: { router.open(route: $0) })
         let statusBar = StatusBarController(model: model) { [weak panel] button, route in panel?.click(on: button, route: route) }
         panel.statusItemFrames = { [weak statusBar] in statusBar?.buttonFrames() ?? [] }
+        model.statusItemPositions = { [weak statusBar] in statusBar?.itemPositions() ?? [:] }
         self.statusBar = statusBar
         model.start()
         dockMode.start()

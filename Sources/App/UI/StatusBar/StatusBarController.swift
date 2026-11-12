@@ -193,6 +193,16 @@ final class StatusBarController: NSObject {
         }
     }
 
+    /// Tek bileşenli öğelerin şu anki ekran x konumu (tek seferlik okuma; ekranda olmayan öğe yok sayılır).
+    func itemPositions() -> [UUID: CGFloat] {
+        var result: [UUID: CGFloat] = [:]
+        for (key, group) in groupComponents {
+            guard group.count == 1, let window = items[key]?.button?.window, window.screen != nil else { continue }
+            result[group[0].id] = window.frame.minX
+        }
+        return result
+    }
+
     @objc private func clicked(_ sender: NSStatusBarButton) {
         guard let key = items.first(where: { $0.value.button === sender })?.key else { return }
         if key == Self.agentsKey {

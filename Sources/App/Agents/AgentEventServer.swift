@@ -22,6 +22,7 @@ final class AgentEventServer: @unchecked Sendable {
     private let keepAliveInterval: TimeInterval
     private let onEvent: @Sendable (AgentEvent) -> Void
     private let onState: @Sendable (State) -> Void
+    private let onLimits: @Sendable (ProviderLimits) -> Void
     // Aşağıdakilere yalnızca `queue` üzerinden erişilir.
     private var listener: NWListener?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
@@ -40,12 +41,14 @@ final class AgentEventServer: @unchecked Sendable {
     }
 
     init(token: String, web: AgentWebStore? = nil, keepAliveInterval: TimeInterval = 15,
-         onEvent: @escaping @Sendable (AgentEvent) -> Void, onState: @escaping @Sendable (State) -> Void) {
+         onEvent: @escaping @Sendable (AgentEvent) -> Void, onState: @escaping @Sendable (State) -> Void,
+         onLimits: @escaping @Sendable (ProviderLimits) -> Void = { _ in }) {
         self.token = token
         self.web = web
         self.keepAliveInterval = keepAliveInterval
         self.onEvent = onEvent
         self.onState = onState
+        self.onLimits = onLimits
     }
 
     static func randomPort() -> UInt16 { UInt16.random(in: portRange) }
@@ -191,12 +194,15 @@ final class AgentEventServer: @unchecked Sendable {
                 self.receiveWeb(on: connection, buffer: buffer, closed: error != nil || isComplete)
                 return
             }
-            let outcome = AgentHTTPParser.parse(buffer, token: self.token)
+            let outcome = AgentHTTPParser.parse(buffer, token: self.token, port: self.port == 0 ? nil : self.port)
             switch outcome {
             case .needMore:
                 if error != nil || isComplete { connection.cancel() } else { self.receive(on: connection, buffer: buffer) }
             case .event(let event):
                 self.onEvent(event)
+                self.reply(outcome, on: connection)
+            case .limits(let limits):
+                self.onLimits(limits)
                 self.reply(outcome, on: connection)
             case .reject:
                 self.reply(outcome, on: connection)

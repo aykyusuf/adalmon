@@ -7,6 +7,7 @@ struct MenuBarCardsForm: View {
     @Binding var cards: [MetricCardConfig]
     let isSimple: Bool
     let onOpenAdvanced: () -> Void
+    var readPositions: (() -> [UUID: CGFloat])?
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var pending: LayoutConfirmation?
@@ -25,6 +26,7 @@ struct MenuBarCardsForm: View {
                     ForEach(PanelClickMode.allCases) { Text($0.displayName).tag($0) }
                 }
                 .help("Menü çubuğu öğesine tıklayınca o metriğin ayrıntı paneli ya da tüm metrikleri tek panelde gösteren birleşik panel açılır.")
+                MenuBarOrderSyncRow(store: store, readPositions: readPositions)
                 LabeledContent("Aralık") {
                     HStack {
                         Slider(value: $store.config.spacing, in: MenuBarConfig.spacingRange, step: 1)

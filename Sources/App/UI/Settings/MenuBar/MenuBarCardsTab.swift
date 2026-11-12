@@ -17,7 +17,8 @@ struct MenuBarCardsTab: View {
 
     var body: some View {
         MenuBarCardsForm(store: store, values: values, cards: $cards, isSimple: isSimple,
-                         onOpenAdvanced: { showsAdvancedEditor = true })
+                         onOpenAdvanced: { showsAdvancedEditor = true },
+                         readPositions: model.statusItemPositions)
             .liveWidgetValues($values, model: model)
             .onAppear(perform: syncFromStore)
             .onChange(of: store.config.components) { syncFromStore() }

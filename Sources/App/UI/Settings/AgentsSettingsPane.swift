@@ -16,7 +16,7 @@ struct AgentsSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                Text("Claude Code oturumlarını ve alt ajanlarını Adalmon'da canlı gösterir (menü çubuğundaki \"Ajanlar\" öğesi ve paneli). Bir Claude Code plugin'i, olay adlarını bu Mac'te 127.0.0.1 üzerindeki yerel bir dinleyiciye iletir. ~/.claude/settings.json dosyanıza Adalmon dokunmaz.")
+                Text("Claude Code oturumlarını ve alt ajanlarını Adalmon'da canlı gösterir (menü çubuğundaki \"Ajanlar\" öğesi ve paneli). Bir Claude Code plugin'i, olay adlarını bu Mac'te 127.0.0.1 üzerindeki yerel bir dinleyiciye iletir. ~/.claude/settings.json dosyanıza Adalmon yalnızca aşağıdaki \"Claude limitlerini bağla\" düğmesine basarsanız (yedek alarak) dokunur.")
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Özelliği aç", isOn: Binding(get: { prefs.agentsEnabled }, set: { agents.setEnabled($0) }))
                 Toggle("Menü çubuğunda \"Ajanlar\" öğesini göster", isOn: $prefs.agentsInMenuBar)
@@ -91,6 +91,8 @@ struct AgentsSettingsPane: View {
                     }
                 }
             }
+
+            SubscriptionLimitsSettingsSection(model: agents.limits, listenerRunning: agents.port != nil)
 
             Section("Gizlilik") {
                 Text("İletilir: olay adı, oturum ve ajan kimliği, ajan türü, araç adı, model adı, bildirim türü, proje klasörünün adı (yolun son parçası), oturum adı (session_title; /rename ile verdiğiniz ya da otomatik başlık), izin modu ve zaman. \"Hedefi de göster\" açıkken ek olarak yalnızca dosya adı (yolun son parçası) ya da komutun ilk kelimesi iletilir; içerik ve argüman asla.")

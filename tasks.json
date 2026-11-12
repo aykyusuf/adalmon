@@ -128,7 +128,7 @@
       "priority": 2,
       "done_when": "Panelde/ofiste Claude Code (5 saatlik ve haftalik pencere), Codex abonelik limiti ve API kredi bakiyesi kalan miktarla gorunuyor; esik altina inince ekranda bildirim/uyari cikiyor (esikler ayarlanabilir, 5 saatlik pencere icin ayri); kullanici onayladi",
       "status": "in_progress",
-      "evidence": "2026-11-11 arastirma (docs/ARASTIRMA-2026-11-11.md): Claude limitleri statusline JSON'undaki rate_limits (five_hour/seven_day) ile resmi yoldan alinabilir (plugin'e statusLine betigi -> 127.0.0.1 dinleyici; kullanicinin mevcut statusLine'i ile cakisma karari gerekli). Codex: ~/.codex rollout jsonl token_count.rate_limits (belgesiz, kirilabilir). API kredi bakiyesi icin resmi endpoint yok. Kullanici karari bekleniyor."
+      "evidence": "2026-11-12: Ayarlar > Claude ajanlari > Abonelik limitleri: 'Claude limitlerini bagla' (kullanicinin statusLine'i byte-byte korunarak sarmalanir, yedekli, geri alinabilir; wrapper Application Support/Adalmon/ClaudeStatusLine/), POST /v1/limits (token+Host+Origin), Codex rollout kuyruk okuma (en fazla 3 dk'da bir, yalniz kart gorunurken), Ajanlar panelinde 'Abonelik limitleri' karti, ayarlanabilir 5 saat/haftalik uyari esikleri + bildirim. Bagimsiz review: settings.json okunamazsa ezme riski, Codex'in yuklenmemesi, eszamanli yazma, yedek izinleri, gereksiz yazma, nil-reset uyari tekrar kurma -> hepsi duzeltildi + testler (SubscriptionLimitsTests 28). Tam suite 1279/1282. Gercek ~/.claude/settings.json ve config.json'a dokunulmadi (md5 ayni). Kuruldu. KALAN: kullanicinin 'Bagla'ya basmasi + canli gorus + onay. API kredi bakiyesi resmi endpoint olmadigi icin yok."
     },
     {
       "id": "OFFICE-CTRL-01",
@@ -144,7 +144,7 @@
       "priority": 3,
       "done_when": "Aday acik kaynak projeler (lisans, bakim durumu, ne yapiyor, guvenlik riski) arastirildi ve karsilastirildi; kullanici ile konusulup entegrasyon yaklasimi (kod kullanma, arac cagirma, kendi yazma) secildi; secilirse ayri gorev olarak planlandi",
       "status": "in_progress",
-      "evidence": "2026-11-11 arastirma (docs/ARASTIRMA-2026-11-11.md): Mole GPL-3.0 (MIT repo ile uyumsuz), Pearcleaner Apache+Commons Clause ve askida. Oneri: kendi kucuk temizleyicimiz (tara -> onizleme -> onay -> FileManager.trashItem), Mole kurallari yalnizca referans. Kullanici karari bekleniyor."
+      "evidence": "2026-11-12: Surecler > 'Temizlik' sekmesi: yalniz istekle tarama (iptal edilebilir), kategoriler (uygulama onbellekleri, DerivedData, arsivler, cihaz destek, simulator, paket onbellekleri, iOS yedekleri/Indirilenler yalniz listelenir, Cop boyutu), onizleme + onay + yalniz FileManager.trashItem (kalici silme yok), tek CleanupTrasher 9 korumayla, JSONL log. Plan docs/plans/CLEAN-01-plan.md. CleanupTests 20/20, ilgili 41/41, tam suite 1279/1282. Grep: removeItem/unlink yok, trashItem tek yerde. Kuruldu. KALAN: kullanicinin canli denemesi + onay."
     },
     {
       "id": "MENUBAR-01",
@@ -152,7 +152,7 @@
       "priority": 3,
       "done_when": "macOS menu cubugunda (Cmd+surukle) ogelerin sirasi degisince Adalmon'un kendi siralama ayari bununla tutarli; ya da teknik olarak mumkun degilse nedeni belgelendi ve kullanici 'yapma' dedi",
       "status": "in_progress",
-      "evidence": "2026-11-11 arastirma (docs/ARASTIRMA-2026-11-11.md): surukleme icin resmi bildirim yok; kendi ogelerimizin sirasi button.window.frame.minX ile okunabilir. Oneri: Ayarlar'a 'Sirayi menu cubugundan al' dugmesi (tek seferlik okuma, surekli izleme yok). Kullanici karari bekleniyor."
+      "evidence": "2026-11-12: 'Sirayi menu cubugundan al' dugmesi (yalniz Ayri modda; tek seferlik minX okuma; replaceConfig ile yedek+geri al). MenuBarScreenOrderTests 7/7; tam suite 1279/1282 (3 bilinen kararsiz). Kuruldu 07:20. KALAN: kullanici onayi (Tahoe'da gizli/coklu ekran davranisi canli denenmedi)."
     },
     {
       "id": "MENUBAR-02",

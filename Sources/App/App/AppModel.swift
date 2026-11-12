@@ -11,6 +11,8 @@ final class AppModel {
     let installer = ExtensionInstaller()
     let usage: UsageEngine
     @ObservationIgnored let alerts = AlertCenter()
+    /// Menü çubuğu öğelerinin ekran konumları (AppDelegate bağlar; "Sırayı menü çubuğundan al").
+    @ObservationIgnored var statusItemPositions: () -> [UUID: CGFloat] = { [:] }
     /// Kural motoru + kademeli limit (Faz A). Çıktısı `pushConfig` içinde elle ayarlarla birleştirilir.
     let rules = RuleEngine()
     /// Fiziksel arayüz deltaları: son dakikaların mobil hızı ve saatlik arayüz toplamları.
@@ -79,6 +81,7 @@ final class AppModel {
     init() {
         usage = UsageEngine(store: store)
         alerts.onBlock = { [weak self] app in self?.setBlocked(app, true, fromNotification: true) }
+        agents.limits.notify = { [alerts] in alerts.notify(title: $0, body: $1) }
         installer.onFilterEnabled = { [weak self] in self?.startFilterWatchdog() }
     }
 

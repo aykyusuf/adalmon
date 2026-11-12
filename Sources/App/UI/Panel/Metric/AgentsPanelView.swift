@@ -29,6 +29,8 @@ extension AgentStatus {
 /// (`AgentSessionRow` Equatable).
 struct AgentsPanelView: View {
     let monitor: AgentMonitorModel
+    /// Abonelik limitleri kartı (verisi yoksa çizilmez); nil ise kart yok.
+    var limits: SubscriptionLimitsModel?
     let actions: PanelActions
     let opensMainWindow: Bool
     var maxHeight: CGFloat?
@@ -40,6 +42,7 @@ struct AgentsPanelView: View {
         let working = monitor.state.workingAgentCount
         PanelScaffold(kind: .agents, actions: actions, opensMainWindow: opensMainWindow,
                       subtitle: sessions.isEmpty && sleeping.isEmpty ? nil : "\(working) çalışan ajan · \(sessions.count + sleeping.count) oturum", maxHeight: maxHeight) {
+            if let limits { SubscriptionLimitsCard(model: limits) }
             if sessions.isEmpty && sleeping.isEmpty {
                 PanelCard {
                     VStack(alignment: .leading, spacing: 6) {

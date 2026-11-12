@@ -110,6 +110,7 @@ struct MenuBarSettingsTab: View {
                     }
                 }
                 Toggle("Birimleri göster", isOn: $store.config.showUnits)
+                MenuBarOrderSyncRow(store: store, readPositions: model.statusItemPositions)
             }
 
             MenuBarLayoutsSection(store: store, pending: $pending)

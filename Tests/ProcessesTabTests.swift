@@ -7,7 +7,8 @@ final class ProcessesTabTests: XCTestCase {
         XCTAssertEqual(ProcessesTab.processes.neighbor(1), .performance)
         XCTAssertEqual(ProcessesTab.startup.neighbor(-1), .history)
         XCTAssertEqual(ProcessesTab.processes.neighbor(-1), .processes)
-        XCTAssertEqual(ProcessesTab.disk.neighbor(1), .disk)
+        XCTAssertEqual(ProcessesTab.disk.neighbor(1), .cleanup)
+        XCTAssertEqual(ProcessesTab.cleanup.neighbor(1), .cleanup)
     }
 
     func testEveryTabHasUniqueSymbolAndTitle() {

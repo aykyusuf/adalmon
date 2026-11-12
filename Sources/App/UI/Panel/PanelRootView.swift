@@ -17,7 +17,7 @@ struct PanelRootView: View {
             case .combined:
                 PanelContent(data: data, config: $store.config, actions: actions, maxHeight: session.maxHeight)
             case .agents:
-                AgentsPanelView(monitor: model.agents.monitor, actions: actions, opensMainWindow: data.opensMainWindow,
+                AgentsPanelView(monitor: model.agents.monitor, limits: model.agents.limits, actions: actions, opensMainWindow: data.opensMainWindow,
                                 maxHeight: session.maxHeight)
             default:
                 PanelKindView(kind: session.kind, data: data, live: live, config: $store.config, actions: actions,
