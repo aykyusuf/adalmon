@@ -13,7 +13,8 @@ enum AdalmonMain {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        app.setActivationPolicy(DockModeController.launchPolicy)
+        // Test sunucusu Dock'ta/menüde ikinci Adalmon olarak görünmesin.
+        app.setActivationPolicy(AppEnvironment.isRunningTests ? .accessory : DockModeController.launchPolicy)
         withExtendedLifetime(delegate) { app.run() }
     }
 }

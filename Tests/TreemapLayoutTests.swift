@@ -94,7 +94,8 @@ final class TreemapLayoutTests: XCTestCase {
         try fm.createSymbolicLink(atPath: home + "/link", withDestinationPath: home + "/Big")
         let docs = home + "/Documents"
         let probe = PathProbe { $0 == docs ? .denied : .ok }
-        let scanner = SpaceLensScanner(home: home, probe: probe)
+        var scanner = SpaceLensScanner(home: home, probe: probe)
+        scanner.minKeepBytes = 0
         let scan = scanner.scan(path: home)
         XCTAssertEqual(scan.state, .scanned)
         let byName = Dictionary(uniqueKeysWithValues: scan.nodes.map { ($0.name, $0) })

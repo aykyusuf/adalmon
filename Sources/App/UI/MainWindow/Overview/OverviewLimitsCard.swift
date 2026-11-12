@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Genel bakıştaki limit karosu: Claude ve Codex için 5 saat / haftalık mini halkalar. Diğer karolarla aynı boyutta;
-/// tıklayınca Limitler ayrıntı sayfası açılır. Değer değişince halka ve sayı yumuşakça değişir, ilk görünüşte halkalar bir kez dolar.
+/// tıklayınca Limitler sayfası (kenar çubuğu) açılır. Değer değişince halka ve sayı yumuşakça değişir, ilk görünüşte halkalar bir kez dolar.
 /// Pil: zamanlayıcı yok (dakikalık TimelineView yalnızca görünürken); sürekli animasyon yok.
 struct OverviewLimitsCard: View {
     let tile: OverviewTile

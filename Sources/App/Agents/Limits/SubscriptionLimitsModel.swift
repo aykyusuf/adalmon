@@ -91,6 +91,8 @@ final class SubscriptionLimitsModel {
     private(set) var codex: ProviderLimits?
     private(set) var claudeConnected = false
     private(set) var lastMessage: String?
+    /// Claude planı (`~/.claude.json` → `oauthAccount`, yalnızca beş alan). Bellekte; yalnızca limit görünümü açıkken okunur.
+    private(set) var claudePlan: ClaudeAccountPlan?
     var thresholds: LimitAlertThresholds { didSet { store(thresholds, Key.thresholds) } }
     /// Tahmin uyarısı duyarlılığı (USAGE-02). Ayrı anahtarda: eşik yapısının kayıtlı biçimi değişmesin.
     var forecastSensitivity: LimitForecastSensitivity {
@@ -110,6 +112,9 @@ final class SubscriptionLimitsModel {
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let binder: ClaudeStatusLineBinder
     @ObservationIgnored private let codexReader: CodexRolloutReader
+    @ObservationIgnored private let planReader: ClaudePlanReader
+    @ObservationIgnored private var planStamp: ClaudePlanReader.Stamp?
+    @ObservationIgnored private var planReading = false
     @ObservationIgnored private var tracker: LimitAlertTracker
     @ObservationIgnored private var lastCodexCheck: Date?
     @ObservationIgnored private var codexReading = false
@@ -119,10 +124,12 @@ final class SubscriptionLimitsModel {
     @ObservationIgnored private let live: Bool
 
     init(defaults: UserDefaults = .standard, binder: ClaudeStatusLineBinder = ClaudeStatusLineBinder(),
-         codexReader: CodexRolloutReader = CodexRolloutReader(), live: Bool = !AppEnvironment.isRunningTests) {
+         codexReader: CodexRolloutReader = CodexRolloutReader(), planReader: ClaudePlanReader = ClaudePlanReader(),
+         live: Bool = !AppEnvironment.isRunningTests) {
         self.defaults = defaults
         self.binder = binder
         self.codexReader = codexReader
+        self.planReader = planReader
         self.live = live
         thresholds = Self.load(LimitAlertThresholds.self, Key.thresholds, defaults) ?? LimitAlertThresholds()
         tracker = Self.load(LimitAlertTracker.self, Key.tracker, defaults) ?? LimitAlertTracker()
@@ -215,11 +222,13 @@ final class SubscriptionLimitsModel {
         viewers += 1
         guard live, viewers == 1 else { return }
         refreshCodex(force: false)
+        refreshPlan()
         viewerLoop = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(Self.codexInterval), tolerance: .seconds(30))
                 guard !Task.isCancelled else { return }
                 self?.refreshCodex(force: false)
+                self?.refreshPlan()
             }
         }
     }
@@ -227,6 +236,35 @@ final class SubscriptionLimitsModel {
     func removeViewer() {
         viewers = max(0, viewers - 1)
         if viewers == 0 { viewerLoop?.cancel(); viewerLoop = nil }
+    }
+
+    // MARK: Plan
+
+    /// Claude planını okur: önce yalnızca stat; dosya değişmediyse okunmaz. Okuma arka planda (`.utility`). Sürekli çalışmaz:
+    /// yalnızca limit görünümü açılınca ve görünür kaldıkça mevcut 3 dk'lık döngüyle çağrılır.
+    func refreshPlan() {
+        guard !planReading else { return }
+        planReading = true
+        let reader = planReader, previous = planStamp
+        Task {
+            let result = await Task.detached(priority: .utility) { () -> (ClaudePlanReader.Stamp?, ClaudeAccountPlan?)? in
+                let stamp = reader.stamp()
+                if let stamp, stamp == previous { return nil }
+                return (stamp, stamp == nil ? nil : reader.read())
+            }.value
+            planReading = false
+            guard let (stamp, plan) = result else { return }
+            planStamp = stamp
+            if plan != claudePlan { claudePlan = plan }
+        }
+    }
+
+    /// Ekranlar için plan rozetleri (Codex planı son rollout olayından gelir).
+    var plans: [LimitSource: LimitPlan] {
+        var result: [LimitSource: LimitPlan] = [:]
+        if let claudePlan, let plan = LimitPlanMapper.claude(claudePlan) { result[.claude] = plan }
+        if codexEnabled, let plan = LimitPlanMapper.codex(planType: codex?.planType) { result[.codex] = plan }
+        return result
     }
 
     // MARK: Bildirim

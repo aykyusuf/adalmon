@@ -21,6 +21,7 @@ struct MainWindowDetail<SettingsContent: View>: View {
         case .wallpaper: WallpaperPage(service: .shared, agentsEnabled: model.prefs.agentsEnabled) { router.open(.agents) }
         case .agentOffice: AgentOfficePage(model: model, router: router)
         case .cleanup: CleanupPage(router: router)
+        case .limits: LimitsPage(model: model.agents.limits, agentsEnabled: model.prefs.agentsEnabled) { router.open(.agents) }
         case .settings(let settings): SettingsPage(section: settings) { settingsContent(settings) }
         }
     }

@@ -19,8 +19,12 @@ struct SpaceLensSection: View {
             }
             .padding(.bottom, 8)
         }
-        .onAppear { vm.access.resume() }
+        .onAppear {
+            vm.access.resume()
+            vm.setVisible(true)
+        }
         .onDisappear {
+            vm.setVisible(false)
             vm.cancel()
             vm.access.stop()
         }
@@ -73,12 +77,25 @@ struct SpaceLensSection: View {
         } else if vm.nodes.isEmpty {
             ResourceEmptyNote(text: vm.lastState == .noAccess ? "Bu klasöre erişim yok." : "Bu klasör boş.")
         } else {
-            TreemapCanvas(nodes: vm.nodes, selectedID: selectedID) { node in
+            TreemapCanvas(nodes: vm.nodes, otherBytes: vm.otherBytes, selectedID: selectedID, contextPath: vm.current ?? "") { node in
                 selectedID = node.id
                 if node.isFolder, !vm.isBusy { vm.open(node.path) }
             }
-            .frame(height: 320)
+            .frame(height: 340)
             .clipShape(.rect(cornerRadius: 8))
+            .overlay(alignment: .topTrailing) {
+                // Önbellekte olmayan (tembel) seviye açılırken yerinde küçük bir gösterge.
+                if vm.phase == .scanning {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Taranıyor…").font(.caption)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(.regularMaterial, in: .capsule)
+                    .padding(8)
+                }
+            }
+            TreemapLegend(nodes: vm.nodes)
             nodeList
         }
     }
@@ -89,6 +106,9 @@ struct SpaceLensSection: View {
                 ForEach(vm.nodes.prefix(100)) { node in row(node) }
             }
             if vm.nodes.count > 100 { Text("En büyük 100 öğe listeleniyor.").font(.caption).foregroundStyle(.secondary) }
+            if vm.otherCount > 0 {
+                Text("Küçük \(vm.otherCount) öğe (\(Format.bytes(vm.otherBytes))) tek tek gösterilmiyor.").font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 

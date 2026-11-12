@@ -100,6 +100,25 @@ struct LimitWindowDisplay: Equatable, Identifiable, Sendable {
         return "Bu hızla ~\(moment)\(LimitForecastFormat.locativeSuffix(forecast.fillsAt)) dolar"
     }
 
+    /// Pencerenin başladığı an (yenilenme anı − pencere uzunluğu); yenilenme anı bilinmiyorsa nil.
+    var startsAt: Date? { resetsAt?.addingTimeInterval(-kind.duration) }
+
+    /// Dolma tahmininin çizelgedeki yeri (0...1); tahmin yoksa ya da dolma yenilenmeden sonraysa nil.
+    var forecastFraction: Double? {
+        guard let forecast, let startsAt else { return nil }
+        let fraction = forecast.fillsAt.timeIntervalSince(startsAt) / kind.duration
+        return (0...1).contains(fraction) ? fraction : nil
+    }
+
+    /// Kullanım ile geçen süre karşılaştırması: "Süreden hızlı" / "Dengeli" / "Rahat". Süre bilinmiyorsa nil.
+    func paceText(now: Date) -> String? {
+        guard !isReset, !isStale, let elapsed = elapsedFraction(now: now) else { return nil }
+        let delta = usedPercent - elapsed * 100
+        if delta > 12 { return "Süreden hızlı gidiyor" }
+        if delta < -12 { return "Rahat gidiyor" }
+        return "Dengeli gidiyor"
+    }
+
     /// Kullanım hızı: "%12/sa" (yalnızca tahmin varken).
     var rateText: String? {
         guard let rate = forecast?.ratePerHour, rate.isFinite, rate > 0 else { return nil }
@@ -191,6 +210,8 @@ struct LimitsSnapshot: Equatable, Sendable {
     var sections: [LimitSection]
     var thresholds: LimitAlertThresholds
     var now: Date
+    /// Sağlayıcı başına plan rozeti (bilinmiyorsa yok).
+    var plans: [LimitSource: LimitPlan] = [:]
 
     var featured: (source: LimitSource, window: LimitWindowDisplay)? { LimitsPresentation.featured(sections) }
     var hasData: Bool { sections.contains { $0.display != nil } }
@@ -261,6 +282,14 @@ enum LimitsPresentation {
         return "\(source.displayName) \(window.kind.shortLabel)"
     }
 
+    /// Plan satırının alt metni: "Stripe aboneliği · Ek kullanım kapalı"; hiçbiri yoksa nil.
+    static func planDetail(_ plan: LimitPlan) -> String? {
+        var parts: [String] = []
+        if let billing = plan.billing { parts.append(billing) }
+        if let extra = plan.extraUsage { parts.append(extra ? "Ek kullanım açık" : "Ek kullanım kapalı") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     /// Eşik özeti: "Uyarı %80 · Kritik %95".
     static func thresholdText(_ window: LimitWindowDisplay) -> String {
         "Uyarı \(LimitFormat.percent(window.warnAt)) · Kritik \(LimitFormat.percent(window.criticalAt))"
@@ -275,6 +304,6 @@ extension SubscriptionLimitsModel {
             sections: LimitsPresentation.sections(
                 providers: providers, claudeConnected: claudeConnected, agentsEnabled: agentsEnabled, codexEnabled: codexEnabled,
                 thresholds: thresholds, now: now, forecast: { forecast(for: $0, $1, now: now) }),
-            thresholds: thresholds, now: now)
+            thresholds: thresholds, now: now, plans: plans)
     }
 }

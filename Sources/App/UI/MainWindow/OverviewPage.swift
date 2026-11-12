@@ -12,7 +12,6 @@ struct OverviewPage: View {
     @State private var dayStats = OverviewDayStats()
     @State private var tab: OverviewListTab
     @State private var viewingLimits = false
-    @State private var showingLimits = false
 
     init(model: AppModel, source: MainWindowDataSource, router: SettingsRouter, initialTab: OverviewListTab = .network) {
         self.model = model
@@ -22,17 +21,7 @@ struct OverviewPage: View {
     }
 
     var body: some View {
-        Group {
-            if showingLimits {
-                LimitsDetailPage(model: model.agents.limits, agentsEnabled: model.prefs.agentsEnabled,
-                                 onBack: { showingLimits = false }, openSettings: { router.open(.agents) })
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else {
-                dashboard
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-        }
-        .animation(.smooth(duration: 0.3), value: showingLimits)
+        dashboard
         .clipped()
         .task { await refreshDayStats() }
         .onAppear { if model.prefs.agentsEnabled || model.agents.limits.codexEnabled { model.agents.limits.addViewer(); viewingLimits = true } }
@@ -60,7 +49,7 @@ struct OverviewPage: View {
                                  onReconnect: { model.reconnectFilter() }, onOpenSettings: { router.open(.filter) })
                 OverviewTileGrid(tiles: tiles, width: max(0, page.size.width - 48), router: router,
                                 limits: limitsModel, agentsEnabled: model.prefs.agentsEnabled,
-                                openLimits: { showingLimits = true })
+                                openLimits: { OverviewTileKind.limits.destination.open(router) })
                 GeometryReader { area in
                     topList(maxRows: OverviewLayout.listRows(height: area.size.height))
                         .frame(width: area.size.width, height: area.size.height, alignment: .top)

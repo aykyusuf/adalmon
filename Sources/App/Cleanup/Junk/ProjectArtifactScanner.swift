@@ -20,14 +20,16 @@ enum ProjectArtifactScanner {
     }
 
     /// - Parameters:
+    ///   - skipPackages: true ise .app/.photoslibrary gibi paketlerin içine inilmez (varsayılan false: eski davranış).
     ///   - minBytes: bundan küçük artıklar listelenmez.
     ///   - runningBundleIDs: DerivedData/.build için Xcode açıksa öğe engelli işaretlenir.
     /// - Returns: kök sembolik bağ ya da klasör değilse nil.
     static func scan(root: String, runningBundleIDs: Set<String> = [], minBytes: UInt64 = CleanupCatalog.minItemBytes,
-                     maxDepth: Int = DevRules.maxProjectDepth, isCancelled: @escaping () -> Bool = { false }) -> [CleanupItem]? {
+                     maxDepth: Int = DevRules.maxProjectDepth, skipPackages: Bool = false,
+                     isCancelled: @escaping () -> Bool = { false }) -> [CleanupItem]? {
         guard isRealDirectory(root) else { return nil }
         var found: [String] = []
-        walk(root, depth: 0, maxDepth: maxDepth, found: &found, isCancelled: isCancelled)
+        walk(root, depth: 0, maxDepth: maxDepth, skipPackages: skipPackages, found: &found, isCancelled: isCancelled)
 
         var items: [CleanupItem] = []
         for path in found {
@@ -49,7 +51,7 @@ enum ProjectArtifactScanner {
     }
 
     /// `dir` (derinlik `depth`) içindeki alt klasörleri gezer; çocukların derinliği `depth + 1`.
-    private static func walk(_ dir: String, depth: Int, maxDepth: Int, found: inout [String], isCancelled: () -> Bool) {
+    private static func walk(_ dir: String, depth: Int, maxDepth: Int, skipPackages: Bool, found: inout [String], isCancelled: () -> Bool) {
         if isCancelled() { return }
         guard let kids = children(of: dir) else { return }
         let siblings = Set(kids.map(\.name))
@@ -61,7 +63,9 @@ enum ProjectArtifactScanner {
                 continue
             }
             if kid.name.hasPrefix(".") { continue }
-            if depth + 1 < maxDepth { walk(path, depth: depth + 1, maxDepth: maxDepth, found: &found, isCancelled: isCancelled) }
+            // Paket gibi davranan klasörlerin (.app, .photoslibrary…) içinde proje aranmaz (yalnızca isteyen çağıran için).
+            if skipPackages, FileWalker.isPackage(kid.name) { continue }
+            if depth + 1 < maxDepth { walk(path, depth: depth + 1, maxDepth: maxDepth, skipPackages: skipPackages, found: &found, isCancelled: isCancelled) }
         }
     }
 

@@ -2,7 +2,7 @@ import SwiftUI
 
 extension OverviewTile {
     /// Abonelik limitleri karosu: en kritik pencere (en yüksek kullanım). Ajanlar kapalıysa yalnızca Codex verisi sayılır;
-    /// hiç veri yoksa ve ajanlar kapalıysa karo gizlenir (nil). Karoya tıklayınca (veri olsun olmasın) Limitler ayrıntı sayfası açılır.
+    /// hiç veri yoksa ve ajanlar kapalıysa karo gizlenir (nil). Karoya tıklayınca (veri olsun olmasın) Limitler sayfası (kenar çubuğu) açılır.
     static func limits(providers: [ProviderLimits], claudeConnected: Bool, agentsEnabled: Bool, thresholds: LimitAlertThresholds,
                        now: Date, forecast: (ProviderLimits, LimitWindowKind) -> LimitForecast?) -> OverviewTile? {
         let shown = providers.filter { agentsEnabled || $0.source != .claude }

@@ -7,7 +7,7 @@ struct OverviewTileGrid: View {
     let router: SettingsRouter
     var limits: SubscriptionLimitsModel? = nil
     var agentsEnabled = true
-    /// Limit karosuna tıklayınca Limitler ayrıntı sayfasını açar.
+    /// Limit karosuna tıklayınca Limitler sayfası (kenar çubuğu)nı açar.
     var openLimits: () -> Void = {}
 
     static let minTileWidth: CGFloat = 138

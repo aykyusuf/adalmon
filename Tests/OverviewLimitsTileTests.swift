@@ -58,11 +58,12 @@ final class OverviewLimitsTileTests: XCTestCase {
         XCTAssertTrue(t.secondary.hasPrefix("Son veri"), t.secondary)
     }
 
-    func testDestinationOpensAgentSettings() {
-        XCTAssertEqual(OverviewTileKind.limits.destination, OverviewDestination(section: .overview, settings: .agents))
+    func testDestinationOpensLimitsPage() {
+        XCTAssertEqual(OverviewTileKind.limits.destination, OverviewDestination(section: .limits))
         let router = SettingsRouter(isDockModeOn: { true })
         OverviewTileKind.limits.destination.open(router)
-        XCTAssertEqual(router.selectedSettingsSection, .agents)
+        XCTAssertEqual(router.selectedMainSection, .limits)
+        XCTAssertNotEqual(router.selectedSettingsSection, .agents, "Ayarlar'a gidilmez")
     }
 
     // MARK: Tıklama → ayrıntı sayfası (gerçek fare olayıyla)
@@ -87,7 +88,7 @@ final class OverviewLimitsTileTests: XCTestCase {
         window.close()
     }
 
-    func testClickingLimitsTileOpensDetailNotSettings() async throws {
+    func testClickingLimitsTileOpensLimitsPage() async throws {
         let suite = "adalmon.limits.tile.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -106,21 +107,11 @@ final class OverviewLimitsTileTests: XCTestCase {
         let router = SettingsRouter(isDockModeOn: { true })
         router.selectedMainSection = .overview
         var opened = 0
-        let grid = OverviewTileGrid(tiles: [limitsTile], width: 200, router: router, limits: model, agentsEnabled: true, openLimits: { opened += 1 })
+        let grid = OverviewTileGrid(tiles: [limitsTile], width: 200, router: router, limits: model, agentsEnabled: true, openLimits: { OverviewTileKind.limits.destination.open(router); opened += 1 })
             .padding(10)
         try await click(grid, size: NSSize(width: 220, height: 140), at: NSPoint(x: 110, y: 60))
         XCTAssertEqual(opened, 1, "karta tıklayınca Limitler sayfası açılır")
-        XCTAssertEqual(router.selectedMainSection, .overview, "Ayarlar'a ya da başka sayfaya gidilmez")
+        XCTAssertEqual(router.selectedMainSection, .limits, "kenar çubuğundaki Limitler sayfasına gidilir")
         XCTAssertNotEqual(router.selectedSettingsSection, .agents)
-    }
-
-    func testDetailBackButtonCallsBack() async throws {
-        var backed = 0
-        let snapshot = LimitsSnapshot(sections: [LimitSection(source: .claude, state: .empty(.claudeNotConnected)),
-                                                 LimitSection(source: .codex, state: .empty(.codexNoData))],
-                                      thresholds: LimitAlertThresholds(), now: now)
-        let page = LimitsDetailContent(snapshot: snapshot, onBack: { backed += 1 }, openSettings: {})
-        try await click(page, size: NSSize(width: 900, height: 700), at: NSPoint(x: 60, y: 36))
-        XCTAssertEqual(backed, 1, "geri düğmesi Genel bakışa döner")
     }
 }

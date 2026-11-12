@@ -27,7 +27,7 @@ enum OverviewTileKind: String, CaseIterable, Identifiable, Sendable {
         case .mobile: OverviewDestination(section: .mobile)
         case .cpu, .gpu, .memory: OverviewDestination(section: .processes, processesTab: .performance)
         case .disk: OverviewDestination(section: .processes, processesTab: .disk)
-        case .limits: OverviewDestination(section: .overview, settings: .agents)
+        case .limits: OverviewDestination(section: .limits)
         }
     }
 }
@@ -57,12 +57,11 @@ struct OverviewTile: Identifiable {
     let accessory: Accessory
     /// İkincil metnin rengi (ör. dolma tahmini turuncu); nil = ikincil renk.
     var secondaryTint: Color? = nil
-    /// Tıklayınca hedef sayfa yerine Genel bakış içindeki ayrıntı sayfası açılır (yalnızca limit karosu).
+    /// Limit karosu: canlı halka kartı gösterilir. Her iki durumda tıklayınca ana pencerenin "Limitler" sayfası açılır.
     var opensDetail = false
 
     var id: OverviewTileKind { kind }
     var accessibilityHint: String {
-        if kind == .limits { return opensDetail ? "Limit ayrıntısını açar" : "Ayarlar'da Claude ajanları bölümünü açar" }
         return "\(kind.destination.section.title) sayfasını açar"
     }
     var accessibilityLabel: String { [title, value, secondary].filter { !$0.isEmpty }.joined(separator: ", ") }

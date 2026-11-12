@@ -65,11 +65,13 @@ final class DockModeTests: XCTestCase {
             XCTAssertTrue(titles.contains(expected), "\(expected) menüsü yok: \(titles)")
         }
 
-        // Görünüm: tüm sayfalar ⌘1…⌘9 ve ⌘0 (Süreçler ⌘6, Pil ⌘7, Duvar kâğıdı ⌘8, Ajan ofisi ⌘9, Temizlik ⌘0).
+        // Görünüm: tüm sayfalar ⌘1…⌘9 ve ⌘0 (Süreçler ⌘6, Pil ⌘7, Duvar kâğıdı ⌘8, Ajan ofisi ⌘9, Temizlik ⌘0; Limitler kısayolsuz).
         let view = try XCTUnwrap(menu.items.first { $0.title == "Görünüm" }?.submenu)
         let pageKeys = view.items.filter { $0.action == #selector(MainWindowCommands.selectSection(_:)) }
-        XCTAssertEqual(pageKeys.map(\.keyEquivalent), ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"])
-        XCTAssertTrue(pageKeys.allSatisfy { $0.keyEquivalentModifierMask == .command })
+        XCTAssertEqual(pageKeys.map(\.keyEquivalent), ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ""], "Limitler menüde kısayolsuz")
+        XCTAssertEqual(pageKeys.last?.representedObject as? String, MainSection.limits.id)
+        XCTAssertEqual(pageKeys.last?.title, "Limitler")
+        XCTAssertTrue(pageKeys.dropLast().allSatisfy { $0.keyEquivalentModifierMask == .command })
         XCTAssertEqual(pageKeys[5].representedObject as? String, MainSection.processes.id)
         XCTAssertEqual(pageKeys[6].representedObject as? String, MainSection.battery.id)
 

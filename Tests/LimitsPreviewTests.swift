@@ -3,7 +3,7 @@ import SwiftUI
 import XCTest
 @testable import Adalmon
 
-/// Limit kartı (Genel bakış), Limitler sayfası ve panel kartını sahte veriyle ekran dışında çizip PNG yazar (açık + koyu).
+/// Limit kartı (Genel bakış), Limitler sayfası (kenar çubuğu) ve panel kartını sahte veriyle ekran dışında çizip PNG yazar (açık + koyu).
 /// Yalnızca ADALMON_PREVIEW_DIR (xcodebuild için TEST_RUNNER_ADALMON_PREVIEW_DIR) verilince çalışır.
 @MainActor
 final class LimitsPreviewTests: XCTestCase {
@@ -38,10 +38,17 @@ final class LimitsPreviewTests: XCTestCase {
 
     private func snapshot(_ providers: [ProviderLimits], connected: Bool, agents: Bool = true) -> LimitsSnapshot {
         let thresholds = LimitAlertThresholds()
+        var plans: [LimitSource: LimitPlan] = [:]
+        if providers.contains(where: { $0.source == .claude }) {
+            plans[.claude] = LimitPlanMapper.claude(ClaudeAccountPlan(planDisplayName: "Ultra", organizationType: "claude_max",
+                                                                      rateLimitTier: "default_claude_max_20x", billingType: "stripe_subscription",
+                                                                      hasExtraUsageEnabled: false))
+        }
+        if providers.contains(where: { $0.source == .codex }) { plans[.codex] = LimitPlanMapper.codex(planType: "plus") }
         return LimitsSnapshot(
             sections: LimitsPresentation.sections(providers: providers, claudeConnected: connected, agentsEnabled: agents, codexEnabled: true,
                                                   thresholds: thresholds, now: now, forecast: fillForecast),
-            thresholds: thresholds, now: now)
+            thresholds: thresholds, now: now, plans: plans)
     }
 
     private func tile(_ providers: [ProviderLimits], connected: Bool) -> OverviewTile? {
@@ -85,12 +92,20 @@ final class LimitsPreviewTests: XCTestCase {
             .padding(16)
             .background(dark ? Color(white: 0.13) : Color(white: 0.96))
             try await render(narrow, name: "limits-card-narrow-\(mode)", dir: dir, size: NSSize(width: 340, height: 130), dark: dark)
-            // Sayfa.
+            // Sayfa (kenar çubuğu sayfası): geniş (1400 pt pencerenin içerik alanı) ve dar (940 pt pencere); eğimsiz, sabit eğimli ve giriş sonrası.
             for (name, providers, connected) in scenarios {
-                let page = LimitsDetailContent(snapshot: snapshot(providers, connected: connected), onBack: {}, openSettings: {})
-                    .background(Color(nsColor: .windowBackgroundColor))
-                try await render(page, name: "limits-page-\(name)-\(mode)", dir: dir, size: NSSize(width: 900, height: 820), dark: dark)
+                let snap = snapshot(providers, connected: connected)
+                for (sizeName, size) in [("wide", NSSize(width: 1180, height: 900)), ("narrow", NSSize(width: 720, height: 640))] {
+                    let page = LimitsPageContent(snapshot: snap, openSettings: {}, entrance: false)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                    try await render(page, name: "limits-page-\(name)-\(sizeName)-\(mode)", dir: dir, size: size, dark: dark, wait: 0.4)
+                }
             }
+            // Not: hover eğimi (rotation3DEffect) NSHostingView.cacheDisplay / CALayer.render çıktısında yanlış konumlanır (dönen katman
+            // sol üste düşer); bu yüzden eğimli poz önizlemesi alınmaz. Tilt3D yalnızca canlı pencerede gözle doğrulanır.
+            let entering = LimitsPageContent(snapshot: snapshot(mixed, connected: true), openSettings: {})
+                .background(Color(nsColor: .windowBackgroundColor))
+            try await render(entering, name: "limits-page-entrance-\(mode)", dir: dir, size: NSSize(width: 1180, height: 900), dark: dark, wait: 2.2)
             // Panel kartı (372 pt).
             for (name, providers, _) in scenarios where !providers.isEmpty {
                 let card = SubscriptionLimitsContent(providers: providers, thresholds: LimitAlertThresholds(), now: now, forecast: fillForecast)
@@ -102,7 +117,7 @@ final class LimitsPreviewTests: XCTestCase {
         }
     }
 
-    private func render<V: View>(_ view: V, name: String, dir: URL, size: NSSize, dark: Bool) async throws {
+    private func render<V: View>(_ view: V, name: String, dir: URL, size: NSSize, dark: Bool, wait: Double = 1.6) async throws {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).preferredColorScheme(dark ? .dark : .light))
         let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -4000, y: -4000), size: size),
                               styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -112,7 +127,7 @@ final class LimitsPreviewTests: XCTestCase {
         window.orderBack(nil)
         host.layoutSubtreeIfNeeded()
         // Giriş animasyonu (0,9 sn) bitsin; bekleme askıya alınmalı (RunLoop değil).
-        try await Task.sleep(for: .seconds(1.6))
+        try await Task.sleep(for: .seconds(wait))
         host.layoutSubtreeIfNeeded()
         let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: rep)

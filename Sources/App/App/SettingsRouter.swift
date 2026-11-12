@@ -19,7 +19,9 @@ final class SettingsRouter {
     /// Süreçler sayfasının seçili sekmesi (oturum boyunca korunur; derin bağlantılar da kullanabilir).
     var processesTab: ProcessesTab = .processes
     /// Temizlik sayfasının seçili alt bölümü (oturum boyunca korunur).
-    var cleanupSubsection: CleanupSubsection = .junk
+    var cleanupSubsection: CleanupSubsection = .smartScan
+    /// Akıllı tarama modeli: sonuçlar alt bölüm / ana bölüm değişince kaybolmasın diye yönlendiricide yaşar.
+    @ObservationIgnored let smartScan = SmartScanModel()
 
     /// Kayıtlı ana pencere sayfası bu oturumda bir kez geri yüklendi mi (`MainWindowRoot` kullanır).
     @ObservationIgnored var didRestoreMainSection = false

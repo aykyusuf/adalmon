@@ -1,7 +1,8 @@
 import Foundation
 
 // Abonelik limitleri (USAGE-01): Claude Code 5 saat / haftalık (statusLine JSON'u → yerel dinleyici) ve Codex (yerel rollout dosyası).
-// Bu dosyadaki her şey saf mantıktır (ağ, dosya, zamanlayıcı yok) ve testlidir. Hesap/plan kimliği hiçbir yerde tutulmaz.
+// Bu dosyadaki her şey saf mantıktır (ağ, dosya, zamanlayıcı yok) ve testlidir. Hesap kimliği hiçbir yerde tutulmaz;
+// yalnızca plan adı okunur (bkz. LimitPlan.swift: Claude için ~/.claude.json'dan beş alan, Codex için olaydaki `plan_type`).
 
 enum LimitSource: String, Codable, CaseIterable, Sendable, Identifiable {
     case claude, codex
@@ -52,6 +53,8 @@ struct ProviderLimits: Codable, Equatable, Sendable {
     var observedAt: Date
     /// Yalnızca Codex: ChatGPT kredisi bakiyesi (varsa, sınırsız değilse). API kredisi DEĞİLDİR.
     var creditsBalance: Double?
+    /// Yalnızca Codex: rollout olayındaki `plan_type` ("plus", "pro" …). Hesap kimliği değildir; yalnızca plan adı.
+    var planType: String?
 
     static let staleAfter: TimeInterval = 30 * 60
 
@@ -113,8 +116,8 @@ enum ClaudeLimitsPayload {
 // MARK: Codex (rollout dosyasının kuyruğu)
 
 /// `~/.codex/sessions/**/rollout-*.jsonl` belgesiz biçim. En son `token_count` olayının `rate_limits` alanından yalnızca
-/// `used_percent`, `window_minutes`, `resets_at` (ya da eski `resets_in_seconds`) ve kredi bakiyesi okunur; `limit_id`/`plan_type`
-/// gibi alanlar çözülmez bile. Herhangi bir uyumsuzlukta nil (gösterge sessizce gizlenir).
+/// `used_percent`, `window_minutes`, `resets_at` (ya da eski `resets_in_seconds`), kredi bakiyesi ve plan adı (`plan_type`)
+/// okunur; `limit_id` gibi alanlar çözülmez bile. Herhangi bir uyumsuzlukta nil (gösterge sessizce gizlenir).
 enum CodexRolloutParser {
     private struct Line: Decodable {
         let timestamp: String?
@@ -130,6 +133,18 @@ enum CodexRolloutParser {
         let primary: Window?
         let secondary: Window?
         let credits: Credits?
+        let plan_type: String?
+
+        private enum CodingKeys: String, CodingKey { case primary, secondary, credits, plan_type }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            primary = try c.decodeIfPresent(Window.self, forKey: .primary)
+            secondary = try c.decodeIfPresent(Window.self, forKey: .secondary)
+            credits = try c.decodeIfPresent(Credits.self, forKey: .credits)
+            // Plan adı yardımcı bilgidir: beklenmedik türde olsa bile limit okumasını bozmasın.
+            plan_type = try? c.decodeIfPresent(String.self, forKey: .plan_type)
+        }
     }
 
     private struct Window: Decodable {
@@ -201,6 +216,7 @@ enum CodexRolloutParser {
             }
         }
         guard result.fiveHour != nil || result.weekly != nil else { return nil }
+        result.planType = limits.plan_type.flatMap { LimitPlanMapper.codex(planType: $0) != nil ? $0.lowercased() : nil }
         if let credits = limits.credits, credits.has_credits == true, credits.unlimited != true,
            let balance = credits.balance, balance.isFinite, balance >= 0 {
             result.creditsBalance = balance

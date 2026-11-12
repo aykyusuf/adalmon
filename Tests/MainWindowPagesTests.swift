@@ -6,9 +6,13 @@ final class MainWindowPagesTests: XCTestCase {
     // MARK: Bölümler
 
     func testSectionOrderAndShortcuts() {
-        XCTAssertEqual(MainSection.pages, [.overview, .network, .history, .mobile, .rules, .processes, .battery, .wallpaper, .agentOffice, .cleanup])
+        XCTAssertEqual(MainSection.pages, [.overview, .network, .history, .mobile, .rules, .processes, .battery, .wallpaper, .agentOffice, .cleanup, .limits])
         XCTAssertEqual(MainSection.pages.compactMap(\.shortcutKey), ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"])
         XCTAssertNil(MainSection.settings(.general).shortcutKey)
+        XCTAssertNil(MainSection.limits.shortcutKey, "Limitler kısayolsuz; ⌘1…⌘0 değişmez")
+        XCTAssertEqual(MainSection.limits.title, "Limitler")
+        XCTAssertEqual(MainSection(id: "limits"), .limits)
+        XCTAssertNotEqual(MainSection.limits.symbol, MainSection.overview.symbol, "kenar çubuğunda aynı simge iki kez olmasın")
     }
 
     func testSectionIDRoundTrip() {

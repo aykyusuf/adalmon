@@ -59,12 +59,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.panel = panel
         self.dockMode = dockMode
         AdalmonIntentHub.backend = LiveIntentBackend(model: model, openRoute: { router.open(route: $0) })
-        let statusBar = StatusBarController(model: model) { [weak panel] button, route in panel?.click(on: button, route: route) }
-        panel.statusItemFrames = { [weak statusBar] in statusBar?.buttonFrames() ?? [] }
-        model.statusItemPositions = { [weak statusBar] in statusBar?.itemPositions() ?? [:] }
-        self.statusBar = statusBar
+        // Test sunucusu (aynı Adalmon.app) menü çubuğunda ikinci bir Adalmon gibi görünmesin.
+        if !AppEnvironment.isRunningTests {
+            let statusBar = StatusBarController(model: model) { [weak panel] button, route in panel?.click(on: button, route: route) }
+            panel.statusItemFrames = { [weak statusBar] in statusBar?.buttonFrames() ?? [] }
+            model.statusItemPositions = { [weak statusBar] in statusBar?.itemPositions() ?? [:] }
+            self.statusBar = statusBar
+        }
         model.start()
-        dockMode.start()
+        if !AppEnvironment.isRunningTests { dockMode.start() } // test sunucusu Dock'a çıkmasın
         if !AppEnvironment.isRunningTests {
             WallpaperService.shared.start() // ana şalter kapalıysa hiçbir şey yapmaz
             // CPU kuralı mevcut metrik ölçümünü kullanır (yeni zamanlayıcı yok); duvar kâğıdı kapalıysa anında döner.
@@ -78,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.onSnapshot = { [weak wallpaper] in wallpaper?.ingestCPU($0.cpu.total) }
         }
         if !AppEnvironment.isRunningTests { SaverService.shared.launchCheck(wallpaper: .shared) } // kuruluysa paketi/videoları güncel tutar
-        if model.prefs.showInDock { mainWindow.show() }
+        if model.prefs.showInDock && !AppEnvironment.isRunningTests { mainWindow.show() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

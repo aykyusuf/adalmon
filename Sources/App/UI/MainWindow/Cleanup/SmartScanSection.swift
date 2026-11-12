@@ -1,130 +1,38 @@
 import AppKit
 import SwiftUI
 
-@MainActor @Observable
-final class SmartScanModel {
-    enum Phase: Equatable { case idle, scanning(SmartScanStep?), deleting }
-
-    let home: String
-    var phase: Phase = .idle
-    var result = SmartScanResult()
-    var hasScanned = false
-    /// Temizle'ye girecek adımlar (tarama sonrası hepsi açık; riskli tür yoktur).
-    var enabledSteps: Set<SmartScanStep> = Set(SmartScanStep.allCases.filter(\.isCleanable))
-    var deleteMode: DeleteMode = .trash
-    var lastResult: [CleanupResult]?
-    var lastMode: DeleteMode = .trash
-    @ObservationIgnored private var scanTask: Task<Void, Never>?
-    /// Geç gelen eski tarama bildirimlerini yok saymak için.
-    @ObservationIgnored private var scanID = UUID()
-
-    init(home: String = NSHomeDirectory()) { self.home = home }
-
-    var isBusy: Bool { phase != .idle }
-
-    var selectedItems: [CleanupItem] { result.cleanableItems(steps: enabledSteps) }
-    var selectedBytes: UInt64 { selectedItems.reduce(0) { $0 + $1.bytes } }
-
-    func scan() {
-        guard !isBusy else { return }
-        let running = CleanupViewModel.runningBundleIDs()
-        let home = home
-        phase = .scanning(nil)
-        lastResult = nil
-        result = SmartScanResult()
-        let id = UUID()
-        scanID = id
-        scanTask = Task.detached(priority: .utility) { [weak self] in
-            let out = SmartScanAggregator.run(
-                home: home, runningBundleIDs: running, isCancelled: { Task.isCancelled },
-                stepStarted: { step in Task { @MainActor [weak self] in
-                    if self?.scanID == id, case .scanning = self?.phase { self?.phase = .scanning(step) }
-                } },
-                stepFinished: { partial in Task { @MainActor [weak self] in
-                    guard self?.scanID == id else { return }
-                    self?.result.results[partial.step] = partial
-                    self?.result.completed.append(partial.step)
-                } }
-            )
-            await self?.finish(out, id: id)
-        }
-    }
-
-    func cancel() {
-        scanTask?.cancel()
-        scanTask = nil
-        scanID = UUID()
-        if case .scanning = phase {
-            result.wasCancelled = true
-            phase = .idle
-            hasScanned = true
-        }
-    }
-
-    private func finish(_ out: SmartScanResult, id: UUID) {
-        guard scanID == id, case .scanning = phase else { return }
-        result = out
-        hasScanned = true
-        phase = .idle
-        scanTask = nil
-    }
-
-    func toggle(_ step: SmartScanStep) {
-        if enabledSteps.contains(step) { enabledSteps.remove(step) } else { enabledSteps.insert(step) }
-    }
-
-    func deleteSelected(mode: DeleteMode, items chosen: [CleanupItem]) {
-        guard !chosen.isEmpty, !isBusy else {
-            deleteMode = .trash
-            return
-        }
-        let roots = CleanupCatalog.roots(home: home)
-        let candidates = chosen.map { DeletionCandidate(item: $0, roots: roots) }
-        let deleter = CleanupDeleter(home: home)
-        phase = .deleting
-        Task.detached(priority: .utility) { [weak self] in
-            let results = deleter.delete(candidates, mode: mode)
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                let removed = Set(results.filter(\.isRemoved).map(\.candidate.id))
-                for (step, var stepResult) in result.results {
-                    stepResult.items.removeAll { removed.contains($0.id) }
-                    result.results[step] = stepResult
-                }
-                lastResult = results
-                lastMode = mode
-                deleteMode = .trash
-                phase = .idle
-            }
-        }
-    }
-}
-
-/// Akıllı tarama: tek tıkla yalnızca güvenli önbellekleri tarar, toplamı gösterir, temizler.
-/// Riskli türler (yetimler, büyük dosyalar, kopyalar, gizlilik, proje artıkları) taranmaz ve seçilmez: yalnızca "İncele" kartı.
+/// Akıllı tarama: tek tıkla tara, neyin silinebileceğini göster, tek "Temizle" ile sil.
+/// Büyük dosyalar, yetimler, kopyalar ve gizlilik izleri yalnızca "İncele →" bağlantısıdır; hiçbir zaman seçilmez.
 struct SmartScanSection: View {
+    @Bindable var model: SmartScanModel
     var onReview: (CleanupSubsection) -> Void = { _ in }
-    @State private var model = SmartScanModel()
     @State private var confirmSummary: DeleteSummary?
     @State private var confirmItems: [CleanupItem] = []
 
+    init(model: SmartScanModel, onReview: @escaping (CleanupSubsection) -> Void = { _ in }) {
+        self.model = model
+        self.onReview = onReview
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    hero
-                    if let results = model.lastResult { banner(results) }
-                    if model.hasScanned || model.isBusy { safeRows }
-                    reviewCards
+            if model.isScanning {
+                SmartScanProgressView(model: model)
+            } else if !model.hasScanned {
+                SmartScanEmptyView { model.scan() }
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        SmartScanHero(model: model)
+                        if let freed = model.lastFreed { freedBanner(freed) }
+                        cleanableCard
+                        reviewCard
+                    }
+                    .padding(.bottom, 8)
                 }
-                .padding(.bottom, 8)
+                Divider()
+                bottomBar.padding(.vertical, 10)
             }
-            Divider()
-            bottomBar.padding(.vertical, 10)
-        }
-        .onDisappear {
-            model.cancel()
-            model.deleteMode = .trash
         }
         .sheet(isPresented: Binding(get: { confirmSummary != nil }, set: { if !$0 { confirmSummary = nil } })) {
             if let summary = confirmSummary {
@@ -142,89 +50,93 @@ struct SmartScanSection: View {
         }
     }
 
-    // MARK: Özet
+    // MARK: Temizlenebilir kategoriler
 
-    private var hero: some View {
-        VStack(spacing: 10) {
-            switch model.phase {
-            case .scanning(let step):
-                ProgressView(value: Double(model.result.completed.count), total: Double(SmartScanStep.allCases.count))
-                    .frame(maxWidth: 320)
-                Text("Taranıyor: \(step?.title ?? "")…").foregroundStyle(.secondary)
-                Button("Durdur") { model.cancel() }
-            case .deleting:
-                ProgressView().controlSize(.regular)
-                Text("Temizleniyor…").foregroundStyle(.secondary)
-            case .idle:
-                if model.hasScanned {
-                    let bytes = model.result.cleanableBytes()
-                    Text(Format.bytes(bytes))
-                        .font(.system(size: 44, weight: .semibold, design: .rounded)).monospacedDigit()
-                    Text(bytes == 0 ? "Temizlenecek güvenli bir şey bulunamadı" : "temizlenebilir")
-                        .font(.title3).foregroundStyle(.secondary)
-                    if model.result.wasCancelled {
-                        Label("Tarama durduruldu; yalnızca tamamlanan adımlar sayıldı.", systemImage: "exclamationmark.circle")
-                            .font(.caption).foregroundStyle(.orange)
-                    }
-                    Button("Yeniden tara", systemImage: "arrow.clockwise") { model.scan() }
-                } else {
-                    Image(systemName: "wand.and.stars").font(.system(size: 34)).foregroundStyle(.tint).accessibilityHidden(true)
-                    Text("Güvenli önbellekleri tek tıkla tara").font(.title3.bold())
-                    Text("Uygulama, tarayıcı ve geliştirici önbellekleri ile Çöp Sepeti boyutu taranır. Riskli türler taranmaz, hiçbir şey kendiliğinden silinmez.")
-                        .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        .frame(maxWidth: 420)
-                    Button("Tara", systemImage: "magnifyingglass") { model.scan() }
-                        .buttonStyle(.borderedProminent).controlSize(.large)
-                }
+    private var cleanableCard: some View {
+        let steps = SmartScanStep.allCases.filter(\.isCleanable)
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(steps) { step in
+                SmartScanCategoryRow(step: step, model: model)
+                if step != steps.last { Divider().padding(.leading, 48) }
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 22)
+        .padding(.vertical, 6)
         .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 16))
     }
 
-    // MARK: Güvenli satırlar
+    // MARK: Yalnızca incele
 
-    private var safeRows: some View {
-        ResourceCard(title: "Güvenli önbellekler", systemImage: "checkmark.shield") {
-            ForEach(SmartScanStep.allCases) { step in
-                SmartScanRow(step: step, model: model, onReview: onReview)
-                if step != SmartScanStep.allCases.last { Divider() }
+    private var reviewCard: some View {
+        ResourceCard(title: "Kendiniz inceleyin", systemImage: "eye") {
+            Text("Bunlar hiçbir zaman otomatik seçilmez ve buradan silinmez. Kendi bölümünde bakıp karar verirsiniz.")
+                .font(.caption).foregroundStyle(.secondary)
+            reviewRow(.trash)
+            reviewRow(.largeFiles)
+            reviewRow(.orphans)
+            ForEach(SmartScanReviewKind.allCases) { kind in
+                reviewRow(icon: kind.systemImage, title: kind.title, note: kind.note, trailing: nil, subsection: kind.subsection)
             }
         }
     }
 
-    // MARK: Riskli türler
+    @ViewBuilder
+    private func reviewRow(_ step: SmartScanStep) -> some View {
+        let result = model.result.results[step]
+        let trailing: String? = {
+            guard let result, result.state == .scanned else { return nil }
+            switch step {
+            case .trash: return Format.bytes(result.trashBytes)
+            default: return result.reviewCount == 0 ? "Yok" : "\(result.reviewCount) öğe · \(Format.bytes(result.reviewBytes))"
+            }
+        }()
+        let note: String = {
+            guard let result else { return step.note }
+            switch result.state {
+            case .noAccess: return "Erişim yok. İncele'den izin verin."
+            case .missing: return step == .trash ? "Çöp Sepeti boş." : step.note
+            case .scanned: return step.note
+            }
+        }()
+        reviewRow(icon: step.systemImage, title: step.title, note: note, trailing: trailing, subsection: step.subsection,
+                  openTrash: step == .trash)
+    }
 
-    private var reviewCards: some View {
-        ResourceCard(title: "Kendiniz inceleyin", systemImage: "eye") {
-            Text("Bunlar taranmaz ve hiçbir zaman otomatik seçilmez. Her biri kendi bölümünde, siz isteyince taranır.")
-                .font(.caption).foregroundStyle(.secondary)
-            ForEach(SmartScanReviewKind.allCases) { kind in
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: kind.systemImage).frame(width: 22).foregroundStyle(.secondary).accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(kind.title)
-                        Text(kind.note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 8)
-                    Button("İncele") { onReview(kind.subsection) }.buttonStyle(.borderless)
+    private func reviewRow(icon: String, title: String, note: String, trailing: String?, subsection: CleanupSubsection,
+                           openTrash: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon).frame(width: 22).foregroundStyle(.secondary).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if let trailing { Text(trailing).monospacedDigit().foregroundStyle(.secondary) }
+            if openTrash {
+                Button("Finder'da aç") {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: CleanupCatalog.trashPath(home: model.home)))
                 }
+                .buttonStyle(.borderless)
+            } else {
+                Button("İncele →") { onReview(subsection) }.buttonStyle(.borderless)
             }
         }
     }
 
     // MARK: Sonuç ve alt çubuk
 
-    private func banner(_ results: [CleanupResult]) -> some View {
-        let moved = results.filter(\.isRemoved)
-        let skipped = results.count - moved.count
-        let bytes = moved.reduce(UInt64(0)) { $0 + $1.candidate.bytes }
-        let verb = model.lastMode == .trash ? "taşındı" : "kalıcı olarak silindi"
-        return Label("\(moved.count) öğe \(verb) (\(Format.bytes(bytes))). \(skipped) atlandı.", systemImage: "checkmark.circle")
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.green.opacity(0.10), in: .rect(cornerRadius: 12))
+    private func freedBanner(_ freed: (count: Int, bytes: UInt64, skipped: Int)) -> some View {
+        let trashed = model.lastMode == .trash
+        return VStack(alignment: .leading, spacing: 4) {
+            Label(trashed ? "\(Format.bytes(freed.bytes)) Çöp Sepeti'ne taşındı" : "\(Format.bytes(freed.bytes)) boşaltıldı",
+                  systemImage: "checkmark.circle.fill")
+                .font(.headline).foregroundStyle(.green)
+            Text("\(freed.count) öğe \(trashed ? "taşındı" : "kalıcı olarak silindi"), \(freed.skipped) atlandı."
+                 + (trashed ? " Disk alanı, Çöp Sepeti'ni boşaltınca açılır." : ""))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.green.opacity(0.10), in: .rect(cornerRadius: 12))
     }
 
     private var bottomBar: some View {
@@ -233,6 +145,8 @@ struct SmartScanSection: View {
         return HStack {
             Text("Seçili: \(selected.count) öğe · \(Format.bytes(bytes))").monospacedDigit().foregroundStyle(.secondary)
             Spacer()
+            Button("Yeniden tara", systemImage: "arrow.clockwise") { model.scan() }
+                .buttonStyle(.borderless).disabled(model.isBusy)
             Picker("Silme yöntemi", selection: $model.deleteMode) {
                 Text("Çöp'e taşı").tag(DeleteMode.trash)
                 Text("Kalıcı sil").tag(DeleteMode.permanent)
@@ -255,43 +169,200 @@ struct SmartScanSection: View {
     }
 }
 
-private struct SmartScanRow: View {
+// MARK: - Boş durum
+
+/// Sayfa açılınca: ortada büyük tek "Tara" düğmesi.
+private struct SmartScanEmptyView: View {
+    let action: () -> Void
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer(minLength: 0)
+            Button(action: action) {
+                VStack(spacing: 6) {
+                    Image(systemName: "sparkle.magnifyingglass").font(.system(size: 38, weight: .medium))
+                    Text("Tara").font(.title2.weight(.semibold))
+                }
+                .foregroundStyle(.white)
+                .frame(width: 148, height: 148)
+                .background(
+                    Circle().fill(LinearGradient(colors: [Color.accentColor, Color.accentColor.opacity(0.65)],
+                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+                )
+                .shadow(color: Color.accentColor.opacity(0.35), radius: 14, y: 6)
+                .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.defaultAction)
+            .accessibilityLabel("Tara")
+            VStack(spacing: 6) {
+                Text("Neyin silinebileceğine bakalım").font(.title3.bold())
+                Text("Önbellekler, günlükler, gereksiz build'ler ve eski proje artıkları taranır. Tarama yalnızca siz basınca yapılır; hiçbir şey kendiliğinden silinmez.")
+                    .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .frame(maxWidth: 440)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Tarama sürüyor
+
+private struct SmartScanProgressView: View {
+    @Bindable var model: SmartScanModel
+
+    var body: some View {
+        let total = Double(SmartScanStep.allCases.count)
+        let done = Double(model.result.completed.count)
+        VStack(spacing: 16) {
+            Spacer(minLength: 0)
+            ZStack {
+                Circle().stroke(Color.primary.opacity(0.10), lineWidth: 10)
+                Circle().trim(from: 0, to: max(0.02, done / total))
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .animation(.easeOut(duration: 0.4), value: done)
+                VStack(spacing: 2) {
+                    Image(systemName: model.currentStep?.systemImage ?? "magnifyingglass")
+                        .font(.system(size: 26)).foregroundStyle(.tint)
+                    Text("\(Int(done)) / \(Int(total))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 130, height: 130)
+            VStack(spacing: 4) {
+                Text("Taranıyor: \(model.currentStep?.title ?? "")…").font(.title3.bold())
+                if let detail = model.currentDetail {
+                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(SmartScanStep.allCases) { step in progressLine(step) }
+            }
+            .frame(maxWidth: 380)
+            Button("Durdur") { model.cancel() }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func progressLine(_ step: SmartScanStep) -> some View {
+        let result = model.result.results[step]
+        return HStack(spacing: 8) {
+            if result != nil {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            } else if model.currentStep == step {
+                ProgressView().controlSize(.small).frame(width: 16)
+            } else {
+                Image(systemName: "circle").foregroundStyle(.tertiary)
+            }
+            Text(step.title).foregroundStyle(result == nil && model.currentStep != step ? .tertiary : .primary)
+            Spacer()
+            if let result, result.state == .scanned {
+                Text(Format.bytes(result.displayBytes)).monospacedDigit().foregroundStyle(.secondary)
+            }
+        }
+        .font(.callout)
+    }
+}
+
+// MARK: - Sonuç başlığı
+
+private struct SmartScanHero: View {
+    @Bindable var model: SmartScanModel
+
+    var body: some View {
+        let selected = model.selectedBytes
+        let found = model.foundBytes
+        VStack(spacing: 6) {
+            Text(Format.bytes(selected))
+                .font(.system(size: 48, weight: .semibold, design: .rounded)).monospacedDigit()
+                .contentTransition(.numericText())
+            Text(found == 0 ? "Temizlenecek güvenli bir şey bulunamadı" : "temizlenebilir")
+                .font(.title3).foregroundStyle(.secondary)
+            if found > selected {
+                Text("Toplam bulunan \(Format.bytes(found)). Seçilmeyenler: son \(SmartScanSelection.staleDays) günde kullanılan projeler, günlükler ve açık uygulamalar.")
+                    .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            if model.result.wasCancelled {
+                Label("Tarama durduruldu; yalnızca tamamlanan adımlar sayıldı.", systemImage: "exclamationmark.circle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if let at = model.scannedAt {
+                Text("Son tarama: \(at.formatted(date: .omitted, time: .shortened))").font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .background(Color.primary.opacity(0.05), in: .rect(cornerRadius: 16))
+    }
+}
+
+// MARK: - Kategori satırı
+
+private struct SmartScanCategoryRow: View {
     let step: SmartScanStep
     @Bindable var model: SmartScanModel
-    let onReview: (CleanupSubsection) -> Void
+    private static let shownLimit = 40
 
     var body: some View {
         let result = model.result.results[step]
-        HStack(alignment: .top, spacing: 10) {
-            if step.isCleanable {
-                Toggle("", isOn: Binding(get: { model.enabledSteps.contains(step) }, set: { _ in model.toggle(step) }))
-                    .toggleStyle(.checkbox).labelsHidden()
-                    .disabled(result == nil || result?.cleanableItems.isEmpty != false)
-            } else {
-                Color.clear.frame(width: 16)
+        let items = model.items(for: step)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                checkbox(items)
+                Image(systemName: step.systemImage).frame(width: 22).foregroundStyle(.secondary).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(step.title)
+                    Text(detail(result, items: items)).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    accessNote(result)
+                }
+                Spacer(minLength: 8)
+                if let result, result.state == .scanned || !items.isEmpty {
+                    Text(Format.bytes(result.cleanableBytes)).monospacedDigit().foregroundStyle(.secondary)
+                }
+                if !items.isEmpty {
+                    Button {
+                        if model.expanded.contains(step) { model.expanded.remove(step) } else { model.expanded.insert(step) }
+                    } label: {
+                        Image(systemName: model.expanded.contains(step) ? "chevron.down" : "chevron.right").frame(width: 14)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(model.expanded.contains(step) ? "Ayrıntıyı kapat" : "Ayrıntıyı aç")
+                }
             }
-            Image(systemName: step.systemImage).frame(width: 22).foregroundStyle(.secondary).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(step.title)
-                Text(detail(result)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            trailing(result)
-            Button("İncele") { onReview(step.subsection) }.buttonStyle(.borderless)
+            if model.expanded.contains(step), !items.isEmpty { itemList(items) }
         }
+        .padding(.horizontal, 14).padding(.vertical, 8)
     }
 
-    private func detail(_ result: SmartScanStepResult?) -> String {
-        guard let result else {
-            if case .scanning(let current) = model.phase, current == step { return "Taranıyor…" }
-            return model.phase == .idle ? "Tarama durduruldu, bu adım çalışmadı." : "Sırada"
+    /// Üç durumlu onay kutusu: hepsi / bir kısmı / hiçbiri.
+    private func checkbox(_ items: [CleanupItem]) -> some View {
+        let count = model.selectedCount(for: step)
+        let symbol = count == 0 ? "square" : count == items.count ? "checkmark.square.fill" : "minus.square.fill"
+        return Button { model.toggleAll(step) } label: {
+            Image(systemName: symbol).font(.system(size: 16))
+                .foregroundStyle(count == 0 ? Color.secondary : Color.accentColor)
+                .frame(width: 16)
         }
-        switch result.state {
-        case .noAccess: return "Erişim yok. İncele'den izin verin."
-        case .missing: return "Bulunamadı."
-        case .scanned: break
+        .buttonStyle(.plain)
+        .disabled(items.isEmpty || model.isBusy)
+        .opacity(items.isEmpty ? 0.35 : 1)
+        .accessibilityLabel(step.title)
+        .accessibilityValue(count == 0 ? "seçili değil" : count == items.count ? "hepsi seçili" : "bir kısmı seçili")
+    }
+
+    private func detail(_ result: SmartScanStepResult?, items: [CleanupItem]) -> String {
+        guard let result else { return "Bu adım çalışmadı." }
+        if result.state == .noAccess && items.isEmpty { return "Erişim yok. İncele'den izin verin." }
+        var parts: [String] = []
+        if items.isEmpty {
+            parts.append(result.state == .missing ? "Bulunamadı." : "Temizlenecek bir şey yok.")
+        } else {
+            parts.append(step.note)
+            parts.append("\(items.count) öğe, \(model.selectedCount(for: step)) seçili.")
         }
-        var parts = [step.note]
         if !result.runningBrowsers.isEmpty {
             parts.append("\(result.runningBrowsers.joined(separator: ", ")) açık: kapatıp yeniden tarayın.")
         }
@@ -299,21 +370,48 @@ private struct SmartScanRow: View {
         if !blocked.isEmpty {
             parts.append("\(blocked.count) öğe (\(Format.bytes(blocked.reduce(0) { $0 + $1.bytes }))) açık uygulama yüzünden atlanır.")
         }
+        if step == .projectArtifacts {
+            let recent = items.filter { SmartScanSelection.isRecent($0, now: model.scannedAt ?? Date()) }
+            if !recent.isEmpty { parts.append("\(recent.count) tanesi son \(SmartScanSelection.staleDays) günde kullanılmış, seçilmedi.") }
+        }
         return parts.joined(separator: " ")
     }
 
     @ViewBuilder
-    private func trailing(_ result: SmartScanStepResult?) -> some View {
-        if let result, result.state == .scanned {
-            Text(Format.bytes(result.displayBytes)).monospacedDigit().foregroundStyle(.secondary)
-            if step == .trash {
-                Button("Finder'da aç") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: CleanupCatalog.trashPath(home: model.home)))
+    private func accessNote(_ result: SmartScanStepResult?) -> some View {
+        if let result, !result.deniedRoots.isEmpty {
+            let reason = CleanupAccess.reason(for: result.deniedRoots[0], home: model.home)
+            HStack(spacing: 6) {
+                Label("Erişim yok: \(SmartScanPresentation.deniedText(result.deniedRoots, home: model.home))", systemImage: "lock")
+                    .font(.caption).foregroundStyle(.orange)
+                if let url = reason.settingsURL, let button = reason.buttonTitle {
+                    Button(button) { NSWorkspace.shared.open(url) }.buttonStyle(.borderless).font(.caption)
                 }
-                .buttonStyle(.borderless)
             }
-        } else if result == nil, case .scanning(let current) = model.phase, current == step {
-            ProgressView().controlSize(.small)
         }
+    }
+
+    private func itemList(_ items: [CleanupItem]) -> some View {
+        let now = model.scannedAt ?? Date()
+        return VStack(alignment: .leading, spacing: 4) {
+            ForEach(items.prefix(Self.shownLimit)) { item in
+                HStack(alignment: .top, spacing: 8) {
+                    Toggle("", isOn: Binding(get: { model.isSelected(item) }, set: { _ in model.toggle(item) }))
+                        .toggleStyle(.checkbox).labelsHidden().disabled(model.isBusy)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(SmartScanPresentation.title(item)).lineLimit(1).truncationMode(.middle)
+                        Text(SmartScanPresentation.detail(item, home: model.home, now: now))
+                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                    Spacer(minLength: 8)
+                    Text(Format.bytes(item.bytes)).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            if items.count > Self.shownLimit {
+                Text("…ve \(items.count - Self.shownLimit) öğe daha (üstteki onay kutusu hepsini kapsar)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.leading, 56).padding(.top, 2)
     }
 }

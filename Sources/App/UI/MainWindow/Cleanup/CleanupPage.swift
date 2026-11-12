@@ -15,6 +15,8 @@ struct CleanupPage: View {
             .padding(.horizontal, 24)
         }
         .padding(.top, 24)
+        // Sayfadan çıkınca süren tarama durur (pil); sonuçlar yönlendiricideki modelde kalır.
+        .onDisappear { router.smartScan.cancel() }
     }
 
     private var subsectionList: some View {
@@ -34,7 +36,7 @@ struct CleanupPage: View {
     @ViewBuilder
     private var content: some View {
         switch router.cleanupSubsection {
-        case .smartScan: SmartScanSection(onReview: { router.cleanupSubsection = $0 })
+        case .smartScan: SmartScanSection(model: router.smartScan, onReview: { router.cleanupSubsection = $0 })
         case .junk: CleanupJunkSection()
         case .dev: CleanupDevSection()
         case .uninstaller: UninstallerSection()
