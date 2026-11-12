@@ -55,7 +55,8 @@ struct OverviewLimitsCardContent: View {
                     .padding(.top, 1)
                     Text(LimitsPresentation.cardCaption(snapshot) ?? " ")
                         .font(.caption)
-                        .foregroundStyle(featured?.window.forecast != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(featured?.window.isFull == true ? AnyShapeStyle(Color.red)
+                                         : (featured?.window.forecast != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.secondary)))
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
@@ -117,6 +118,5 @@ private struct ProviderRings: View {
             .foregroundStyle(isFeatured ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
             .lineLimit(1)
         }
-        .opacity(display.isStale ? 0.55 : 1)
     }
 }

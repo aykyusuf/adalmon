@@ -48,14 +48,21 @@ struct LimitWindowDisplay: Equatable, Identifiable, Sendable {
     var warnAt: Double
     var criticalAt: Double
     var forecast: LimitForecast?
+    /// Sunucu "limit doldu" bildirdi (Codex `rateLimitReachedType`): yüzde %100'ün altında görünse de pencere dolu sayılır.
+    var reached = false
 
     var id: LimitWindowKind { kind }
 
     /// Halka/çubuk doluluğu 0...1 (yenilenmişse 0).
     var fraction: Double { isReset ? 0 : min(1, max(0, usedPercent / 100)) }
 
+    /// Kullanım %100'e ulaştı ve pencere henüz yenilenmedi: limit doldu.
+    var isFull: Bool { !isReset && (usedPercent >= 100 || reached) }
+
+    /// Bayat veri de geçerli sayılır (yenilenme anı gelecekte olduğundan değer düşemez); yalnızca yenilenmiş pencere soluk çizilir.
     var tone: LimitTone {
-        if isReset || isStale { return .muted }
+        if isReset { return .muted }
+        if isFull { return .critical }
         return switch level {
         case .critical: .critical
         case .warning: .warning
@@ -63,14 +70,14 @@ struct LimitWindowDisplay: Equatable, Identifiable, Sendable {
         }
     }
 
-    /// "%62" ya da yenilenmişse "—".
-    var percentText: String { isReset ? "—" : LimitFormat.percent(usedPercent) }
+    /// "%62"; yenilenmişse (yeni veri gelene dek) "%0".
+    var percentText: String { isReset ? LimitFormat.percent(0) : LimitFormat.percent(usedPercent) }
     /// Halkanın içi için işaretsiz sayı: "62".
-    var numberText: String { isReset ? "—" : "\(Int(usedPercent.rounded()))" }
+    var numberText: String { isReset ? "0" : "\(Int(usedPercent.rounded()))" }
 
     var statusText: String {
-        if isReset { return "Yenilendi" }
-        if isStale { return "Bayat" }
+        if isReset { return "Yenilendi · yeni veri bekleniyor" }
+        if isFull { return "Limit doldu" }
         return switch level {
         case .critical: "Kritik"
         case .warning: "Uyarı"
@@ -83,6 +90,18 @@ struct LimitWindowDisplay: Equatable, Identifiable, Sendable {
         guard let resetsAt, !isReset else { return nil }
         let minutes = max(1, Int((resetsAt.timeIntervalSince(now) / 60).rounded(.up)))
         return LimitFormat.duration(minutes: minutes)
+    }
+
+    /// Dolu pencerenin açılış saati: "15:00'te açılır" (haftalık: "Perşembe 15:00'te açılır"); dolu değilse ya da zaman bilinmiyorsa nil.
+    func opensAtText(now: Date) -> String? {
+        guard isFull, let resetsAt else { return nil }
+        return "\(LimitForecastFormat.moment(resetsAt, kind: kind, now: now))\(LimitForecastFormat.locativeSuffix(resetsAt)) açılır"
+    }
+
+    /// Dolma tahmini yokken kısa not: veri bayatsa "Tahmin için yeni kullanım gerekiyor"; dolu/yenilenmiş pencerede ya da tahmin varken nil.
+    var forecastNote: String? {
+        guard forecast == nil, isStale, !isReset, !isFull else { return nil }
+        return "Tahmin için yeni kullanım gerekiyor"
     }
 
     /// Pencerenin ne kadarının geçtiği (0...1); yenilenme anı bilinmiyorsa nil.
@@ -134,6 +153,11 @@ struct LimitProviderDisplay: Equatable, Identifiable, Sendable {
     var observedAt: Date
     var isStale: Bool
     var creditsBalance: Double?
+    /// Değer `codex app-server`'dan (canlı) geldi.
+    var isLive = false
+    /// Ücretsiz sıfırlama hakları (yalnızca bilgi; hiçbir eylem yok).
+    var resetCreditCount: Int?
+    var resetCredits: [LimitResetCredit] = []
 
     var id: LimitSource { source }
 
@@ -146,9 +170,19 @@ struct LimitProviderDisplay: Equatable, Identifiable, Sendable {
 
     func ageText(now: Date) -> String { LimitFormat.ageText(observedAt, now: now) }
 
-    /// "Güncel · şimdi" / "Bayat · 3 sa önce".
+    /// Bir pencere doldu: son verinin yaşı önemsizleşir (küçük gri gösterilir).
+    var hasFullWindow: Bool { windows.contains { $0.isFull } }
+
+    /// "Canlı · şimdi" (app-server) / "Güncel · şimdi" / "Son veri 3 sa önce".
     func freshnessText(now: Date) -> String {
-        isStale ? "Bayat · son veri \(ageText(now: now))" : "Güncel · \(ageText(now: now))"
+        if isStale { return "Son veri \(ageText(now: now))" }
+        return "\(isLive ? "Canlı" : "Güncel") · \(ageText(now: now))"
+    }
+
+    /// "1 ücretsiz sıfırlama hakkı"; hak yoksa nil.
+    var resetCreditsChipText: String? {
+        guard let count = resetCreditCount, count > 0 else { return nil }
+        return "\(count) ücretsiz sıfırlama hakkı"
     }
 }
 
@@ -233,7 +267,7 @@ enum LimitsPresentation {
                          forecast: (ProviderLimits, LimitWindowKind) -> LimitForecast?) -> [LimitSection] {
         func display(_ limits: ProviderLimits) -> LimitProviderDisplay {
             let stale = limits.isStale(now: now)
-            let windows = LimitWindowKind.allCases.compactMap { kind -> LimitWindowDisplay? in
+            var windows = LimitWindowKind.allCases.compactMap { kind -> LimitWindowDisplay? in
                 guard let window = limits.window(kind) else { return nil }
                 let reset = window.isReset(now: now)
                 let warn = kind == .fiveHour ? thresholds.fiveHourWarn : thresholds.weeklyWarn
@@ -243,8 +277,14 @@ enum LimitsPresentation {
                                           warnAt: min(warn, critical), criticalAt: max(warn, critical),
                                           forecast: reset || stale ? nil : forecast(limits, kind))
             }
+            // "Limit doldu" bildirimi en dolu (yenilenmemiş) pencereye işlenir.
+            if limits.limitReached == true,
+               let index = windows.indices.filter({ !windows[$0].isReset }).max(by: { windows[$0].usedPercent < windows[$1].usedPercent }) {
+                windows[index].reached = true
+            }
             return LimitProviderDisplay(source: limits.source, windows: windows, observedAt: limits.observedAt, isStale: stale,
-                                        creditsBalance: limits.creditsBalance)
+                                        creditsBalance: limits.creditsBalance, isLive: limits.isLive == true,
+                                        resetCreditCount: limits.resetCreditCount, resetCredits: limits.resetCredits ?? [])
         }
         let claudeState: LimitSectionState
         if !agentsEnabled {
@@ -276,10 +316,13 @@ enum LimitsPresentation {
         return best
     }
 
-    /// Genel bakış kartının tek satırlık açıklaması: "Claude ~14:20'de dolar", "Claude 5 sa · 2 sa 10 dk", "Son veri 3 sa önce".
+    /// Genel bakış kartının tek satırlık açıklaması: "Claude ~14:20'de dolar", "Claude 5 sa · 2 sa 10 dk", "Claude 5 sa doldu · 15:00'te açılır", "Son veri 3 sa önce".
     static func cardCaption(_ snapshot: LimitsSnapshot) -> String? {
         guard let (source, window) = snapshot.featured, let provider = snapshot.sections.first(where: { $0.source == source })?.display else {
             return nil
+        }
+        if window.isFull {
+            return "\(source.displayName) \(window.kind.shortLabel) doldu" + (window.opensAtText(now: snapshot.now).map { " · \($0)" } ?? "")
         }
         if window.isStale { return "Son veri \(provider.ageText(now: snapshot.now))" }
         if let forecast = window.forecast {

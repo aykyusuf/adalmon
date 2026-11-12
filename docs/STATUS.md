@@ -22,6 +22,7 @@
 - "filtre aktif değilse mobilde uyar ıversin olm ciddi bi şekilde" — filtre bağlı/aktif değilken mobilde ciddi uyarı.
 - "firefox uyumluluğu da olmasın amk" — Temizlik'te Firefox desteği hiç olmayacak.
 
+- "sakın kullanma he resetleri sakın !! sadece göstermek istiom" / "sen eklerken de kullanma sakın testte falan" — Codex/Claude limit sıfırlama haklarını (rateLimitResetCredit/consume vb.) ASLA kullanma: ne kodda, ne testte, ne elle denemede; yalnızca göster. Gerçek codex app-server'a yalnızca initialize/initialized/account/rateLimits/read gönderilir.
 ## Dersler (doğrulanmış nedenler)
 - Test host'u Adalmon.app'in kendisidir: `AppModel.start()` testte gerçek ajan dinleyicisini kurarsa kullanıcının `~/Library/Application Support/Adalmon/ClaudePlugin/config.json` dosyasını ve `agentsPort` tercihini ezer; çalışan uygulamanın hook'ları ölü porta gider, ajanlar ofiste görünmez. Önlem: `AppModel.start` testte `agents.apply()` çağırmaz; dinleyici testleri kendi geçici dizinini kullanır (`AgentPluginGenerator(root:)`). Tam suite sonrası config md5 ve `/v1/state` kontrol edilir.
 - Mac pildeyken macOS Düşük Güç Modu'nu açar; `BatteryLiquidGlyphTests` içindeki 7 animasyon testi bu yüzden düşer (fişteyken geçer).
@@ -262,3 +263,7 @@ Kur: Adalmon'u kapat, build/Build/Products/Debug/Adalmon.app → /Applications (
 **Ders (2026-11-12 13:30, doğrulandı):** Kurulumda eski paketi `mv` ile kenara almak Dock'taki sabit Adalmon simgesini eski kopyaya bağladı (Dock yolu değil dosyayı izler) → Dock'ta iki Adalmon. KURAL: paketi yerinde güncelle: `pkill -x Adalmon` (bitene kadar bekle) → `rsync -a --delete <Release>/Adalmon.app/ /Applications/Adalmon.app/` → `codesign --verify --deep --strict` → `open`. Bundle dizini aynı kalır (Dock/TCC bozulmaz), silinmiş dosya da kalmaz.
 
 **Dersler (2026-11-12, doğrulandı):** (a) Tek kopya kontrolü yalnızca AYNI bundle yolundaki kopyaları sayar (test sunucusu/Debug kopyası kurulu uygulamanın açılışını engelliyordu); birincil koruma bundle-yolu hash'li flock kilidi. İkinci kopya nedeni: pkill sonrası macOS (MenuBarAgent) durum öğesi uygulamasını hemen yeniden başlatıyor, `open` ile yarışıyor. (b) Test pencereleri Tests/TestWindowGuard.swift ile görünmez (alpha 0 + animationBehavior .none); ekran gerektiren testler `TEST_RUNNER_ADALMON_SCREEN_TESTS=1` ile. Tam suite sırasında ekranda görünen pencere 24 → 0. (c) Canlı kullanım son 1 sa kalıcı (live-usage.snapshot).
+
+### 2026-11-12 15:25
+**Now:** Codex limitleri canlı (`codex app-server` → yalnızca initialize/initialized/account/rateLimits/read; görünürken 60 sn, arka planda 15 dk); canlı değer eski rollout'u geçer; sıfırlama hakları yalnızca gösterilir (kullanım YOK, testle zorlanır). Bayat gösterimi sakinleşti (%100 → "Limit doldu · HH:MM'de açılır"). Claude için resmi yerel canlı kaynak yok (statusLine yalnızca oturum aktifken); ~/.claude.json'daki belgesiz önbellek alanları kullanılmadı. Tam suite 1740 (1 bilinen kararsız), Release yerinde kuruldu.
+**Next:** onaylar tek tek; Windows/sunucu Faz 0.

@@ -56,8 +56,13 @@ private struct ProviderLimitsRows: View {
                 BrandLogo(source: display.source, size: 12)
                 Text(display.source.displayName).font(.callout.weight(.semibold))
                 Spacer(minLength: 4)
-                if display.isStale {
+                if display.isStale || display.hasFullWindow {
                     Text("Son veri \(display.ageText(now: now))").font(.caption2).foregroundStyle(.tertiary)
+                } else if display.isLive {
+                    Text(display.freshnessText(now: now)).font(.caption2).foregroundStyle(.green)
+                }
+                if let text = display.resetCreditsChipText {
+                    Text(text).font(.caption2).foregroundStyle(.secondary)
                 }
                 if let balance = display.creditsBalance {
                     Text("Kredi: \(balance.formatted(.number.precision(.fractionLength(0...2))))")
@@ -71,7 +76,6 @@ private struct ProviderLimitsRows: View {
                 }
             }
         }
-        .opacity(display.isStale ? 0.55 : 1)
         .accessibilityElement(children: .combine)
     }
 }
@@ -102,7 +106,8 @@ private struct LimitWindowCell: View {
     }
 
     private var subtitle: String {
-        if window.isReset { return "Yenilendi, değer bekleniyor" }
+        if window.isReset { return "Yenilendi · yeni veri bekleniyor" }
+        if window.isFull, let opens = window.opensAtText(now: now) { return "Doldu · \(opens)" }
         if let countdown = window.countdownText(now: now) { return "\(countdown) sonra" }
         return "Yenilenme bilinmiyor"
     }

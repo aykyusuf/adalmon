@@ -50,27 +50,52 @@ final class LimitsPresentationTests: XCTestCase {
         XCTAssertEqual(LimitsPresentation.thresholdText(warn), "Uyarı %80 · Kritik %95")
     }
 
-    func testResetWindowShowsDashAndZeroFill() throws {
+    func testResetWindowShowsZeroAndWaitingLabel() throws {
         let s = sections([claude(five: 90, weekly: 10, fiveResetsIn: -60)])
         let five = try XCTUnwrap(s[0].display?.window(.fiveHour))
         XCTAssertTrue(five.isReset)
-        XCTAssertEqual(five.percentText, "—")
-        XCTAssertEqual(five.numberText, "—")
+        XCTAssertEqual(five.percentText, "%0")
+        XCTAssertEqual(five.numberText, "0")
         XCTAssertEqual(five.fraction, 0)
         XCTAssertEqual(five.tone, .muted)
-        XCTAssertEqual(five.statusText, "Yenilendi")
+        XCTAssertEqual(five.statusText, "Yenilendi · yeni veri bekleniyor")
         XCTAssertNil(five.countdownText(now: now))
         XCTAssertNil(five.forecast, "yenilenmiş pencerede tahmin yok")
+        XCTAssertNil(five.forecastNote)
     }
 
-    func testStaleProviderIsMutedAndDropsForecast() throws {
-        let s = sections([claude(age: 3 * 3600)], forecast: { _, _ in self.forecast() })
-        let display = try XCTUnwrap(s[0].display)
+    func testStaleButValidKeepsThresholdToneAndCalmLabel() throws {
+        let s = sections([codex(five: 80, weekly: 20, age: 52 * 60)], forecast: { _, _ in self.forecast() })
+        let display = try XCTUnwrap(s[1].display)
         XCTAssertTrue(display.isStale)
-        XCTAssertEqual(display.freshnessText(now: now), "Bayat · son veri 3 sa önce")
-        XCTAssertTrue(display.windows.allSatisfy { $0.tone == .muted && $0.forecast == nil })
+        XCTAssertEqual(display.freshnessText(now: now), "Son veri 52 dk önce")
+        let five = try XCTUnwrap(display.window(.fiveHour))
+        XCTAssertEqual(five.tone, .warning, "bayat ama pencere yenilenmedi: eşik rengi kalır")
+        XCTAssertEqual(five.statusText, "Uyarı")
+        XCTAssertEqual(five.percentText, "%80")
+        XCTAssertNil(five.forecast, "yeni veri yokken tahmin gösterilmez")
+        XCTAssertEqual(five.forecastNote, "Tahmin için yeni kullanım gerekiyor")
         let fresh = try XCTUnwrap(sections([claude(age: 120)])[0].display)
         XCTAssertEqual(fresh.freshnessText(now: now), "Güncel · 2 dk önce")
+        XCTAssertNil(fresh.window(.fiveHour)?.forecastNote)
+    }
+
+    func testFullWindowIsCriticalWithOpenTimeEvenWhenStale() throws {
+        let s = sections([codex(five: 100, weekly: 20, age: 52 * 60)])
+        let display = try XCTUnwrap(s[1].display)
+        let five = try XCTUnwrap(display.window(.fiveHour))
+        XCTAssertTrue(five.isFull)
+        XCTAssertEqual(five.tone, .critical)
+        XCTAssertEqual(five.percentText, "%100")
+        XCTAssertEqual(five.statusText, "Limit doldu")
+        XCTAssertEqual(five.countdownText(now: now), "2 sa")
+        let opens = try XCTUnwrap(five.opensAtText(now: now))
+        XCTAssertTrue(opens.hasSuffix(" açılır"), opens)
+        XCTAssertNil(five.forecastNote)
+        XCTAssertTrue(display.hasFullWindow)
+        XCTAssertNil(display.window(.weekly)?.opensAtText(now: now))
+        let caption = LimitsPresentation.cardCaption(LimitsSnapshot(sections: s, thresholds: thresholds, now: now))
+        XCTAssertEqual(caption, "Codex 5 sa doldu · \(opens)")
     }
 
     func testCountdownAndElapsed() throws {

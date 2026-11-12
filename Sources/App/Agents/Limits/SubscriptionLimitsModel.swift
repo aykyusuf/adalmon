@@ -70,12 +70,20 @@ struct CodexRolloutReader: Sendable {
     }
 }
 
-/// Abonelik limitleri: Claude (dinleyiciden gelen son değer, UserDefaults'ta kalıcı) + Codex (yerel dosya, istek üzerine okunur),
-/// eşik ayarları ve bildirim takibi. Zamanlayıcı yalnızca bir limit görünümü (panel kartı) açıkken çalışır (en sık 3 dk'da bir);
-/// ayrıca uygulama öne gelince okunur. Testte (AppEnvironment.isRunningTests) gözlemci kurulmaz, gerçek ~/.codex okunmaz.
+/// Abonelik limitleri: Claude (dinleyiciden gelen son değer, UserDefaults'ta kalıcı) + Codex (`codex app-server` ile CANLI, olmazsa yerel
+/// rollout dosyası), eşik ayarları ve bildirim takibi. Codex yenileme: bir limit görünümü açıkken 60 sn'de bir; görünmüyorken 15 dk'da bir
+/// (yalnızca limit uyarıları açıksa ve son Codex rollout etkinliği 24 saat içindeyse); uygulama açılışında bir kez. Aynı anda tek süreç.
+/// Uygulama öne gelince yalnızca (ucuz) rollout okunur. Testte (AppEnvironment.isRunningTests) gözlemci kurulmaz, gerçek ~/.codex okunmaz.
 @MainActor @Observable
 final class SubscriptionLimitsModel {
-    static let codexInterval: TimeInterval = 180
+    /// Görünürken yenileme aralığı ve iki yenileme arasındaki en kısa süre (zorlama hariç).
+    static let codexInterval: TimeInterval = 60
+    static let codexMinSpacing: TimeInterval = 50
+    /// Görünmüyorken arka plan yenilemesi ve "yakın zamanda Codex kullanıldı" eşiği.
+    static let codexBackgroundInterval: TimeInterval = 15 * 60
+    static let codexActivityWindow: TimeInterval = 24 * 3600
+    /// Açılıştaki tek okumanın gecikmesi (açılış yükü ile çekişmesin).
+    static let codexStartupDelay: Duration = .seconds(8)
     /// Model kullanımı taraması: en sık dakikada bir (zorlama hariç); sayfa görünürken döngü 2 dk'da bir dener.
     static let usageMinInterval: TimeInterval = 60
     static let usageLoopInterval: TimeInterval = 120
@@ -119,6 +127,8 @@ final class SubscriptionLimitsModel {
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let binder: ClaudeStatusLineBinder
     @ObservationIgnored private let codexReader: CodexRolloutReader
+    @ObservationIgnored private let codexLive: CodexLiveLimits
+    @ObservationIgnored private var codexBackgroundLoop: Task<Void, Never>?
     @ObservationIgnored private let planReader: ClaudePlanReader
     @ObservationIgnored private let usageStore: ModelUsageStore
     @ObservationIgnored private var usageViewers = 0
@@ -136,11 +146,12 @@ final class SubscriptionLimitsModel {
     @ObservationIgnored private let live: Bool
 
     init(defaults: UserDefaults = .standard, binder: ClaudeStatusLineBinder = ClaudeStatusLineBinder(),
-         codexReader: CodexRolloutReader = CodexRolloutReader(), planReader: ClaudePlanReader = ClaudePlanReader(),
+         codexReader: CodexRolloutReader = CodexRolloutReader(), codexLive: CodexLiveLimits = CodexLiveLimits(), planReader: ClaudePlanReader = ClaudePlanReader(),
          usageStore: ModelUsageStore = ModelUsageStore(), live: Bool = !AppEnvironment.isRunningTests) {
         self.defaults = defaults
         self.binder = binder
         self.codexReader = codexReader
+        self.codexLive = codexLive
         self.planReader = planReader
         self.usageStore = usageStore
         self.live = live
@@ -154,8 +165,10 @@ final class SubscriptionLimitsModel {
         binder.repairWrapperIfNeeded()
         claudeConnected = binder.isConnected
         activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshCodex(force: false) }
+            // Öne gelince yalnızca ucuz rollout okuması; süreç başlatma yalnızca görünür kartla (60 sn döngüsü) ya da arka plan döngüsüyle.
+            MainActor.assumeIsolated { self?.refreshCodex(force: false, allowLive: (self?.viewers ?? 0) > 0) }
         }
+        startCodexBackgroundRefresh()
     }
 
     /// Kartta gösterilecek sağlayıcılar (verisi olanlar).
@@ -219,30 +232,60 @@ final class SubscriptionLimitsModel {
 
     // MARK: Codex
 
-    /// En sık `codexInterval`'da bir (force hariç) arka planda okur; dosya yoksa/biçim uymazsa gösterge sessizce gizlenir.
-    func refreshCodex(force: Bool, now: Date = .now) {
+    /// En sık `codexMinSpacing`'de bir (force hariç) arka planda okur: önce `codex app-server` (canlı, yetkili kaynak); alınamazsa rollout.
+    /// Aynı anda tek okuma (tek süreç). Dosya/ikili yoksa ya da biçim uymazsa gösterge sessizce gizlenir.
+    func refreshCodex(force: Bool, now: Date = .now, allowLive: Bool = true) {
         guard codexEnabled, !codexReading else { return }
-        if !force, let last = lastCodexCheck, now.timeIntervalSince(last) < Self.codexInterval { return }
+        if !force, let last = lastCodexCheck, now.timeIntervalSince(last) < Self.codexMinSpacing { return }
         lastCodexCheck = now
         codexReading = true
-        let reader = codexReader
+        let reader = codexReader, liveSource = allowLive ? codexLive : nil
         Task {
-            let result = await Task.detached(priority: .utility) { reader.latest() }.value
+            let outcome = await Task.detached(priority: .utility) { () -> (live: ProviderLimits?, rollout: ProviderLimits?) in
+                if let live = liveSource?.fetch() { return (live, nil) }
+                return (nil, reader.latest())
+            }.value
             codexReading = false
             guard codexEnabled else { return }
-            guard var result else { codex = nil; return }
-            if let current = codex {
-                // Birden çok Codex oturumu: eski/düşük değer göstergeyi geri sarmasın.
-                guard let merged = LimitMerge.monotonic(current: current, incoming: result) else { return }
-                result = merged
+            if let incoming = outcome.live ?? outcome.rollout {
+                ingestCodex(incoming, now: .now)
+            } else if codex?.isLive != true {
+                codex = nil
             }
-            codex = result
-            evaluate(result, now: .now)
-            evaluateForecast(result, now: .now)
         }
     }
 
-    /// Kart görünürken çağrılır: hemen bir kez okur, görünür kaldıkça 3 dk'da bir yeniler.
+    /// Codex değeri (canlı ya da rollout). Kaynak önceliği `LimitMerge.codexUpdate`: canlı her zaman kabul, rollout canlıyı geri sarmaz.
+    func ingestCodex(_ incoming: ProviderLimits, now: Date = .now) {
+        guard let merged = LimitMerge.codexUpdate(current: codex, incoming: incoming) else { return }
+        codex = merged
+        evaluate(merged, now: now)
+        evaluateForecast(merged, now: now)
+    }
+
+    /// Açılışta bir kez, sonra görünmüyorken 15 dk'da bir: yalnızca uyarılar açık ve Codex yakın zamanda kullanılmışsa canlı okur.
+    private func startCodexBackgroundRefresh() {
+        codexBackgroundLoop = Task { [weak self] in
+            try? await Task.sleep(for: Self.codexStartupDelay)
+            self?.refreshCodex(force: false)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.codexBackgroundInterval), tolerance: .seconds(120))
+                guard !Task.isCancelled, let self else { return }
+                await self.backgroundCodexTick()
+            }
+        }
+    }
+
+    private func backgroundCodexTick() async {
+        // Kart görünürken 60 sn'lik döngü zaten yeniler.
+        guard viewers == 0, codexEnabled, thresholds.notificationsEnabled else { return }
+        let reader = codexReader
+        let newest = await Task.detached(priority: .utility) { reader.newestRollouts(limit: 1).first?.modified }.value
+        guard let newest, Date.now.timeIntervalSince(newest) < Self.codexActivityWindow else { return }
+        refreshCodex(force: true)
+    }
+
+    /// Kart görünürken çağrılır: hemen bir kez okur, görünür kaldıkça 60 sn'de bir yeniler.
     func addViewer() {
         viewers += 1
         guard live, viewers == 1 else { return }
@@ -250,7 +293,7 @@ final class SubscriptionLimitsModel {
         refreshPlan()
         viewerLoop = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(Self.codexInterval), tolerance: .seconds(30))
+                try? await Task.sleep(for: .seconds(Self.codexInterval), tolerance: .seconds(5))
                 guard !Task.isCancelled else { return }
                 self?.refreshCodex(force: false)
                 self?.refreshPlan()

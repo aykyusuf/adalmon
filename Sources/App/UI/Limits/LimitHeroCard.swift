@@ -42,7 +42,7 @@ struct LimitHeroCard: View {
             switch section.state {
             case .data(let display):
                 LimitHeroWindows(display: display, snapshot: snapshot, metrics: metrics, entrance: entrance, delay: delay, previewTilt: previewTilt)
-                    .opacity(display.isStale ? 0.72 : 1)
+                LimitResetCreditsSection(credits: display.resetCredits, now: snapshot.now)
                 LimitModelUsageSection(source: section.source, usage: snapshot.modelUsage[section.source], kinds: display.windows.map(\.kind),
                                        entrance: entrance, now: snapshot.now)
             case .empty(let reason):
@@ -147,8 +147,13 @@ private struct LimitHeroHeader: View {
                     LimitChip(text: "Kredi \(balance.formatted(.number.precision(.fractionLength(0...2)).locale(Locale(identifier: "tr_TR"))))",
                               systemImage: "creditcard", color: .secondary)
                 }
-                LimitChip(text: display.freshnessText(now: now), systemImage: display.isStale ? "clock.badge.exclamationmark" : "dot.radiowaves.left.and.right",
-                          color: display.isStale ? .orange : .green)
+                if let text = display.resetCreditsChipText {
+                    LimitChip(text: text, systemImage: "arrow.counterclockwise", color: .secondary)
+                }
+                // Bayat ya da dolu pencere varken sakin gri (uyarı değil): değer pencere yenilenene dek geçerli.
+                let calm = display.isStale || display.hasFullWindow
+                LimitChip(text: display.freshnessText(now: now), systemImage: calm ? nil : "dot.radiowaves.left.and.right",
+                          color: calm ? .secondary : .green)
             }
         }
     }
@@ -206,7 +211,7 @@ struct LimitHeroWindowCell: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             LimitRing3D(fraction: window.fraction, tone: window.tone, source: source, diameter: diameter, lineWidth: (diameter * 0.11).rounded(),
-                        label: window.percentText, caption: window.isReset ? nil : "kullanıldı",
+                        label: window.percentText, caption: window.isReset ? nil : (window.isFull ? "Limit doldu" : "kullanıldı"),
                         markers: window.isReset ? [] : [window.warnAt / 100, window.criticalAt / 100], entrance: entrance, delay: delay)
                 .padding(.bottom, 16)
                 .tilt3D(13, perspective: 0.55, glossOpacity: 0, fixed: previewTilt)
@@ -224,9 +229,18 @@ struct LimitHeroWindowCell: View {
     private var details: some View {
         VStack(spacing: 6) {
             if window.isReset {
-                Label("Pencere yenilendi; yeni değer bekleniyor", systemImage: "arrow.clockwise")
-                    .font(compact ? .caption : .callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Etiket ("Yenilendi · yeni veri bekleniyor") rozette; burada ayrıca yazılmaz.
+                EmptyView()
+            } else if window.isFull, let opens = window.opensAtText(now: now), let countdown = window.countdownText(now: now) {
+                Text(opens)
+                    .font(.system(size: compact ? 18 : 22, weight: .bold, design: .rounded))
+                    .foregroundStyle(LimitBrand.ringColor(window.tone, source: source))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .monospacedDigit()
+                Text("\(countdown) sonra")
+                    .font(.callout.weight(.medium)).monospacedDigit().contentTransition(.numericText())
+                    .animation(.smooth, value: countdown)
             } else if let resetsAt = window.resetsAt, let countdown = window.countdownText(now: now) {
                 Text(countdown)
                     .font(.system(size: compact ? 18 : 22, weight: .semibold, design: .rounded))
@@ -257,9 +271,9 @@ struct LimitHeroWindowCell: View {
                     Text("Kullanım hızı \(rate)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
             }
-        } else if window.isStale {
-            Text("Veri eski; tahmin gösterilmiyor").font(.caption).foregroundStyle(.tertiary)
-        } else if !window.isReset {
+        } else if let note = window.forecastNote {
+            Text(note).font(.caption).foregroundStyle(.tertiary)
+        } else if !window.isReset && !window.isFull {
             VStack(spacing: 2) {
                 Text("Dolma tahmini yok").font(.caption).foregroundStyle(.tertiary)
                 if let pace = window.paceText(now: now) { Text(pace).font(.caption).foregroundStyle(.secondary) }

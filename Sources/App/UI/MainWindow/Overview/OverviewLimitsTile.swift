@@ -28,16 +28,24 @@ extension OverviewTile {
         let help = helpLines(shown, thresholds: thresholds, now: now, forecast: forecast).joined(separator: "\n")
         guard let top = pool.max(by: { $0.window.usedPercent < $1.window.usedPercent }) else {
             return OverviewTile(kind: .limits, title: "Limitler", symbol: "gauge.with.dots.needle.50percent",
-                                value: "\(shown[0].source.displayName) —", secondary: "Pencere yenilendi", help: help,
+                                value: "\(shown[0].source.displayName) %0", secondary: "Yenilendi · yeni veri bekleniyor", help: help,
                                 tint: .secondary, accessory: .bar(0), opensDetail: true)
         }
 
         let name = top.provider.source.displayName
         let level = thresholds.level(for: top.window.usedPercent, kind: top.kind)
-        let tint: Color = top.stale ? .secondary : (level == .critical ? .red : (level == .warning ? .orange : .accentColor))
+        let full = top.window.usedPercent >= 100
+        // Bayat veri de geçerli: renk eşiğe göre kalır (pencere yenilenene dek değer düşemez).
+        let tint: Color = full || level == .critical ? .red : (level == .warning ? .orange : .accentColor)
         var secondary = shortLabel(top.kind)
         var secondaryTint: Color?
-        if top.stale {
+        if full {
+            secondary += " doldu"
+            if let resetsAt = top.window.resetsAt {
+                secondary += " · \(LimitForecastFormat.moment(resetsAt, kind: top.kind, now: now))\(LimitForecastFormat.locativeSuffix(resetsAt)) açılır"
+            }
+            secondaryTint = .red
+        } else if top.stale {
             secondary = "Son veri \(LimitFormat.ageText(top.provider.observedAt, now: now))"
         } else if let fill = forecast(top.provider, top.kind) {
             secondary = "~\(LimitForecastFormat.moment(fill.fillsAt, kind: top.kind, now: now))\(LimitForecastFormat.locativeSuffix(fill.fillsAt)) dolar"
@@ -59,10 +67,11 @@ extension OverviewTile {
             return LimitWindowKind.allCases.compactMap { kind -> String? in
                 guard let window = provider.window(kind) else { return nil }
                 var line = "\(provider.source.displayName) \(kind.label): "
-                if window.isReset(now: now) { return line + "yenilendi, yeni değer bekleniyor" }
+                if window.isReset(now: now) { return line + "%0 · yenilendi, yeni veri bekleniyor" }
                 line += LimitFormat.percent(window.usedPercent)
+                if window.usedPercent >= 100 { line += " · limit doldu" }
                 if let resetsAt = window.resetsAt {
-                    line += " · \(LimitForecastFormat.moment(resetsAt, kind: kind, now: now))\(LimitForecastFormat.locativeSuffix(resetsAt)) yenilenir"
+                    line += " · \(LimitForecastFormat.moment(resetsAt, kind: kind, now: now))\(LimitForecastFormat.locativeSuffix(resetsAt)) \(window.usedPercent >= 100 ? "açılır" : "yenilenir")"
                 }
                 if stale { line += " · son veri \(LimitFormat.ageText(provider.observedAt, now: now))" }
                 else if let fill = forecast(provider, kind) { line += " · " + LimitForecastFormat.cardLine(fill, kind: kind, now: now) }

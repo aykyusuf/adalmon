@@ -45,6 +45,18 @@ struct LimitWindow: Codable, Equatable, Sendable {
     func isReset(now: Date) -> Bool { resetsAt.map { $0 <= now } ?? false }
 }
 
+/// Sunucunun bildirdiği ücretsiz sıfırlama hakkı (salt bilgi). `id` alanı bilerek yoktur.
+struct LimitResetCredit: Codable, Equatable, Sendable {
+    var title: String?
+    var detail: String?
+    /// Ham tür ("codexRateLimits" …); ekranda `LimitResetCreditDisplay.typeText` ile Türkçeleştirilir.
+    var resetType: String?
+    /// "available", "redeeming", "redeemed", "unknown".
+    var status: String
+    var grantedAt: Date?
+    var expiresAt: Date?
+}
+
 struct ProviderLimits: Codable, Equatable, Sendable {
     var source: LimitSource
     var fiveHour: LimitWindow?
@@ -55,6 +67,13 @@ struct ProviderLimits: Codable, Equatable, Sendable {
     var creditsBalance: Double?
     /// Yalnızca Codex: rollout olayındaki `plan_type` ("plus", "pro" …). Hesap kimliği değildir; yalnızca plan adı.
     var planType: String?
+    /// Yalnızca Codex: değer `codex app-server`'dan (canlı) geldi. Rollout dosyasından gelenlerde nil.
+    var isLive: Bool?
+    /// Yalnızca Codex (canlı): ücretsiz sıfırlama hakları (yalnızca bilgi; hiçbir yerde kullanılmaz/tüketilmez). Hak kimliği tutulmaz.
+    var resetCreditCount: Int?
+    var resetCredits: [LimitResetCredit]?
+    /// Yalnızca Codex (canlı): sunucu "limit doldu" bildirdi (`rateLimitReachedType` dolu).
+    var limitReached: Bool?
 
     static let staleAfter: TimeInterval = 30 * 60
 
@@ -270,7 +289,18 @@ enum LimitMerge {
         guard accepted else { return nil }
         // Gelen pencere kalmadıysa (ör. yalnızca eski pencere değeri geldi) mevcut kredi/plan bilgisi korunur.
         if result.planType == nil { result.planType = current.planType }
+        if result.resetCreditCount == nil { result.resetCreditCount = current.resetCreditCount; result.resetCredits = current.resetCredits }
         return result
+    }
+
+    /// Codex kaynak önceliği. app-server (canlı) yetkili kaynaktır: değeri HER ZAMAN kabul edilir (rollout'taki eski %100'ü, hatta aynı
+    /// yenilenme anında bile, geçer). Rollout/pasif kaynak: canlı değerden eski ya da aynı anlıksa yok sayılır; aksi halde `monotonic`.
+    /// Nil dönerse mevcut değer değişmez.
+    static func codexUpdate(current: ProviderLimits?, incoming: ProviderLimits) -> ProviderLimits? {
+        if incoming.isLive == true { return incoming }
+        guard let current else { return incoming }
+        if current.isLive == true, incoming.observedAt <= current.observedAt { return nil }
+        return monotonic(current: current, incoming: incoming)
     }
 
     private static func set(_ limits: inout ProviderLimits, _ kind: LimitWindowKind, _ window: LimitWindow) {

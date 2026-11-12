@@ -29,6 +29,12 @@ final class LimitsPreviewTests: XCTestCase {
         [ProviderLimits(source: .codex, fiveHour: window(80, resetsIn: 3600), weekly: window(46, resetsIn: 2 * 86_400), observedAt: now.addingTimeInterval(-5 * 3600))]
     }
 
+    /// Codex 5 saatlik %100 dolu, son veri 52 dk önce; Claude taze.
+    private var codexFullStale: [ProviderLimits] {
+        [ProviderLimits(source: .claude, fiveHour: window(62, resetsIn: 2 * 3600 + 10 * 60), weekly: window(35, resetsIn: 3 * 86_400), observedAt: now.addingTimeInterval(-90)),
+         ProviderLimits(source: .codex, fiveHour: window(100, resetsIn: 2 * 3600 + 8 * 60), weekly: window(46, resetsIn: 2 * 86_400), observedAt: now.addingTimeInterval(-52 * 60))]
+    }
+
     /// Claude Ultra: yalnızca haftalık pencere (5 saatlik yok), Codex tam.
     private var weeklyOnly: [ProviderLimits] {
         [ProviderLimits(source: .claude, fiveHour: nil, weekly: window(58, resetsIn: 3 * 86_400 + 4 * 3600), observedAt: now.addingTimeInterval(-90)),
@@ -90,7 +96,7 @@ final class LimitsPreviewTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let scenarios: [(String, [ProviderLimits], Bool)] = [("mixed", mixed, true), ("stale", stale, true),
                                                               ("codexstale", codexStaleOnly, false), ("empty", [], false),
-                                                              ("weeklyonly", weeklyOnly, true)]
+                                                              ("weeklyonly", weeklyOnly, true), ("codexfull", codexFullStale, true)]
         for dark in [false, true] {
             let mode = dark ? "dark" : "light"
             // Genel bakış karosu: yanındaki normal karolarla aynı boyutta mı?
