@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 // "Claude limitlerini bağla": ~/.claude/settings.json'daki statusLine komutunu Adalmon sarmalayıcısıyla değiştirir. Sarmalayıcı stdin'i
-// bir kez okur, `rate_limits`'ten yalnızca dört sayıyı arka planda yerel dinleyiciye yollar, sonra kullanıcının ÖZGÜN komutunu aynı
+// bir kez okur, `rate_limits` nesnesini (değiştiyse) arka planda yerel dinleyiciye yollar, sonra kullanıcının ÖZGÜN komutunu aynı
 // stdin ile çalıştırır ve çıktısını değiştirmeden geçirir. Bağlantı kaldırılınca settings.json eski haline döner.
 
 /// settings.json üzerinde saf metin dönüşümü (JSON metni girer, JSON metni çıkar). Yalnızca üst düzey `statusLine` değerinin bayt
@@ -198,54 +198,129 @@ enum ClaudeStatusLineWrapper {
     static func command(scriptPath: String) -> String { "/bin/sh \(shellQuote(scriptPath))" }
 
     /// `originalCommand` nil ise sarmalayıcı hiçbir şey yazdırmaz (yalnızca limitleri iletir).
+    /// Her yenilemede (oturum başına 15 sn) süreç sayısı: değişmemişse 0 ek süreç (yalnızca sh yerleşikleri), değişmişse tam 1 (arka plan curl).
     static func script(originalCommand: String?, configPath: String) -> String {
         let run: String = if let originalCommand {
-            """
-            ADALMON_SL_ORIGINAL=\(shellQuote(originalCommand))
+            #"""
+            ADALMON_SL_ORIGINAL=\#(shellQuote(originalCommand))
             printf '%s' "$ADALMON_SL_INPUT" | /bin/sh -c "$ADALMON_SL_ORIGINAL"
             exit $?
-            """
+            """#
         } else {
             "exit 0"
         }
-        return """
+        return #"""
         #!/bin/sh
         # Adalmon statusLine sarmalayıcısı (Ayarlar › Claude ajanları › Abonelik limitleri ile kuruldu; elle düzenlemeyin).
-        # 1) stdin'i bir kez okur. 2) Arka planda rate_limits'ten yalnızca dört sayıyı (5 saat / 7 gün: kullanılan yüzde ve yenilenme
-        #    anı) 127.0.0.1'deki Adalmon dinleyicisine yollar; durum satırını geciktirmez, hata olursa sessizdir.
+        # 1) stdin'i sh yerleşikleriyle bir kez okur. 2) `rate_limits` nesnesinin ham metnini yine yerleşiklerle ayıklar ve son gönderilenle
+        #    (last-sent, bu betiğin yanında) karşılaştırır: aynıysa HİÇBİR ek süreç başlatmaz; farklıysa durum dosyasını yazar ve
+        #    127.0.0.1'deki Adalmon dinleyicisine tek bir arka plan curl'ü ile yollar (ayrıştırma/doğrulama dinleyicide).
         # 3) Özgün statusLine komutunu aynı stdin ile çalıştırır; çıktısı ve çıkış kodu değiştirilmeden geçer.
-        ADALMON_SL_DEFAULT_CONFIG=\(shellQuote(configPath))
+        ADALMON_SL_DEFAULT_CONFIG=\#(shellQuote(configPath))
         ADALMON_SL_CONFIG="${ADALMON_AGENTS_CONFIG:-$ADALMON_SL_DEFAULT_CONFIG}"
-        ADALMON_SL_INPUT=$(/bin/cat; printf x)
-        ADALMON_SL_INPUT=${ADALMON_SL_INPUT%x}
+        NL='
+        '
+        # Stdin'i (NUL hariç) birebir okur; ADALMON_SL_TEXT'e koyar. Süreç başlatmaz.
+        slurp() {
+          ADALMON_SL_TEXT=""
+          while IFS= read -r ADALMON_SL_LINE; do ADALMON_SL_TEXT="$ADALMON_SL_TEXT$ADALMON_SL_LINE$NL"; done
+          ADALMON_SL_TEXT="$ADALMON_SL_TEXT$ADALMON_SL_LINE"
+        }
+        # ADALMON_SL_V başındaki boşlukları atar.
+        ltrim() {
+          while :; do
+            case $ADALMON_SL_V in [[:space:]]*) ADALMON_SL_V=${ADALMON_SL_V#?} ;; *) break ;; esac
+          done
+        }
+        slurp
+        ADALMON_SL_INPUT=$ADALMON_SL_TEXT
         if [ -n "$ADALMON_SL_WRAPPED" ]; then exit 0; fi
         export ADALMON_SL_WRAPPED=1
-        (
-          get() { printf '%s' "$ADALMON_SL_INPUT" | /usr/bin/plutil -extract "$1" raw -o - - 2>/dev/null; }
-          BODY=""
-          SEP=""
-          add() {
-            V=$(get "$2")
-            case "$V" in ''|*[!0-9.eE+-]*) return 0 ;; esac
-            BODY="$BODY$SEP\\"$1\\":$V"
-            SEP=","
-          }
-          add five_hour_used rate_limits.five_hour.used_percentage
-          add five_hour_resets_at rate_limits.five_hour.resets_at
-          add seven_day_used rate_limits.seven_day.used_percentage
-          add seven_day_resets_at rate_limits.seven_day.resets_at
-          [ -n "$BODY" ] || exit 0
-          PORT=$(/usr/bin/plutil -extract port raw -o - "$ADALMON_SL_CONFIG" 2>/dev/null)
-          TOKEN=$(/usr/bin/plutil -extract token raw -o - "$ADALMON_SL_CONFIG" 2>/dev/null)
-          case "$PORT" in ''|*[!0-9]*) exit 0 ;; esac
-          case "$TOKEN" in ''|*[!A-Za-z0-9]*) exit 0 ;; esac
-          ESCAPED=$(printf '%s' "{$BODY}" | /usr/bin/sed 's/"/\\\\"/g')
-          # Token komut satırında görünmesin diye curl yapılandırması stdin'den okunur.
-          printf 'url = "http://127.0.0.1:%s/v1/limits"\\nheader = "X-Adalmon-Token: %s"\\nheader = "Content-Type: application/json"\\ndata-binary = "%s"\\n' \\
-            "$PORT" "$TOKEN" "$ESCAPED" | /usr/bin/curl -s -o /dev/null --max-time 2 -K - >/dev/null 2>&1
-        ) </dev/null >/dev/null 2>&1 &
-        \(run)
-        """ + "\n"
+
+        # rate_limits nesnesi: anahtardan eşleşen kapanış `}` dahil ham alt metin. Temiz değilse boş kalır (hiçbir şey gönderilmez).
+        ADALMON_SL_OBJ=""
+        case $ADALMON_SL_INPUT in
+          *'"rate_limits"'*)
+            ADALMON_SL_V=${ADALMON_SL_INPUT#*'"rate_limits"'}
+            ltrim
+            case $ADALMON_SL_V in
+              :*)
+                ADALMON_SL_V=${ADALMON_SL_V#:}
+                ltrim
+                case $ADALMON_SL_V in
+                  '{'*)
+                    ADALMON_SL_REST=${ADALMON_SL_V#?}
+                    ADALMON_SL_ACC='{'
+                    ADALMON_SL_DEPTH=1
+                    ADALMON_SL_BRACE='[{}]'
+                    while [ "$ADALMON_SL_DEPTH" -gt 0 ]; do
+                      ADALMON_SL_CHUNK=${ADALMON_SL_REST%%$ADALMON_SL_BRACE*}
+                      if [ "$ADALMON_SL_CHUNK" = "$ADALMON_SL_REST" ]; then ADALMON_SL_ACC=""; break; fi
+                      ADALMON_SL_REST=${ADALMON_SL_REST#"$ADALMON_SL_CHUNK"}
+                      ADALMON_SL_C=${ADALMON_SL_REST%"${ADALMON_SL_REST#?}"}
+                      ADALMON_SL_REST=${ADALMON_SL_REST#?}
+                      ADALMON_SL_ACC="$ADALMON_SL_ACC$ADALMON_SL_CHUNK$ADALMON_SL_C"
+                      if [ "$ADALMON_SL_C" = '{' ]; then ADALMON_SL_DEPTH=$((ADALMON_SL_DEPTH + 1)); else ADALMON_SL_DEPTH=$((ADALMON_SL_DEPTH - 1)); fi
+                      if [ "${#ADALMON_SL_ACC}" -gt 4096 ]; then ADALMON_SL_ACC=""; break; fi
+                    done
+                    # Dizge içinde kaçış ya da süslü parantez olabilecek nesne "temiz" sayılmaz.
+                    case $ADALMON_SL_ACC in *'\'*) ADALMON_SL_ACC="" ;; esac
+                    ADALMON_SL_OBJ=$ADALMON_SL_ACC
+                    ;;
+                esac
+                ;;
+            esac
+            ;;
+        esac
+
+        if [ -n "$ADALMON_SL_OBJ" ]; then
+          ADALMON_SL_STATE="${0%/*}/last-sent"
+          case $0 in */*) ;; *) ADALMON_SL_STATE="./last-sent" ;; esac
+          ADALMON_SL_LAST=""
+          if [ -r "$ADALMON_SL_STATE" ]; then
+            slurp < "$ADALMON_SL_STATE"
+            ADALMON_SL_LAST=$ADALMON_SL_TEXT
+          fi
+          if [ "$ADALMON_SL_OBJ" != "$ADALMON_SL_LAST" ]; then
+            umask 077
+            # Gövde, curl'e dosyadan okutulur (kaçış gerekmez); yol curl yapılandırmasında tırnak/ters eğik çizgi içeremez.
+            case $ADALMON_SL_STATE in *'"'*|*'\'*) ADALMON_SL_STATE="" ;; esac
+            if [ -n "$ADALMON_SL_STATE" ] && printf '%s' "$ADALMON_SL_OBJ" > "$ADALMON_SL_STATE" 2>/dev/null; then
+              ADALMON_SL_PORT=""
+              ADALMON_SL_TOKEN=""
+              if [ -r "$ADALMON_SL_CONFIG" ]; then
+                slurp < "$ADALMON_SL_CONFIG"
+                ADALMON_SL_V=${ADALMON_SL_TEXT#*'"port"'}
+                if [ "$ADALMON_SL_V" != "$ADALMON_SL_TEXT" ]; then
+                  ADALMON_SL_V=${ADALMON_SL_V#*:}
+                  ltrim
+                  ADALMON_SL_PORT=${ADALMON_SL_V%%[!0-9]*}
+                fi
+                ADALMON_SL_V=${ADALMON_SL_TEXT#*'"token"'}
+                if [ "$ADALMON_SL_V" != "$ADALMON_SL_TEXT" ]; then
+                  ADALMON_SL_V=${ADALMON_SL_V#*:}
+                  ltrim
+                  case $ADALMON_SL_V in
+                    '"'*) ADALMON_SL_V=${ADALMON_SL_V#?}; ADALMON_SL_TOKEN=${ADALMON_SL_V%%\"*} ;;
+                  esac
+                fi
+              fi
+              case $ADALMON_SL_PORT in ''|*[!0-9]*) ADALMON_SL_PORT="" ;; esac
+              case $ADALMON_SL_TOKEN in ''|*[!A-Za-z0-9]*) ADALMON_SL_TOKEN="" ;; esac
+              if [ -n "$ADALMON_SL_PORT" ] && [ -n "$ADALMON_SL_TOKEN" ]; then
+                # Token komut satırında görünmesin diye curl yapılandırması stdin'den (here-doc) okunur. Tek arka plan süreci.
+                /usr/bin/curl -s -o /dev/null --max-time 2 -K - >/dev/null 2>&1 <<ADALMON_SL_EOF &
+        url = "http://127.0.0.1:$ADALMON_SL_PORT/v1/limits"
+        header = "X-Adalmon-Token: $ADALMON_SL_TOKEN"
+        header = "Content-Type: application/json"
+        data-binary = "@$ADALMON_SL_STATE"
+        ADALMON_SL_EOF
+              fi
+            fi
+          fi
+        fi
+        \#(run)
+        """# + "\n"
     }
 }
 
@@ -309,6 +384,8 @@ struct ClaudeStatusLineBinder: Sendable {
     var directory: URL { supportDirectory.appending(path: "ClaudeStatusLine", directoryHint: .isDirectory) }
     var wrapperURL: URL { directory.appending(path: ClaudeStatusLineTransform.marker) }
     var stateURL: URL { directory.appending(path: "state.json") }
+    /// Sarmalayıcının son gönderdiği `rate_limits` metni (betik kendi yanına yazar).
+    var lastSentURL: URL { directory.appending(path: "last-sent") }
     var backupDirectory: URL { supportDirectory.appending(path: "Backups", directoryHint: .isDirectory) }
     var wrapperCommand: String { ClaudeStatusLineWrapper.command(scriptPath: wrapperURL.path) }
 
@@ -385,12 +462,18 @@ struct ClaudeStatusLineBinder: Sendable {
         }
         try? FileManager.default.removeItem(at: stateURL)
         try? FileManager.default.removeItem(at: wrapperURL)
+        try? FileManager.default.removeItem(at: lastSentURL)
         return .disconnected
     }
 
-    /// Bağlıyken sarmalayıcı dosyası silinmişse durumdan yeniden üretir (durum satırı boş kalmasın).
+    /// Bağlıyken sarmalayıcı dosyası silinmişse ya da içeriği güncel üretimden farklıysa (eski sürüm) durumdan yeniden üretir.
+    /// Yalnızca betik dosyası yazılır; settings.json'a dokunulmaz.
     func repairWrapperIfNeeded() {
-        guard !FileManager.default.fileExists(atPath: wrapperURL.path), let state = readState(), isConnected else { return }
+        guard let state = readState(), isConnected else { return }
+        // Açılışta son gönderim kaydını sil: Adalmon kapalıyken "gönderildi" sayılan değer ilk yenilemede yeniden gelsin.
+        try? FileManager.default.removeItem(at: lastSentURL)
+        let expected = ClaudeStatusLineWrapper.script(originalCommand: Self.originalCommand(fromRaw: state.originalRaw), configPath: configURL.path)
+        if let current = try? Data(contentsOf: wrapperURL), current == Data(expected.utf8) { return }
         try? writeWrapper(originalRaw: state.originalRaw)
     }
 

@@ -327,10 +327,104 @@ final class SubscriptionLimitsTests: XCTestCase {
         XCTAssertEqual(got?.weekly?.resetsAt, Date(timeIntervalSince1970: 1_794_858_786))
     }
 
+    // MARK: Sarmalayıcı: süreç sayısı
+
+    /// Sahte `curl` (günlüğe satır ekler) ve başarısız olması gereken sahte plutil/sed/awk/grep/jq/cat içeren PATH dizini.
+    private func fakeBin() throws -> (path: String, curlLog: URL, forbiddenLog: URL) {
+        let bin = temp.appending(path: "fakebin", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let curlLog = temp.appending(path: "curl.log"), forbiddenLog = temp.appending(path: "forbidden.log")
+        let curl = "#!/bin/sh\ncat >> '\(temp.path)/curl-stdin.log'\necho curl >> '\(curlLog.path)'\n"
+        try Data(curl.utf8).write(to: bin.appending(path: "curl"))
+        for name in ["plutil", "sed", "awk", "grep", "jq", "python3"] {
+            try Data("#!/bin/sh\necho \(name) >> '\(forbiddenLog.path)'\n".utf8).write(to: bin.appending(path: name))
+        }
+        for item in try FileManager.default.contentsOfDirectory(atPath: bin.path) {
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: item).path)
+        }
+        return (bin.path + ":/usr/bin:/bin", curlLog, forbiddenLog)
+    }
+
+    private func lines(_ url: URL) -> [String] {
+        ((try? String(contentsOf: url, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    func testWrapperSpawnsNoProcessWhenRateLimitsUnchanged() throws {
+        // Betik /usr/bin/curl'ü mutlak yolla çağırır; sahte curl'ü yakalamak için betikteki yol testte değiştirilir.
+        let config = temp.appending(path: "config.json")
+        try Data("{\n  \"port\" : 4321,\n  \"token\" : \"abc123XYZ\"\n}".utf8).write(to: config)
+        let bin = try fakeBin()
+        let script = temp.appending(path: "statusline-wrapper.sh")
+        let text = ClaudeStatusLineWrapper.script(originalCommand: fakeOriginal, configPath: config.path)
+            .replacingOccurrences(of: "/usr/bin/curl", with: temp.path + "/fakebin/curl")
+        try Data(text.utf8).write(to: script)
+        let env = ["PATH": bin.path, "HOME": temp.path]
+
+        var expectedCurls = 1
+        func runOnce(_ input: String) throws -> Data {
+            let r = try run("/bin/sh", [script.path], input: input, environment: env)
+            XCTAssertEqual(r.status, 3)
+            // Arka plan curl'ü bitsin.
+            let deadline = Date().addingTimeInterval(3)
+            while Date() < deadline, lines(bin.curlLog).count < expectedCurls { Thread.sleep(forTimeInterval: 0.02) }
+            return r.out
+        }
+        let first = try runOnce(sampleInput)
+        XCTAssertEqual(lines(bin.curlLog).count, 1, "ilk gönderim")
+        let firstConfig = try String(contentsOf: temp.appending(path: "curl-stdin.log"), encoding: .utf8)
+        XCTAssertTrue(firstConfig.contains(#"url = "http://127.0.0.1:4321/v1/limits""#))
+        XCTAssertTrue(firstConfig.contains("X-Adalmon-Token: abc123XYZ"))
+        XCTAssertTrue(firstConfig.contains(#"data-binary = "@\#(temp.path)/last-sent""#))
+        let sent = try String(contentsOf: temp.appending(path: "last-sent"), encoding: .utf8)
+        XCTAssertEqual(sent, #"{"five_hour":{"used_percentage":42.5,"resets_at":1794438488},"seven_day":{"used_percentage":7,"resets_at":1794858786}}"#)
+
+        let second = try runOnce(sampleInput)
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertEqual(lines(bin.curlLog).count, 1, "aynı girdi: curl çalışmaz")
+        XCTAssertEqual(first, second)
+
+        expectedCurls = 2
+        _ = try runOnce(sampleInput.replacingOccurrences(of: "42.5", with: "43.5"))
+        XCTAssertEqual(lines(bin.curlLog).count, 2, "değişen girdi: tek curl")
+
+        // rate_limits yoksa hiçbir şey gönderilmez.
+        _ = try runOnce(#"{"session_id":"s"}"#)
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertEqual(lines(bin.curlLog).count, 2)
+        XCTAssertTrue(lines(bin.forbiddenLog).isEmpty, "plutil/sed/awk/grep/jq çağrılmadı: \(lines(bin.forbiddenLog))")
+    }
+
+    func testWrapperExtractsNestedRateLimitsFromPrettyPrintedInput() throws {
+        let config = temp.appending(path: "config.json")
+        try Data(#"{"port":1,"token":"tok"}"#.utf8).write(to: config)
+        let script = temp.appending(path: "statusline-wrapper.sh")
+        try Data(ClaudeStatusLineWrapper.script(originalCommand: nil, configPath: config.path)
+            .replacingOccurrences(of: "/usr/bin/curl", with: "/usr/bin/true").utf8).write(to: script)
+        let pretty = "{\n  \"a\": {\"b\": 1},\n  \"rate_limits\" :\n {\n \"five_hour\": {\"used_percentage\": 1},\n \"seven_day\": {\"used_percentage\": 2}\n },\n  \"z\": {}\n}\n"
+        _ = try run("/bin/sh", [script.path], input: pretty, environment: ["PATH": "/usr/bin:/bin"])
+        let sent = try String(contentsOf: temp.appending(path: "last-sent"), encoding: .utf8)
+        XCTAssertEqual(sent, "{\n \"five_hour\": {\"used_percentage\": 1},\n \"seven_day\": {\"used_percentage\": 2}\n }")
+        try FileManager.default.removeItem(at: temp.appending(path: "last-sent"))
+        // Kapanmamış nesne: temiz değil, hiçbir şey yazılmaz.
+        _ = try run("/bin/sh", [script.path], input: #"{"rate_limits":{"five_hour":{"used_percentage":1}"#, environment: ["PATH": "/usr/bin:/bin"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temp.appending(path: "last-sent").path))
+    }
+
+    func testRepairRegeneratesOutdatedWrapperButNotSettings() throws {
+        let binder = makeBinder()
+        try writeSettingsFile(binder, Data(settings.utf8))
+        _ = try binder.connect()
+        try Data("#!/bin/sh\n# old\n".utf8).write(to: binder.wrapperURL)
+        let settingsBefore = try Data(contentsOf: binder.settingsURL)
+        binder.repairWrapperIfNeeded()
+        XCTAssertEqual(try String(contentsOf: binder.wrapperURL, encoding: .utf8).contains("last-sent"), true)
+        XCTAssertEqual(try Data(contentsOf: binder.settingsURL), settingsBefore)
+    }
+
     // MARK: /v1/limits ayrıştırıcı (kimlik doğrulama)
 
     private func limitsRequest(token: String? = "tok", host: String? = "127.0.0.1:5000", origin: String? = nil,
-                               body: String = #"{"five_hour_used":81,"five_hour_resets_at":1794438488}"#) -> Data {
+                               body: String = #"{"five_hour":{"used_percentage":81,"resets_at":1794438488}}"#) -> Data {
         var lines = ["POST /v1/limits HTTP/1.1"]
         if let host { lines.append("Host: \(host)") }
         if let origin { lines.append("Origin: \(origin)") }
@@ -351,8 +445,18 @@ final class SubscriptionLimitsTests: XCTestCase {
         XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(host: "evil.example:5000"), token: "tok", port: 5000), .reject(421))
         XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(host: nil), token: "tok", port: 5000), .reject(421))
         XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: #"{"other":1}"#), token: "tok", port: 5000), .reject(400))
-        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: #"{"five_hour_used":"81"}"#), token: "tok", port: 5000), .reject(400))
-        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: #"{"five_hour_used":true}"#), token: "tok", port: 5000), .reject(400))
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: #"{"five_hour":{"used_percentage":"81"}}"#), token: "tok", port: 5000), .reject(400))
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: #"{"five_hour":{"used_percentage":true}}"#), token: "tok", port: 5000), .reject(400))
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: #"{"five_hour":{"used_percentage":5000}}"#), token: "tok", port: 5000), .reject(400))
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: "garbage"), token: "tok", port: 5000), .reject(400))
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: "[1,2]"), token: "tok", port: 5000), .reject(400))
+        let big = #"{"five_hour":{"used_percentage":1},"pad":""# + String(repeating: "a", count: 5000) + #""}"#
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: big), token: "tok", port: 5000), .reject(413))
+        // Fazladan alanlar yok sayılır; yalnızca dört sayı saklanır.
+        let extra = #"{"five_hour":{"used_percentage":10,"resets_at":1794438488,"x":"y"},"seven_day":{"used_percentage":20},"plan":"max"}"#
+        let parsed = AgentHTTPParser.parse(limitsRequest(body: extra), token: "tok", port: 5000, now: now)
+        XCTAssertEqual(parsed, .limits(ProviderLimits(source: .claude, fiveHour: LimitWindow(usedPercent: 10, resetsAt: Date(timeIntervalSince1970: 1_794_438_488)),
+                                                      weekly: LimitWindow(usedPercent: 20, resetsAt: nil), observedAt: now)))
         let response = String(decoding: AgentHTTPParser.response(for: ok), as: UTF8.self)
         XCTAssertTrue(response.hasPrefix("HTTP/1.1 204 No Content\r\n"))
     }

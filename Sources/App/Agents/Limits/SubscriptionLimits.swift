@@ -67,30 +67,45 @@ struct ProviderLimits: Codable, Equatable, Sendable {
 
 // MARK: Claude (dinleyiciye gelen gövde)
 
-/// statusLine sarmalayıcısının gönderdiği düz gövde: yalnızca dört sayı
-/// (`five_hour_used`, `five_hour_resets_at`, `seven_day_used`, `seven_day_resets_at`). Başka alan okunmaz.
+/// statusLine sarmalayıcısının gönderdiği gövde: Claude Code'un `rate_limits` nesnesinin ham JSON metni. Yalnızca
+/// `five_hour`/`seven_day` altındaki `used_percentage` ve `resets_at` çözülür (dört sayı); başka alan çözülmez ve saklanmaz.
 enum ClaudeLimitsPayload {
+    static let maxBytes = 4 * 1024
+
+    private struct RateLimits: Decodable {
+        let five_hour: Window?
+        let seven_day: Window?
+    }
+
+    private struct Window: Decodable {
+        let used: Double?
+        let resets: Double?
+
+        private enum CodingKeys: String, CodingKey { case used_percentage, resets_at }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            used = try? c.decodeIfPresent(Double.self, forKey: .used_percentage)
+            resets = try? c.decodeIfPresent(Double.self, forKey: .resets_at)
+        }
+    }
+
     static func parse(_ data: Data, now: Date) -> ProviderLimits? {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let five = window(used: object["five_hour_used"], resets: object["five_hour_resets_at"])
-        let week = window(used: object["seven_day_used"], resets: object["seven_day_resets_at"])
+        guard data.count <= maxBytes, let decoded = try? JSONDecoder().decode(RateLimits.self, from: data) else { return nil }
+        let five = window(used: decoded.five_hour?.used, resets: decoded.five_hour?.resets)
+        let week = window(used: decoded.seven_day?.used, resets: decoded.seven_day?.resets)
         guard five != nil || week != nil else { return nil }
         return ProviderLimits(source: .claude, fiveHour: five, weekly: week, observedAt: now)
     }
 
-    static func window(used: Any?, resets: Any?) -> LimitWindow? {
-        guard let used = number(used), used.isFinite, (-1...1000).contains(used) else { return nil }
+    static func window(used: Double?, resets: Double?) -> LimitWindow? {
+        guard let used, used.isFinite, (-1...1000).contains(used) else { return nil }
         return LimitWindow(usedPercent: min(100, max(0, used)), resetsAt: epoch(resets))
     }
 
-    static func number(_ value: Any?) -> Double? {
-        guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() else { return nil }
-        return value.doubleValue
-    }
-
     /// Makul epoch saniyesi (2001–2286); değilse nil.
-    static func epoch(_ value: Any?) -> Date? {
-        guard let seconds = number(value), seconds.isFinite, seconds > 1_000_000_000, seconds < 10_000_000_000 else { return nil }
+    static func epoch(_ seconds: Double?) -> Date? {
+        guard let seconds, seconds.isFinite, seconds > 1_000_000_000, seconds < 10_000_000_000 else { return nil }
         return Date(timeIntervalSince1970: seconds)
     }
 }

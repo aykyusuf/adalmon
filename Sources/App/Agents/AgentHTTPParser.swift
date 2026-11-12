@@ -2,7 +2,7 @@ import Foundation
 
 /// Yerel dinleyicinin minimal HTTP/1.1 ayrıştırıcısı. Girdi güvenilmezdir: yalnızca `POST /v1/event`, `Content-Length` zorunlu,
 /// gövde en çok 16 KB, başlıklar en çok 8 KB, `X-Adalmon-Token` sabit zamanlı karşılaştırılır. Saf mantık (ağ yok, testli).
-/// `POST /v1/limits` (statusLine sarmalayıcısı, abonelik limitleri): ek olarak Origin başlığı varsa 403 (tarayıcıdan gelemez),
+/// `POST /v1/limits` (statusLine sarmalayıcısı, abonelik limitleri; gövde ham `rate_limits` JSON'u, en çok 4 KB): ek olarak Origin başlığı varsa 403 (tarayıcıdan gelemez),
 /// `port` verilmişse Host yalnızca `127.0.0.1:<port>` / `localhost:<port>` (DNS rebinding) → aksi 421.
 enum AgentHTTPParser {
     static let maxBody = 16 * 1024
@@ -56,7 +56,7 @@ enum AgentHTTPParser {
         guard let provided = headers[tokenHeader], constantTimeEqual(provided, token), !token.isEmpty else { return .reject(401) }
         guard let lengthText = headers["content-length"] else { return .reject(411) }
         guard let length = Int(lengthText), length >= 0, lengthText.allSatisfy(\.isASCII) else { return .reject(400) }
-        guard length <= maxBody else { return .reject(413) }
+        guard length <= maxBody, !isLimits || length <= ClaudeLimitsPayload.maxBytes else { return .reject(413) }
 
         let bodyStart = headerEnd.upperBound
         guard buffer.count - bodyStart >= length else { return .needMore }
