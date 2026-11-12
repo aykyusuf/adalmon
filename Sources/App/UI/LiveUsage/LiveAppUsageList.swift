@@ -53,7 +53,7 @@ struct LiveAppUsageList: View {
     let compact: Bool
     /// Hız sınırı yalnızca mobil veride mi uygulansın (Mobil sayfası).
     let limitsOnlyOnMobile: Bool
-    /// Engel menüsünde "önerilen" diye işaretlenen kapsam (Mobil sayfası: `.mobile`).
+    /// Sayfanın varsayılan engel kapsamı (Mobil sayfası: `.mobile`); şu an yalnızca bilgi amaçlı.
     let preferredBlockScope: BlockScope?
     /// Aralık seçicide "Bugün" seçeneği (Genel bakış).
     let showsToday: Bool
@@ -348,12 +348,15 @@ private struct LiveAppRow: View {
             blockMenu
         }
         .accessibilityElement(children: .contain)
-        .contextMenu { menuItems }
+        .contextMenu {
+            Menu("Hız sınırı") { limitItems }
+            Menu("Engelle") { blockItems }
+        }
     }
 
     private var limitMenu: some View {
         Menu {
-            menuItems
+            limitItems
         } label: {
             Image(systemName: "speedometer")
                 .foregroundStyle(limit != nil ? .orange : .secondary)
@@ -377,8 +380,9 @@ private struct LiveAppRow: View {
         }
     }
 
-    @ViewBuilder private var menuItems: some View {
-        Section("Hız sınırı (↓ ve ↑)") {
+    /// Hız sınırı: aynı değer indirme ve yüklemeye birlikte uygulanır (ayrıca sorulmaz).
+    @ViewBuilder private var limitItems: some View {
+        Section("Hız sınırı") {
             ForEach(LiveAppActionMapper.presets, id: \.self) { value in
                 let current = limit?.downBytesPerSec == value && limit?.upBytesPerSec == value
                 Button {
@@ -395,8 +399,6 @@ private struct LiveAppRow: View {
                 Button("Sınırı kaldır", systemImage: "xmark.circle") { onCommand(.clearLimit) }
             }
         }
-        Divider()
-        blockItems
     }
 
     /// Engel: nerede engelleneceğini sorar (Mobilde / Wi-Fi'de / Her yerde); engelliyse durumu ve "Engeli kaldır"ı gösterir.
@@ -415,7 +417,7 @@ private struct LiveAppRow: View {
     }
 
     @ViewBuilder private var blockItems: some View {
-        Section(block.map { "Şu an: \($0.badge)" } ?? "Nerede engellensin?") {
+        Section(block.map { "Şu an: \($0.badge)" } ?? "Engelle") {
             ForEach(BlockScope.allCases) { scope in
                 Button {
                     onCommand(.block(scope))
@@ -435,11 +437,11 @@ private struct LiveAppRow: View {
 
     private func blockTitle(_ scope: BlockScope) -> String {
         let base = switch scope {
-        case .mobile: "Mobilde"
-        case .wifi: "Wi-Fi'de (Wi-Fi/kablolu)"
-        case .everywhere: "Her yerde (hiçbir ağda internet yok)"
+        case .mobile: "Mobil veride"
+        case .wifi: "Wi-Fi / kabloluda"
+        case .everywhere: "Her yerde"
         }
-        return scope == preferredScope && block == nil ? base + " — önerilen" : base
+        return base
     }
 
     private func applyCustom() {
