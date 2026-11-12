@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Süreçler sayfası: İşlemler | Performans | Tarayıcılar | Uygulama geçmişi | Başlangıç | Disk | Temizlik (Görev Yöneticisi gibi). Canlı örnekleme
+/// Süreçler sayfası: İşlemler | Performans | Tarayıcılar | Uygulama geçmişi | Başlangıç | Disk (Görev Yöneticisi gibi). Canlı örnekleme
 /// yalnızca İşlemler ve Performans sekmelerinde, sayfa ve pencere görünürken çalışır.
 struct ProcessesPage: View {
     let model: AppModel
@@ -31,7 +31,6 @@ struct ProcessesPage: View {
         case .history: ProcessHistoryView(store: model.store).padding(.horizontal, 24)
         case .startup: StartupItemsView().padding(.horizontal, 24)
         case .disk: ProcessDiskView(model: model).padding(.horizontal, 24)
-        case .cleanup: CleanupView().padding(.horizontal, 24)
         }
     }
 }

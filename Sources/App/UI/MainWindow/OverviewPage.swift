@@ -11,6 +11,7 @@ struct OverviewPage: View {
     let router: SettingsRouter
     @State private var dayStats = OverviewDayStats()
     @State private var tab: OverviewListTab
+    @State private var viewingLimits = false
 
     init(model: AppModel, source: MainWindowDataSource, router: SettingsRouter, initialTab: OverviewListTab = .network) {
         self.model = model
@@ -25,7 +26,12 @@ struct OverviewPage: View {
         let attention = OverviewAttention.items(
             data: data, rules: model.prefs.usageRules, statuses: model.ruleStatuses(now: now),
             ladder: model.rules.ladderStatus, burstThreshold: model.prefs.burstThresholdBytes)
-        let tiles = OverviewTile.all(data: data, today: TodaySummary.make(data: data, stats: dayStats), budget: data.budget ?? model.budget(now: now))
+        let limitsModel = model.agents.limits
+        let limitsTile = OverviewTile.limits(
+            providers: limitsModel.providers, claudeConnected: limitsModel.claudeConnected, agentsEnabled: model.prefs.agentsEnabled,
+            thresholds: limitsModel.thresholds, now: now, forecast: { limitsModel.forecast(for: $0, $1, now: now) })
+        let tiles = OverviewTile.all(data: data, today: TodaySummary.make(data: data, stats: dayStats),
+                                     budget: data.budget ?? model.budget(now: now), limits: limitsTile)
         // Ajan servisi tembel kurulur: özellik kapalıyken dokunulmaz.
         let agents = model.prefs.agentsEnabled ? model.agents.monitor.summary : nil
         GeometryReader { page in
@@ -33,7 +39,8 @@ struct OverviewPage: View {
                 PageHeader(title: MainSection.overview.title)
                 FilterLinkBanner(level: data.filterAlert, canReconnect: data.installerState == .active,
                                  onReconnect: { model.reconnectFilter() }, onOpenSettings: { router.open(.filter) })
-                OverviewTileGrid(tiles: tiles, width: max(0, page.size.width - 48), router: router)
+                OverviewTileGrid(tiles: tiles, width: max(0, page.size.width - 48), router: router,
+                                limits: limitsModel)
                 GeometryReader { area in
                     topList(maxRows: OverviewLayout.listRows(height: area.size.height))
                         .frame(width: area.size.width, height: area.size.height, alignment: .top)
@@ -44,6 +51,8 @@ struct OverviewPage: View {
             .frame(width: page.size.width, height: page.size.height, alignment: .topLeading)
         }
         .task { await refreshDayStats() }
+        .onAppear { if limitsTile != nil { model.agents.limits.addViewer(); viewingLimits = true } }
+        .onDisappear { if viewingLimits { model.agents.limits.removeViewer(); viewingLimits = false } }
     }
 
     @ViewBuilder private func topList(maxRows: Int) -> some View {

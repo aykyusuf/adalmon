@@ -4,7 +4,7 @@ import Foundation
 /// Temizlik taraması: yalnızca istek üzerine, izinli köklerin doğrudan çocuklarını boyutlarıyla listeler.
 /// Klasör boyutu için `FolderScanner` (kök başına tek geçiş) kullanılır; sembolik bağlar her zaman atlanır.
 enum CleanupScanner {
-    enum Probe: Equatable { case ok, missing, noAccess }
+    enum Probe: Equatable { case ok, missing, noAccess(AccessReason) }
 
     struct Output: Sendable {
         var items: [CleanupItem] = []
@@ -13,15 +13,12 @@ enum CleanupScanner {
     }
 
     /// Kökü açmayı dener: TCC reddi `FolderScanner`da 0 baytlık sonuç verdiği için önce ayırt edilir.
-    static func probe(_ path: String) -> Probe {
-        let fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        if fd >= 0 {
-            close(fd)
-            return .ok
-        }
-        switch errno {
-        case EPERM, EACCES: return .noAccess
-        default: return .missing // ENOENT, ENOTDIR, ELOOP (kök sembolik bağ): gizlenir
+    /// Ret durumunda nedeni (`CleanupAccess.reason`) da döner. `using` testlerde sahte deneme içindir.
+    static func probe(_ path: String, home: String = NSHomeDirectory(), using probe: PathProbe = .live) -> Probe {
+        switch probe.check(path) {
+        case .ok: .ok
+        case .missing: .missing
+        case .denied: .noAccess(CleanupAccess.reason(for: path, home: home))
         }
     }
 

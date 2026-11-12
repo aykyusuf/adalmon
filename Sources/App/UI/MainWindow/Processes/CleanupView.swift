@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// Temizlik sekmesi: yalnızca istek üzerine tarar, önizleme + onay sonrası seçilenleri Çöp Sepeti'ne taşır (kalıcı silme yok).
+/// Temizlik sekmesi: yalnızca istek üzerine tarar, önizleme + onay sonrası seçilenleri Çöp Sepeti'ne taşır.
+/// Kalıcı silme işlem başına seçilir (iki onay) ve her işlemden sonra Çöp'e döner; saklanmaz.
 @MainActor @Observable
 final class CleanupViewModel {
-    enum Phase: Equatable { case idle, scanning(CleanupCategory?), trashing }
+    enum Phase: Equatable { case idle, scanning(CleanupCategory?), deleting }
 
     let home: String
     var items: [CleanupItem] = []
@@ -12,12 +13,20 @@ final class CleanupViewModel {
     var selection: Set<String> = []
     var phase: Phase = .idle
     var lastResult: [CleanupResult]?
+    var lastMode: DeleteMode = .trash
+    /// Yalnızca sonraki işlem için; işlem bitince `.trash`a döner.
+    var deleteMode: DeleteMode = .trash
+    let access: CleanupAccessMonitor
     var scannedCategories: Set<CleanupCategory> = []
     var trashState: (state: CleanupRootState, bytes: UInt64)?
     var log: [CleanupLogEntry] = []
     @ObservationIgnored private var scanTask: Task<Void, Never>?
 
-    init(home: String = NSHomeDirectory()) { self.home = home }
+    init(home: String = NSHomeDirectory(), probe: PathProbe = .live) {
+        self.home = home
+        access = CleanupAccessMonitor(home: home, probe: probe)
+        access.onUnblocked = { [weak self] paths in self?.rescanUnblocked(paths) }
+    }
 
     var isBusy: Bool { phase != .idle }
 
@@ -54,6 +63,22 @@ final class CleanupViewModel {
         }
     }
 
+    /// Erişimi açılan kökleri yeniden tarar (Çöp Sepeti için yeniden ölçüm).
+    func rescanUnblocked(_ paths: [String]) {
+        let freed = Set(paths)
+        let categories = CleanupCatalog.roots(home: home).filter { freed.contains($0.path) }.map(\.category)
+        var seen = Set<CleanupCategory>()
+        let ordered = categories.filter { seen.insert($0).inserted }
+        let trashFreed = freed.contains(CleanupCatalog.trashPath(home: home))
+        if trashFreed { trashState = nil }
+        if !ordered.isEmpty { scan(ordered) } else if trashFreed { measureTrash() }
+    }
+
+    /// Kategorinin erişilemeyen ilk kökünün nedeni.
+    func accessReason(for category: CleanupCategory) -> AccessReason? {
+        CleanupCatalog.roots(home: home).filter { $0.category == category }.lazy.compactMap { self.access.reason(for: $0.path) }.first
+    }
+
     func measureTrash() {
         guard !isBusy else { return }
         let home = home
@@ -63,7 +88,10 @@ final class CleanupViewModel {
             let cancelled = Task.isCancelled
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                if !cancelled { trashState = result }
+                if !cancelled {
+                    trashState = result
+                    access.setBlocked(CleanupCatalog.trashPath(home: home), result.state == .noAccess)
+                }
                 phase = .idle
             }
         }
@@ -81,6 +109,7 @@ final class CleanupViewModel {
         items.removeAll { cats.contains($0.category) }
         items += out.items
         rootStates.merge(out.states) { _, new in new }
+        access.update(states: out.states)
         selection.subtract(oldIDs)
         selection.formUnion(out.items.filter { $0.category.defaultSelected && $0.blockedReason == nil }.map(\.id))
         scannedCategories.formUnion(cats)
@@ -98,32 +127,43 @@ final class CleanupViewModel {
         if selected { selection.formUnion(ids) } else { selection.subtract(ids) }
     }
 
-    /// Onaydan sonra: çalışan uygulamalar yeniden okunur, her öğe taşıma anında yeniden doğrulanır.
-    func trashSelected() {
-        let chosen = selectedItems
-        guard !chosen.isEmpty, !isBusy else { return }
-        let trasher = CleanupTrasher(roots: CleanupCatalog.roots(home: home), home: home, runningBundleIDs: Self.runningBundleIDs())
-        phase = .trashing
+    /// Onaydan sonra: her öğe silme anında yeniden doğrulanır (çalışan uygulamalar o an okunur).
+    /// Yöntem onay anında alınır; işlem bitince `deleteMode` Çöp'e döner.
+    /// `items`: onay penceresinde gösterilen öğeler (onay açıkken yeniden tarama seçimi değiştirse bile yalnızca bunlar silinir).
+    func deleteSelected(mode: DeleteMode, items chosen: [CleanupItem]) {
+        guard !chosen.isEmpty, !isBusy else {
+            deleteMode = .trash
+            return
+        }
+        let roots = CleanupCatalog.roots(home: home)
+        let candidates = chosen.map { DeletionCandidate(item: $0, roots: roots) }
+        let deleter = CleanupDeleter(home: home)
+        phase = .deleting
         Task.detached(priority: .utility) { [weak self] in
-            let results = trasher.trash(chosen)
+            let results = deleter.delete(candidates, mode: mode)
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                let moved = Set(results.filter(\.isMoved).map(\.item.id))
-                items.removeAll { moved.contains($0.id) }
-                selection.subtract(moved)
+                let removed = Set(results.filter(\.isRemoved).map(\.candidate.id))
+                items.removeAll { removed.contains($0.id) }
+                selection.subtract(removed)
                 lastResult = results
+                lastMode = mode
+                deleteMode = .trash
                 phase = .idle
                 reloadLog()
             }
         }
     }
 
-    func reloadLog() { log = CleanupTrasher.readLog() }
+    func reloadLog() { log = CleanupAuditLog.read() }
 }
 
 struct CleanupView: View {
     @State private var vm = CleanupViewModel()
-    @State private var confirming = false
+    @State private var confirmSummary: DeleteSummary?
+    /// Onay penceresinde özetlenen öğelerin kendisi.
+    @State private var confirmItems: [CleanupItem] = []
+    @State private var helpReason: AccessReason?
     @State private var showDetails = false
     @State private var logExpanded = false
 
@@ -132,8 +172,11 @@ struct CleanupView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     topRow
-                    Text("Seçilenler Çöp Sepeti'ne taşınır, kalıcı silinmez. Yer, Çöp Sepeti boşaltılınca açılır.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(vm.deleteMode == .trash
+                         ? "Seçilenler Çöp Sepeti'ne taşınır, kalıcı silinmez. Yer, Çöp Sepeti boşaltılınca açılır."
+                         : "Kalıcı silme seçili: seçilenler Çöp Sepeti'ne gitmez, geri alınamaz. İşlemden sonra Çöp'e taşımaya döner.")
+                        .font(.caption).foregroundStyle(vm.deleteMode == .trash ? Color.secondary : Color.red)
+                    if !vm.access.blocked.isEmpty { accessBanner }
                     if let result = vm.lastResult { banner(result) }
                     if vm.scannedCategories.isDisjoint(with: CleanupCategory.defaultScan) {
                         ResourceEmptyNote(text: "Önbellekleri ve geliştirici artıklarını görmek için Tara'ya basın. Tarama yalnızca siz isteyince yapılır.")
@@ -141,11 +184,11 @@ struct CleanupView: View {
                     ForEach(CleanupCategory.defaultScan) { category in
                         if vm.scannedCategories.contains(category), let state = vm.state(of: category), state != .missing,
                            state == .noAccess || !vm.items(in: category).isEmpty {
-                            CleanupCategoryCard(vm: vm, category: category, state: state)
+                            CleanupCategoryCard(vm: vm, category: category, state: state, onHelp: { helpReason = $0 })
                         }
                     }
-                    CleanupCategoryCard(vm: vm, category: .downloads, state: vm.state(of: .downloads))
-                    CleanupCategoryCard(vm: vm, category: .iosBackups, state: vm.state(of: .iosBackups))
+                    CleanupCategoryCard(vm: vm, category: .downloads, state: vm.state(of: .downloads), onHelp: { helpReason = $0 })
+                    CleanupCategoryCard(vm: vm, category: .iosBackups, state: vm.state(of: .iosBackups), onHelp: { helpReason = $0 })
                     logCard
                 }
                 .padding(.bottom, 8)
@@ -153,12 +196,80 @@ struct CleanupView: View {
             Divider()
             bottomBar.padding(.vertical, 10)
         }
-        .onDisappear { vm.cancel() }
-        .confirmationDialog(confirmTitle, isPresented: $confirming, titleVisibility: .visible) {
-            Button("Taşı", role: .destructive) { vm.trashSelected() }
-            Button("Vazgeç", role: .cancel) {}
-        } message: {
-            Text(confirmMessage)
+        .onAppear {
+            vm.access.refreshFullDiskAccess()
+            vm.access.resume()
+        }
+        .onDisappear {
+            vm.cancel()
+            vm.access.stop()
+            vm.deleteMode = .trash
+        }
+        .sheet(isPresented: Binding(get: { confirmSummary != nil }, set: { if !$0 { confirmSummary = nil } })) {
+            if let summary = confirmSummary {
+                DeleteConfirmation(summary: summary, onConfirm: { mode in
+                    let chosen = confirmItems
+                    confirmSummary = nil
+                    confirmItems = []
+                    vm.deleteSelected(mode: mode, items: chosen)
+                }, onCancel: {
+                    confirmSummary = nil
+                    confirmItems = []
+                    vm.deleteMode = .trash
+                })
+            }
+        }
+        .sheet(item: $helpReason) { reason in
+            AccessHelpSheet(reason: reason, monitor: vm.access) { helpReason = nil }
+        }
+    }
+
+    /// Erişilemeyen kökler: neden başına bir satır, ilgili ayar düğmesi ve yardım.
+    private var accessBanner: some View {
+        let reasons = Array(Set(vm.access.blocked.values)).sorted { $0.title < $1.title }
+        return VStack(alignment: .leading, spacing: 8) {
+            ForEach(reasons) { reason in
+                let paths = vm.access.blocked.filter { $0.value == reason }.keys.sorted()
+                    .map { FolderWatchList.displayPath($0, home: vm.home) }
+                HStack(spacing: 8) {
+                    Image(systemName: "lock").foregroundStyle(.orange).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(reason.title)
+                        Text(paths.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                    Spacer(minLength: 8)
+                    if let button = reason.buttonTitle {
+                        Button(button) { vm.access.openSettings(for: reason) }
+                    }
+                    Button("Nasıl?") { helpReason = reason }.buttonStyle(.borderless)
+                }
+            }
+            if vm.access.suggestRestart {
+                HStack(spacing: 8) {
+                    Text("Ayarlardan döndünüz ama erişim hâlâ yok. macOS bazen izni yeniden açılışta uygular.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button("Adalmon'u yeniden başlat") { CleanupAccessMonitor.relaunch() }
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.10), in: .rect(cornerRadius: 12))
+    }
+
+    @ViewBuilder
+    private var fullDiskAccessBadge: some View {
+        if let granted = vm.access.fullDiskAccess {
+            Button {
+                if !granted { helpReason = .fullDiskAccess }
+            } label: {
+                Label("Tam Disk Erişimi: \(granted ? "açık" : "kapalı")", systemImage: granted ? "checkmark.shield" : "shield.slash")
+                    .font(.caption)
+                    .foregroundStyle(granted ? Color.secondary : Color.orange)
+            }
+            .buttonStyle(.borderless)
+            .disabled(granted)
+            .help(granted ? "Adalmon Tam Disk Erişimi'ne sahip" : "Tam Disk Erişimi nasıl açılır?")
         }
     }
 
@@ -174,6 +285,7 @@ struct CleanupView: View {
                     .disabled(vm.isBusy)
             }
             Spacer(minLength: 8)
+            fullDiskAccessBadge
             trashSummary
             Button("Çöpü Finder'da aç", systemImage: "trash") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: CleanupCatalog.trashPath(home: vm.home)))
@@ -188,8 +300,8 @@ struct CleanupView: View {
         case .scanned?:
             Text("Çöp Sepeti: \(Format.bytes(vm.trashState?.bytes ?? 0))").foregroundStyle(.secondary).monospacedDigit()
         case .noAccess?:
-            Button("Çöp Sepeti: erişim yok") { CleanupCategoryCard.openFullDiskAccess() }
-                .buttonStyle(.borderless).help("Tam Disk Erişimi gerekebilir")
+            Button("Çöp Sepeti: erişim yok") { helpReason = CleanupAccess.reason(for: CleanupCatalog.trashPath(home: vm.home), home: vm.home) }
+                .buttonStyle(.borderless).help("Tam Disk Erişimi gerekiyor")
         default:
             Button("Çöp Sepeti: Hesapla") { vm.measureTrash() }
                 .controlSize(.small).disabled(vm.isBusy)
@@ -197,21 +309,22 @@ struct CleanupView: View {
     }
 
     private func banner(_ results: [CleanupResult]) -> some View {
-        let moved = results.filter(\.isMoved)
-        let skipped = results.filter { !$0.isMoved }
-        let bytes = moved.reduce(UInt64(0)) { $0 + $1.item.bytes }
+        let moved = results.filter(\.isRemoved)
+        let skipped = results.filter { !$0.isRemoved }
+        let bytes = moved.reduce(UInt64(0)) { $0 + $1.candidate.bytes }
+        let verb = vm.lastMode == .trash ? "taşındı" : "kalıcı olarak silindi"
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label("\(moved.count) öğe taşındı (\(Format.bytes(bytes))). \(skipped.count) atlandı.", systemImage: "checkmark.circle")
+                Label("\(moved.count) öğe \(verb) (\(Format.bytes(bytes))). \(skipped.count) atlandı.", systemImage: "checkmark.circle")
                 Spacer()
                 if !skipped.isEmpty {
                     Button(showDetails ? "Gizle" : "Ayrıntılar") { showDetails.toggle() }.buttonStyle(.borderless)
                 }
             }
             if showDetails {
-                ForEach(skipped, id: \.item.id) { r in
+                ForEach(skipped, id: \.candidate.id) { r in
                     HStack {
-                        Text(FolderWatchList.displayPath(r.item.path, home: vm.home)).lineLimit(1).truncationMode(.middle)
+                        Text(FolderWatchList.displayPath(r.candidate.path, home: vm.home)).lineLimit(1).truncationMode(.middle)
                         Spacer()
                         Text(r.reasonText ?? "").foregroundStyle(.secondary)
                     }
@@ -231,11 +344,12 @@ struct CleanupView: View {
                 } else {
                     ForEach(vm.log) { entry in
                         HStack(spacing: 8) {
-                            Image(systemName: entry.result == "moved" ? "arrow.right.circle" : "minus.circle")
+                            Image(systemName: entry.result == "moved" ? "arrow.right.circle" : entry.result == "deleted" ? "xmark.circle" : "minus.circle")
                                 .foregroundStyle(.secondary).accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 0) {
                                 Text(FolderWatchList.displayPath(entry.path, home: vm.home)).lineLimit(1).truncationMode(.middle)
-                                Text([entry.date?.formatted(date: .abbreviated, time: .shortened), entry.reason].compactMap { $0 }.joined(separator: " · "))
+                                Text([entry.date?.formatted(date: .abbreviated, time: .shortened), entry.result == "deleted" ? "kalıcı silindi" : nil, entry.reason]
+                                    .compactMap { $0 }.joined(separator: " · "))
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 8)
@@ -264,23 +378,30 @@ struct CleanupView: View {
         return HStack {
             Text("Seçili: \(selected.count) öğe · \(Format.bytes(bytes))").monospacedDigit().foregroundStyle(.secondary)
             Spacer()
-            if vm.phase == .trashing { ProgressView().controlSize(.small) }
-            Button("Çöp Sepeti'ne taşı…", systemImage: "trash") { confirming = true }
-                .disabled(selected.isEmpty || vm.isBusy)
+            if vm.phase == .deleting { ProgressView().controlSize(.small) }
+            Picker("Silme yöntemi", selection: $vm.deleteMode) {
+                Text("Çöp'e taşı").tag(DeleteMode.trash)
+                Text("Kalıcı sil").tag(DeleteMode.permanent)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .disabled(vm.isBusy)
+            .help("Kalıcı silme yalnızca bu işlem içindir; sonra Çöp'e taşımaya döner.")
+            Button(vm.deleteMode == .trash ? "Çöp Sepeti'ne taşı…" : "Kalıcı olarak sil…",
+                   systemImage: vm.deleteMode == .trash ? "trash" : "xmark.bin") {
+                confirmItems = selected
+                confirmSummary = summary(for: selected)
+            }
+            .tint(vm.deleteMode == .trash ? nil : .red)
+            .disabled(selected.isEmpty || vm.isBusy)
         }
     }
 
-    private var confirmTitle: String {
-        let selected = vm.selectedItems
-        return "\(selected.count) öğe (\(Format.bytes(selected.reduce(UInt64(0)) { $0 + $1.bytes }))) Çöp Sepeti'ne taşınsın mı?"
-    }
-
-    private var confirmMessage: String {
-        let selected = vm.selectedItems
-        var lines = selected.prefix(5).map { FolderWatchList.displayPath($0.path, home: vm.home) }
-        if selected.count > 5 { lines.append("…ve \(selected.count - 5) daha") }
-        lines.append("")
-        lines.append("Kalıcı silinmez; Çöp Sepeti'nden geri alabilirsiniz.")
-        return lines.joined(separator: "\n")
+    private func summary(for selected: [CleanupItem]) -> DeleteSummary {
+        DeleteSummary(
+            count: selected.count, bytes: selected.reduce(UInt64(0)) { $0 + $1.bytes }, mode: vm.deleteMode,
+            sample: selected.prefix(5).map { FolderWatchList.displayPath($0.path, home: vm.home) }
+        )
     }
 }

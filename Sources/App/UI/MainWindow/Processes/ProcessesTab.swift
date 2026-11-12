@@ -1,7 +1,7 @@
 import Foundation
 
 enum ProcessesTab: String, CapsuleTabItem {
-    case processes, performance, browsers, history, startup, disk, cleanup
+    case processes, performance, browsers, history, startup, disk
 
     var id: String { rawValue }
 
@@ -13,7 +13,6 @@ enum ProcessesTab: String, CapsuleTabItem {
         case .history: "Uygulama geçmişi"
         case .startup: "Başlangıç"
         case .disk: "Disk"
-        case .cleanup: "Temizlik"
         }
     }
 
@@ -25,7 +24,6 @@ enum ProcessesTab: String, CapsuleTabItem {
         case .history: "clock.arrow.circlepath"
         case .startup: "power"
         case .disk: "internaldrive"
-        case .cleanup: "sparkles"
         }
     }
 

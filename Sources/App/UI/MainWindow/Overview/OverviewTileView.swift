@@ -5,6 +5,7 @@ struct OverviewTileGrid: View {
     let tiles: [OverviewTile]
     let width: CGFloat
     let router: SettingsRouter
+    var limits: SubscriptionLimitsModel? = nil
 
     static let minTileWidth: CGFloat = 138
     static let spacing: CGFloat = 10
@@ -22,7 +23,16 @@ struct OverviewTileGrid: View {
         let count = Self.columns(count: tiles.count, width: width)
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Self.spacing), count: count), spacing: Self.spacing) {
             ForEach(tiles) { tile in
-                OverviewTileView(tile: tile) { tile.kind.destination.open(router) }
+                if tile.opensDetail, let limits {
+                    OverviewTileView(tile: tile, action: {}, detail: { dismiss in
+                        AnyView(OverviewLimitsDetail(model: limits) {
+                            dismiss()
+                            tile.kind.destination.open(router)
+                        })
+                    })
+                } else {
+                    OverviewTileView(tile: tile) { tile.kind.destination.open(router) }
+                }
             }
         }
     }
@@ -32,10 +42,13 @@ struct OverviewTileGrid: View {
 struct OverviewTileView: View {
     let tile: OverviewTile
     let action: () -> Void
+    /// Verilirse tıklayınca `action` yerine açılan ayrıntı (popover).
+    var detail: ((_ dismiss: @escaping () -> Void) -> AnyView)? = nil
     @State private var hovering = false
+    @State private var showDetail = false
 
     var body: some View {
-        Button(action: action) {
+        Button(action: { if detail != nil { showDetail.toggle() } else { action() } }) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 4) {
                     Label(tile.title, systemImage: tile.symbol)
@@ -57,7 +70,7 @@ struct OverviewTileView: View {
                     .contentTransition(.numericText())
                 Text(tile.secondary.isEmpty ? " " : tile.secondary)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(tile.secondaryTint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
                     .monospacedDigit()
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -73,11 +86,12 @@ struct OverviewTileView: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
+        .popover(isPresented: $showDetail, arrowEdge: .bottom) { detail?({ showDetail = false }) }
         .help(tile.help)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(tile.accessibilityLabel)
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint("\(tile.kind.destination.section.title) sayfasını açar")
+        .accessibilityHint(tile.accessibilityHint)
     }
 
     @ViewBuilder private var accessory: some View {

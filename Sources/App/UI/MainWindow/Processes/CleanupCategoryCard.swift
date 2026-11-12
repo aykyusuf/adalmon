@@ -6,13 +6,10 @@ struct CleanupCategoryCard: View {
     let vm: CleanupViewModel
     let category: CleanupCategory
     let state: CleanupRootState?
+    var onHelp: (AccessReason) -> Void = { _ in }
     @State private var expanded = false
 
     private static let rowCap = 200
-
-    static func openFullDiskAccess() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") { NSWorkspace.shared.open(url) }
-    }
 
     var body: some View {
         let items = vm.items(in: category)
@@ -33,9 +30,13 @@ struct CleanupCategoryCard: View {
                 }
             }
             if state == .noAccess {
+                let reason = vm.accessReason(for: category) ?? .fullDiskAccess
                 HStack(spacing: 8) {
-                    Label("Erişim yok. Tam Disk Erişimi gerekebilir", systemImage: "lock").foregroundStyle(.orange)
-                    Button("Ayarları aç") { Self.openFullDiskAccess() }
+                    Label(reason.title, systemImage: "lock").foregroundStyle(.orange)
+                    if let button = reason.buttonTitle {
+                        Button(button) { vm.access.openSettings(for: reason) }
+                    }
+                    Button("Nasıl?") { onHelp(reason) }.buttonStyle(.borderless)
                 }
             } else if state == .missing, vm.scannedCategories.contains(category) {
                 ResourceEmptyNote(text: "Bulunamadı.")

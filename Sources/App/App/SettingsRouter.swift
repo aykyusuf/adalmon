@@ -18,6 +18,8 @@ final class SettingsRouter {
     var selectedAppID: String? = nil
     /// Süreçler sayfasının seçili sekmesi (oturum boyunca korunur; derin bağlantılar da kullanabilir).
     var processesTab: ProcessesTab = .processes
+    /// Temizlik sayfasının seçili alt bölümü (oturum boyunca korunur).
+    var cleanupSubsection: CleanupSubsection = .junk
 
     /// Kayıtlı ana pencere sayfası bu oturumda bir kez geri yüklendi mi (`MainWindowRoot` kullanır).
     @ObservationIgnored var didRestoreMainSection = false

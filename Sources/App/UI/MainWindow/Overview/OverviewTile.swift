@@ -4,9 +4,12 @@ import SwiftUI
 struct OverviewDestination: Equatable, Sendable {
     var section: MainSection
     var processesTab: ProcessesTab?
+    /// Doluysa ana pencere sayfası yerine Ayarlar'ın bu bölümü açılır.
+    var settings: SettingsSection?
 
     @MainActor
     func open(_ router: SettingsRouter) {
+        if let settings { router.open(settings); return }
         if let processesTab { router.processesTab = processesTab }
         router.selectedMainSection = section
     }
@@ -14,7 +17,7 @@ struct OverviewDestination: Equatable, Sendable {
 
 /// Genel bakışın üst sırasındaki özet karoları.
 enum OverviewTileKind: String, CaseIterable, Identifiable, Sendable {
-    case network, mobile, cpu, gpu, memory, disk
+    case network, mobile, cpu, gpu, memory, disk, limits
 
     var id: String { rawValue }
 
@@ -24,6 +27,7 @@ enum OverviewTileKind: String, CaseIterable, Identifiable, Sendable {
         case .mobile: OverviewDestination(section: .mobile)
         case .cpu, .gpu, .memory: OverviewDestination(section: .processes, processesTab: .performance)
         case .disk: OverviewDestination(section: .processes, processesTab: .disk)
+        case .limits: OverviewDestination(section: .overview, settings: .agents)
         }
     }
 }
@@ -51,18 +55,27 @@ struct OverviewTile: Identifiable {
     let help: String
     let tint: Color
     let accessory: Accessory
+    /// İkincil metnin rengi (ör. dolma tahmini turuncu); nil = ikincil renk.
+    var secondaryTint: Color? = nil
+    /// Tıklayınca hedef sayfa yerine ayrıntı açılır (yalnızca limit karosu, veri varken).
+    var opensDetail = false
 
     var id: OverviewTileKind { kind }
+    var accessibilityHint: String {
+        if kind == .limits { return opensDetail ? "Limit ayrıntısını açar" : "Ayarlar'da Claude ajanları bölümünü açar" }
+        return "\(kind.destination.section.title) sayfasını açar"
+    }
     var accessibilityLabel: String { [title, value, secondary].filter { !$0.isEmpty }.joined(separator: ", ") }
 
     /// Bugün ağ, Mobil kota, CPU, GPU (varsa), RAM, Disk.
-    static func all(data: PanelData, today: TodaySummary, budget: BudgetSnapshot) -> [OverviewTile] {
+    static func all(data: PanelData, today: TodaySummary, budget: BudgetSnapshot, limits: OverviewTile? = nil) -> [OverviewTile] {
         let metrics = Dictionary(uniqueKeysWithValues: SystemMetric.all(data, showTemperatures: true).map { ($0.kind, $0) })
         var out = [network(today), mobile(budget)]
         if let m = metrics[.cpu] { out.append(metric(m, kind: .cpu)) }
         if data.snapshot?.gpu != nil, let m = metrics[.gpu] { out.append(metric(m, kind: .gpu)) }
         if let m = metrics[.memory] { out.append(metric(m, kind: .memory)) }
         if let m = metrics[.disk] { out.append(metric(m, kind: .disk)) }
+        if let limits { out.append(limits) }
         return out
     }
 

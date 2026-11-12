@@ -1,11 +1,11 @@
 import SwiftUI
 
 enum MainSection: Hashable, Identifiable {
-    case overview, network, history, mobile, rules, processes, battery, wallpaper, agentOffice
+    case overview, network, history, mobile, rules, processes, battery, wallpaper, agentOffice, cleanup
     case settings(SettingsSection)
 
-    /// Kenar çubuğundaki sayfalar (sıra aynı zamanda ⌘1…⌘9 sırasıdır).
-    static let pages: [MainSection] = [.overview, .network, .history, .mobile, .rules, .processes, .battery, .wallpaper, .agentOffice]
+    /// Kenar çubuğundaki sayfalar (sıra aynı zamanda ⌘1…⌘9, ⌘0 sırasıdır).
+    static let pages: [MainSection] = [.overview, .network, .history, .mobile, .rules, .processes, .battery, .wallpaper, .agentOffice, .cleanup]
 
     static var allCases: [MainSection] { pages + SettingsSection.allCases.map(MainSection.settings) }
 
@@ -25,6 +25,7 @@ enum MainSection: Hashable, Identifiable {
         case .battery: "battery"
         case .wallpaper: "wallpaper"
         case .agentOffice: "agentOffice"
+        case .cleanup: "cleanup"
         case .settings(let section): "settings.\(section.rawValue)"
         }
     }
@@ -40,6 +41,7 @@ enum MainSection: Hashable, Identifiable {
         case .battery: "Pil"
         case .wallpaper: "Duvar kâğıdı"
         case .agentOffice: "Ajan ofisi"
+        case .cleanup: "Temizlik"
         case .settings(let section): section.title
         }
     }
@@ -55,6 +57,7 @@ enum MainSection: Hashable, Identifiable {
         case .battery: "battery.100percent.bolt"
         case .wallpaper: "photo.on.rectangle.angled"
         case .agentOffice: "building.2"
+        case .cleanup: "sparkles"
         case .settings(let section): section.symbol
         }
     }
@@ -70,6 +73,7 @@ enum MainSection: Hashable, Identifiable {
         case .battery: .green
         case .wallpaper: .teal
         case .agentOffice: .purple
+        case .cleanup: .mint
         case .settings(let section): section.tint
         }
     }
@@ -83,8 +87,8 @@ enum MainSection: Hashable, Identifiable {
         if case .settings(.mobileData) = self { .mobile } else { self }
     }
 
-    /// ⌘ ile birlikte kullanılan rakam ("1"…"9"); ayar bölümlerinin kısayolu yoktur.
+    /// ⌘ ile birlikte kullanılan rakam ("1"…"9", onuncu sayfa "0"); ayar bölümlerinin kısayolu yoktur.
     var shortcutKey: String? {
-        Self.pages.firstIndex(of: self).map { String($0 + 1) }
+        Self.pages.firstIndex(of: self).map { $0 == 9 ? "0" : String($0 + 1) }
     }
 }

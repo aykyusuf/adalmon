@@ -2,7 +2,7 @@ import XCTest
 @testable import Adalmon
 
 /// Tüm testler geçici bir sahte ev klasöründe çalışır; gerçek ev klasörlerine (İndirilenler, .Trash, MobileSync, Caches) dokunmaz.
-/// Taşıma, fixture içindeki FakeTrash'e yapan sahte kapanışla; günlük fixture içindeki log.jsonl'e yazılır.
+/// Silme (CleanupDeleter, .trash), fixture içindeki FakeTrash'e yapan sahte kapanışla; günlük fixture içindeki log.jsonl'e yazılır.
 final class CleanupTests: XCTestCase {
     private var fixture: URL!
     private var home: String { fixture.path }
@@ -39,20 +39,31 @@ final class CleanupTests: XCTestCase {
         CleanupScanner.scan(categories: categories, home: home, runningBundleIDs: running, ownBundleID: nil, now: now, isCancelled: isCancelled)
     }
 
-    private func trasher(running: Set<String> = []) -> CleanupTrasher {
+    private var roots: [CleanupRoot] { CleanupCatalog.roots(home: home, ownBundleID: nil) }
+
+    private func trasher(running: Set<String> = []) -> CleanupDeleter {
         let trashDir = fakeTrash
-        return CleanupTrasher(
-            roots: CleanupCatalog.roots(home: home, ownBundleID: nil), home: home, runningBundleIDs: running, logURL: logURL,
+        return CleanupDeleter(
+            home: home, runningBundleIDs: { running }, logURL: logURL, ownPaths: [],
             moveToTrash: { url in
                 let dest = trashDir.appending(path: url.lastPathComponent)
                 try FileManager.default.moveItem(at: url, to: dest)
                 return dest
-            }
+            },
+            removePermanently: { _ in throw CocoaError(.featureUnsupported) }
         )
     }
 
+    private func candidates(_ items: [CleanupItem]) -> [DeletionCandidate] {
+        items.map { DeletionCandidate(item: $0, roots: roots) }
+    }
+
     /// Taranmadan elle hazırlanmış öğe (dev/ino gerçek dosyadan; yoksa 0).
-    private func item(_ path: String, _ category: CleanupCategory, bytes: UInt64 = 2 << 20) -> CleanupItem {
+    private func item(_ path: String, _ category: CleanupCategory, bytes: UInt64 = 2 << 20) -> DeletionCandidate {
+        DeletionCandidate(item: rawItem(path, category, bytes: bytes), roots: roots)
+    }
+
+    private func rawItem(_ path: String, _ category: CleanupCategory, bytes: UInt64 = 2 << 20) -> CleanupItem {
         var st = stat()
         let ok = lstat(path, &st) == 0
         return CleanupItem(
@@ -215,7 +226,7 @@ final class CleanupTests: XCTestCase {
         try FileManager.default.moveItem(at: path, to: fixture.appending(path: "moved-away"))
         XCTAssertEqual(symlink(fixture.appending(path: "Documents/secret").path, path.path), 0)
 
-        let results = trasher().trash([scanned])
+        let results = trasher().delete(candidates([scanned]), mode: .trash)
         XCTAssertEqual(results.first?.outcome, .skipped(.symlink))
         XCTAssertTrue(fakeTrashNames().isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: secret.path))
@@ -228,8 +239,8 @@ final class CleanupTests: XCTestCase {
         // Eski klasör yaşarken yenisini kur: inode farklı olmalı.
         try FileManager.default.moveItem(at: path, to: fixture.appending(path: "old-copy"))
         try write("Library/Caches/com.foo/y.bin", bytes: 2 * mb)
-        XCTAssertEqual(trasher().validate(scanned), .changed)
-        XCTAssertTrue(trasher().trash([scanned]).allSatisfy { !$0.isMoved })
+        XCTAssertEqual(trasher().validate(candidates([scanned])[0]), .changed)
+        XCTAssertTrue(trasher().delete(candidates([scanned]), mode: .trash).allSatisfy { !$0.isRemoved })
         XCTAssertTrue(fakeTrashNames().isEmpty)
     }
 
@@ -243,12 +254,12 @@ final class CleanupTests: XCTestCase {
                 XCTAssertNotNil(t.validate(item(home + rel, category)), "\(rel) \(category)")
             }
         }
-        let protected = CleanupTrasher.protectedPaths(homeParts: CleanupTrasher.components(home))
+        let protected = CleanupDeleter.protectedPaths(homeParts: CleanupDeleter.components(home))
         for rel in ["Library", "Library/Caches", "Documents", "Downloads", ".Trash", "Library/Application Support"] {
-            XCTAssertTrue(protected.contains(CleanupTrasher.components(home) + rel.split(separator: "/").map(String.init)), rel)
+            XCTAssertTrue(protected.contains(CleanupDeleter.components(home) + rel.split(separator: "/").map(String.init)), rel)
         }
         XCTAssertTrue(protected.contains(["/"]))
-        XCTAssertTrue(protected.contains(CleanupTrasher.components("/System")))
+        XCTAssertTrue(protected.contains(CleanupDeleter.components("/System")))
         XCTAssertTrue(fakeTrashNames().isEmpty)
     }
 
@@ -280,11 +291,11 @@ final class CleanupTests: XCTestCase {
         XCTAssertEqual(items.count, 4)
         try FileManager.default.removeItem(at: fixture.appending(path: "Library/Caches/com.gone"))
 
-        let results = trasher(running: running).trash(items)
+        let results = trasher(running: running).delete(candidates(items), mode: .trash)
         XCTAssertEqual(results.count, 4)
         XCTAssertEqual(fakeTrashNames(), ["Proj", "com.a"])
-        XCTAssertEqual(results.filter(\.isMoved).count, 2)
-        let byName = Dictionary(uniqueKeysWithValues: results.map { ($0.item.name, $0.outcome) })
+        XCTAssertEqual(results.filter(\.isRemoved).count, 2)
+        let byName = Dictionary(uniqueKeysWithValues: results.map { ($0.candidate.name, $0.outcome) })
         XCTAssertEqual(byName["com.gone"], .skipped(.missing))
         XCTAssertEqual(byName["com.run"], .skipped(.appRunning))
         XCTAssertTrue(FileManager.default.fileExists(atPath: home + "/Library/Caches/com.run/x.bin"))
@@ -297,14 +308,15 @@ final class CleanupTests: XCTestCase {
         XCTAssertEqual(Set(skipped.compactMap { $0["reason"] as? String }), ["missing", "appRunning"])
         let moved = try XCTUnwrap(objs.first { ($0["path"] as? String)?.hasSuffix("/com.a") == true })
         XCTAssertEqual(moved["trashedTo"] as? String, fakeTrash.appending(path: "com.a").path)
-        XCTAssertEqual(moved["category"] as? String, "appCaches")
-        XCTAssertEqual(CleanupTrasher.readLog(url: logURL, limit: 20).count, 4)
+        XCTAssertEqual(moved["kind"] as? String, "junk.appCaches")
+        XCTAssertEqual(moved["mode"] as? String, "trash")
+        XCTAssertEqual(CleanupAuditLog.read(url: logURL, limit: 20).count, 4)
     }
 
     func testTrashPathCanonicalizationUnderPrivateVar() throws {
         try write("Library/Caches/com.foo/x.bin", bytes: 2 * mb)
         try XCTSkipUnless(home.hasPrefix("/var/"), "geçici klasör /var altında değil")
-        XCTAssertNotEqual(CleanupTrasher.realPath(home), home)
+        XCTAssertNotEqual(CleanupDeleter.realPath(home), home)
         let t = trasher()
         XCTAssertNil(t.validate(item(home + "/Library/Caches/com.foo", .appCaches)))
         XCTAssertNil(t.validate(item("/private" + home + "/Library/Caches/com.foo", .appCaches)))
@@ -313,12 +325,12 @@ final class CleanupTests: XCTestCase {
     func testLogIsCappedAt500Lines() {
         let t = trasher()
         let ghosts = (0..<520).map { item("/nonexistent-cleanup-test/g\($0)", .appCaches) }
-        let results = t.trash(ghosts)
+        let results = t.delete(ghosts, mode: .trash)
         XCTAssertTrue(results.allSatisfy { $0.outcome == .skipped(.notUnderAllowedRoot) || $0.outcome == .skipped(.missing) })
-        XCTAssertEqual(logLines().count, CleanupTrasher.logLimit)
-        _ = t.trash([item("/nonexistent-cleanup-test/last", .appCaches)])
+        XCTAssertEqual(logLines().count, CleanupAuditLog.limit)
+        _ = t.delete([item("/nonexistent-cleanup-test/last", .appCaches)], mode: .trash)
         let lines = logLines()
-        XCTAssertEqual(lines.count, CleanupTrasher.logLimit)
+        XCTAssertEqual(lines.count, CleanupAuditLog.limit)
         XCTAssertTrue(lines.last?.contains("/nonexistent-cleanup-test/last") == true)
         XCTAssertFalse(lines.contains { $0.contains("/nonexistent-cleanup-test/g0\"") })
     }

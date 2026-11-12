@@ -135,8 +135,8 @@
       "title": "Ajan ofisinden oturumla mesajlasma ve AskUserQuestion/mod/izin pencerelerini cevaplama-yonetme",
       "priority": 3,
       "done_when": "Ajan ofisinden (macOS pencere/pano ve ofis karti) bir Claude oturumuna mesaj gonderilebiliyor; oturumun AskUserQuestion sorulari, izin istekleri ve mod pencereleri ofiste gorunup cevaplanabiliyor; guvenlik modeli (kimin cevaplayabilecegi, token, yerel/uzak) arastirilip kullanici onayladi; kullanici gercek oturumda denedi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-10. Henuz arastirilmadi: Claude Code'un oturuma disaridan girdi verme yollari (hook cevabi, MCP, Agent SDK/remote control, PermissionRequest hook karari) ve guvenlik riskleri belirlenmeli; konusulmadan kodlanmayacak."
+      "status": "in_progress",
+      "evidence": "2026-11-12: Plan docs/plans/OFFICE-CTRL-01-plan.md; spike docs/plans/OFFICE-CTRL-01-spike.md (CLI 2.1.322, haiku, 6 oturum): PermissionRequest hook terminal diyalogunu BLOKLAMAZ (paralel), terminalden cevap verilirse hook olmez ve gec cevabi yok sayilir; allow diyalogu kapatir; ExitPlanMode PermissionRequest tetikler, setMode acceptEdits calisir; agent_id + permission_mode var, tool_use_id yok (prompt_id var); AskUserQuestion PermissionRequest ile paralel cevaplanabilir (PreToolUse ise terminali bloklar). Karar: her sey PermissionRequest ile, bekletme ust sinira kadar; terminal cevabini sonraki olaydan algila. Kullanici kararlari STATUS'ta. Uygulama bekliyor."
     },
     {
       "id": "CLEAN-01",
@@ -263,16 +263,16 @@
       "title": "Abonelik limitleri ana pencerede: Genel bakista karo + detay",
       "priority": 1,
       "done_when": "Genel bakista Claude/Codex limit karosu (5 saat %, haftalik %, yenilenme) ve tiklayinca detay/ayar; bagli degilse 'Claude limitlerini bagla' yonlendirmesi; kullanici onayladi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-12."
+      "status": "in_progress",
+      "evidence": "2026-11-12: Genel bakista 'Limitler' karosu (en kritik pencere, ongoru turuncu, tooltip'te tum pencereler, tiklayinca popover kart + Ayarlar dugmesi; bagli degilse 'Bagli degil' -> Ayarlar > Claude ajanlari). OverviewLimitsTileTests 5 + ilgili 67. Kuruldu (Release)."
     },
     {
       "id": "CLEAN-02",
       "title": "CleanMyMac tarzi tam Temizlik bolumu",
       "priority": 1,
       "done_when": "Acik kaynak temizleyicilerin (Mole, Pearcleaner vb.) ozellik listesi arastirildi; kullaniciya kategori kategori sorularak kapsam secildi; Tam Disk Erisimi akisi ('erisim yok' cozuldu); secilen kategoriler (sistem/uygulama onbellekleri, buyuk/eski dosyalar, uygulama kaldirici + artiklari, gelistirici artiklari vb.) onizleme+onay+Cop ile calisiyor; kullanici onayladi",
-      "status": "todo",
-      "evidence": "Istek 2026-11-12."
+      "status": "in_progress",
+      "evidence": "2026-11-12: Plan docs/plans/CLEAN-02-plan.md. Phase N bitti: kenar cubugu 'Temizlik' (⌘0; Pencere menusu 'Ana pencere' ⌘0 -> ⌥⌘0), 10 alt bolum (Sistem copu + Baslangic mevcut gorunumleri, digerleri 'Yakinda'); Surecler > Temizlik sekmesi kalkti. Phase 0 bitti: CleanupDeleter (trash/permanent, tek removeItem, 2. kimlik kontrolu), DeletionScope, erisim nedenleri (Dosyalar ve Klasorler / Tam Disk Erisimi / uygulama verisi), yardim sayfasi + donunce yeniden deneme, kalici silme icin 2 adimli onay. 44 + 60 test; tam suite 1394/1395. Kuruldu. Kalan: Phase 1-7."
     },
     {
       "id": "CPU-01",
