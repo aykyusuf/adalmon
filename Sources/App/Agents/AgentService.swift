@@ -167,12 +167,14 @@ final class AgentService {
                     var event = event
                     if !prefs.agentsShowTargets { event.target = nil }
                     monitor.ingest(event)
+                    // Sarmalayıcıdan duyulmuş oturum etkinse Claude limit verisi taze sayılır (değer değişmediği için yeniden gönderilmez).
+                    limits.noteClaudeActivity(sessionID: event.sessionID)
                     // Aynı oturum/ajanın sonraki olayı bekleyen kartı düşürür (terminalde cevaplanmış olabilir).
                     decisions.dismiss(matching: event)
                 }
             },
             onState: { [weak self] state in Task { @MainActor in self?.handle(state) } },
-            onLimits: { value in Task { @MainActor in limits.ingestClaude(value) } },
+            onLimits: { message in Task { @MainActor in limits.ingestClaude(message.limits, sessionID: message.sessionID) } },
             onDecision: { [weak self] request, id in Task { @MainActor in self?.receiveDecision(request, id: id) } },
             onHeldClosed: { id in Task { @MainActor in decisions.serverClosed(id) } })
         server.onStreamCount = { [weak self] count in Task { @MainActor in self?.setWebObserving(count > 0) } }

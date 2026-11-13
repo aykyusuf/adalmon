@@ -237,9 +237,11 @@ final class CodexLiveLimitsTests: XCTestCase {
         let rollout = limits(five: 100, reset: 3600, observed: -600, live: false)
         let live = limits(five: 6, reset: 3600, observed: 0, live: true)
         XCTAssertEqual(LimitMerge.codexUpdate(current: rollout, incoming: live)?.fiveHour?.usedPercent, 6)
-        // Pasif kaynaklar arasında monotonik kural korunur.
-        let lower = limits(five: 50, reset: 3600, observed: 0, live: false)
-        XCTAssertNil(LimitMerge.codexUpdate(current: rollout, incoming: lower))
+        // Pasif kaynaklar arasında: aynı/eski olay düşüremez; kesin olarak daha yeni olayın düşüşü (limit sıfırlama) kabul edilir.
+        let sameEventLower = limits(five: 50, reset: 3600, observed: -600, live: false)
+        XCTAssertNil(LimitMerge.codexUpdate(current: rollout, incoming: sameEventLower))
+        let newerLower = limits(five: 50, reset: 3600, observed: 0, live: false)
+        XCTAssertEqual(LimitMerge.codexUpdate(current: rollout, incoming: newerLower)?.fiveHour?.usedPercent, 50)
     }
 
     func testOlderRolloutNeverRewindsLiveValue() throws {

@@ -2,7 +2,7 @@ import Foundation
 
 /// Yerel dinleyicinin minimal HTTP/1.1 ayrıştırıcısı. Girdi güvenilmezdir: yalnızca `POST /v1/event`, `Content-Length` zorunlu,
 /// gövde en çok 16 KB, başlıklar en çok 8 KB, `X-Adalmon-Token` sabit zamanlı karşılaştırılır. Saf mantık (ağ yok, testli).
-/// `POST /v1/limits` (statusLine sarmalayıcısı, abonelik limitleri; gövde ham `rate_limits` JSON'u, en çok 4 KB): ek olarak Origin başlığı varsa 403 (tarayıcıdan gelemez),
+/// `POST /v1/limits` (statusLine sarmalayıcısı, abonelik limitleri; gövde `{"session_id","rate_limits"}` zarfı ya da eski ham `rate_limits` JSON'u, en çok ~4 KB): ek olarak Origin başlığı varsa 403 (tarayıcıdan gelemez),
 /// `port` verilmişse Host yalnızca `127.0.0.1:<port>` / `localhost:<port>` (DNS rebinding) → aksi 421.
 enum AgentHTTPParser {
     static let maxBody = 16 * 1024
@@ -17,7 +17,7 @@ enum AgentHTTPParser {
         /// Geçerli, yetkili olay → 204.
         case event(AgentEvent)
         /// Geçerli, yetkili abonelik limiti (Claude) → 204.
-        case limits(ProviderLimits)
+        case limits(ClaudeLimitsMessage)
         /// Reddedildi: durum kodu (yanıt gövdesi her zaman boş).
         case reject(Int)
     }
@@ -62,8 +62,8 @@ enum AgentHTTPParser {
         guard buffer.count - bodyStart >= length else { return .needMore }
         let body = buffer[bodyStart..<(bodyStart + length)]
         if isLimits {
-            guard let limits = ClaudeLimitsPayload.parse(Data(body), now: now) else { return .reject(400) }
-            return .limits(limits)
+            guard let message = ClaudeLimitsPayload.parseMessage(Data(body), now: now) else { return .reject(400) }
+            return .limits(message)
         }
         guard let event = AgentEvent(json: Data(body)) else { return .reject(400) }
         return .event(event)

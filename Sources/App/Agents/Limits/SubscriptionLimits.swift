@@ -89,10 +89,39 @@ struct ProviderLimits: Codable, Equatable, Sendable {
 
 // MARK: Claude (dinleyiciye gelen gövde)
 
-/// statusLine sarmalayıcısının gönderdiği gövde: Claude Code'un `rate_limits` nesnesinin ham JSON metni. Yalnızca
-/// `five_hour`/`seven_day` altındaki `used_percentage` ve `resets_at` çözülür (dört sayı); başka alan çözülmez ve saklanmaz.
+/// Dinleyiciye gelen tek Claude limit mesajı: dört sayı + (yeni sarmalayıcıda) gönderen Claude Code oturumunun kimliği.
+struct ClaudeLimitsMessage: Equatable, Sendable {
+    var limits: ProviderLimits
+    /// Doğrulanmış `session_id` (yalnızca `[A-Za-z0-9-]`, en çok 64 karakter). Eski sarmalayıcı gövdesinde ya da geçersizse nil.
+    var sessionID: String?
+}
+
+/// statusLine sarmalayıcısının gönderdiği gövde. İki biçim kabul edilir:
+/// - yeni: `{"session_id":"…","rate_limits":{…}}`
+/// - eski (oturumsuz): Claude Code'un `rate_limits` nesnesinin ham JSON metni.
+/// Yalnızca `five_hour`/`seven_day` altındaki `used_percentage` ve `resets_at` çözülür (dört sayı) ve oturum kimliği; başka alan
+/// çözülmez ve saklanmaz.
 enum ClaudeLimitsPayload {
-    static let maxBytes = 4 * 1024
+    /// Sarmalayıcı `rate_limits` metnini 4096 karakterle sınırlar; zarf (session_id + anahtarlar) için küçük pay.
+    static let maxBytes = 4 * 1024 + 256
+    static let maxSessionIDLength = 64
+
+    private struct Body: Decodable {
+        let session_id: String?
+        let rate_limits: RateLimits?
+        let five_hour: Window?
+        let seven_day: Window?
+
+        private enum CodingKeys: String, CodingKey { case session_id, rate_limits, five_hour, seven_day }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            session_id = try? c.decodeIfPresent(String.self, forKey: .session_id)
+            rate_limits = try c.decodeIfPresent(RateLimits.self, forKey: .rate_limits)
+            five_hour = try c.decodeIfPresent(Window.self, forKey: .five_hour)
+            seven_day = try c.decodeIfPresent(Window.self, forKey: .seven_day)
+        }
+    }
 
     private struct RateLimits: Decodable {
         let five_hour: Window?
@@ -112,12 +141,26 @@ enum ClaudeLimitsPayload {
         }
     }
 
-    static func parse(_ data: Data, now: Date) -> ProviderLimits? {
-        guard data.count <= maxBytes, let decoded = try? JSONDecoder().decode(RateLimits.self, from: data) else { return nil }
-        let five = window(used: decoded.five_hour?.used, resets: decoded.five_hour?.resets)
-        let week = window(used: decoded.seven_day?.used, resets: decoded.seven_day?.resets)
+    static func parse(_ data: Data, now: Date) -> ProviderLimits? { parseMessage(data, now: now)?.limits }
+
+    static func parseMessage(_ data: Data, now: Date) -> ClaudeLimitsMessage? {
+        guard data.count <= maxBytes, let decoded = try? JSONDecoder().decode(Body.self, from: data) else { return nil }
+        // Zarf varsa pencereler yalnızca `rate_limits` içinden okunur; yoksa eski biçim (gövdenin kendisi `rate_limits`).
+        let fiveRaw = decoded.rate_limits.map(\.five_hour) ?? decoded.five_hour
+        let weekRaw = decoded.rate_limits.map(\.seven_day) ?? decoded.seven_day
+        let five = window(used: fiveRaw?.used, resets: fiveRaw?.resets)
+        let week = window(used: weekRaw?.used, resets: weekRaw?.resets)
         guard five != nil || week != nil else { return nil }
-        return ProviderLimits(source: .claude, fiveHour: five, weekly: week, observedAt: now)
+        let session = decoded.rate_limits == nil ? nil : decoded.session_id.flatMap(validSessionID)
+        return ClaudeLimitsMessage(limits: ProviderLimits(source: .claude, fiveHour: five, weekly: week, observedAt: now), sessionID: session)
+    }
+
+    /// Yalnızca ASCII harf/rakam ve `-`, 1…64 karakter; aksi halde nil (mesaj oturumsuz sayılır).
+    static func validSessionID(_ text: String) -> String? {
+        guard !text.isEmpty, text.utf8.count <= maxSessionIDLength,
+              text.utf8.allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x5A) || ($0 >= 0x61 && $0 <= 0x7A) || $0 == 0x2D })
+        else { return nil }
+        return text
     }
 
     static func window(used: Double?, resets: Double?) -> LimitWindow? {
@@ -253,15 +296,18 @@ enum CodexRolloutParser {
 
 // MARK: Çok oturumlu birleştirme
 
-/// Birden çok Claude Code / Codex oturumu açıkken her oturum kendi SON gördüğü `rate_limits`'i gönderir: boşta oturum eski (düşük) değeri,
-/// aktif oturum güncel değeri yollar ve gösterge zıplar. Pencere başına monoton birleştirme: aynı yenilenme anı (±60 sn) için kullanılan
-/// yüzde yalnızca ARTABİLİR; daha yeni (ileri) yenilenme anı yeni pencere sayılır ve değer kabul edilir; daha eski yenilenme anı yok sayılır.
-/// 5 saatlik ve haftalık ayrı değerlendirilir.
+/// Pencere başına birleştirme kuralları. Claude'da yalnızca oturum kimliği OLMAYAN (eski sarmalayıcı) mesajlar için kullanılır
+/// (bkz. `ClaudeSessionLimits`); Codex'te pasif (rollout) kaynak için.
+/// Monoton kural: aynı yenilenme anı (±60 sn) için kullanılan yüzde yalnızca ARTABİLİR (`allowDecrease` hariç); daha yeni (ileri)
+/// yenilenme anı yeni pencere sayılır ve değer kabul edilir; daha eski yenilenme anı yok sayılır. 5 saatlik ve haftalık ayrı değerlendirilir.
+/// Not: "yalnızca artar" kuralı tek başına yanlıştır: kullanıcı limit sıfırlama hakkı kullanınca yüzde, yenilenme anı aynı kalarak düşer
+/// (gözlendi: haftalık %79 → %27, `resets_at` birebir aynı). Bu yüzden düşüşü ayırt edebilen bir sinyal varsa (`allowDecrease`) kabul edilir.
 enum LimitMerge {
     static let resetTolerance: TimeInterval = 60
 
     /// Gelen değerin mevcutla birleşmiş hali. Hiçbir pencere kabul edilmediyse (hepsi daha düşük/eski) nil: mevcut değer ve `observedAt` değişmez.
-    static func monotonic(current: ProviderLimits, incoming: ProviderLimits) -> ProviderLimits? {
+    /// `allowDecrease`: gelen değer kesin olarak daha yeni bir gözlemse aynı penceredeki düşüş de kabul edilir (limit sıfırlama).
+    static func monotonic(current: ProviderLimits, incoming: ProviderLimits, allowDecrease: Bool = false) -> ProviderLimits? {
         var result = incoming
         var accepted = false
         for kind in LimitWindowKind.allCases {
@@ -274,7 +320,7 @@ enum LimitMerge {
                     merged = new
                 } else if oldReset.timeIntervalSince(newReset) > resetTolerance {
                     merged = nil
-                } else if new.usedPercent >= old.usedPercent {
+                } else if new.usedPercent >= old.usedPercent || allowDecrease {
                     merged = LimitWindow(usedPercent: new.usedPercent, resetsAt: max(oldReset, newReset))
                 } else {
                     merged = nil
@@ -295,19 +341,154 @@ enum LimitMerge {
 
     /// Codex kaynak önceliği. app-server (canlı) yetkili kaynaktır: değeri HER ZAMAN kabul edilir (rollout'taki eski %100'ü, hatta aynı
     /// yenilenme anında bile, geçer). Rollout/pasif kaynak: canlı değerden eski ya da aynı anlıksa yok sayılır; aksi halde `monotonic`.
+    /// Rollout değerinin `observedAt`'i olayın kendi zaman damgasıdır (okuma anı değil): kesin olarak daha yeni bir olay aynı pencerede
+    /// daha düşük yüzde bildiriyorsa bu bir limit sıfırlamasıdır ve kabul edilir; aynı/eski olay düşüremez.
     /// Nil dönerse mevcut değer değişmez.
     static func codexUpdate(current: ProviderLimits?, incoming: ProviderLimits) -> ProviderLimits? {
         if incoming.isLive == true { return incoming }
         guard let current else { return incoming }
         if current.isLive == true, incoming.observedAt <= current.observedAt { return nil }
-        return monotonic(current: current, incoming: incoming)
+        return monotonic(current: current, incoming: incoming, allowDecrease: incoming.observedAt > current.observedAt)
     }
 
-    private static func set(_ limits: inout ProviderLimits, _ kind: LimitWindowKind, _ window: LimitWindow) {
+    static func set(_ limits: inout ProviderLimits, _ kind: LimitWindowKind, _ window: LimitWindow) {
         switch kind {
         case .fiveHour: limits.fiveHour = window
         case .weekly: limits.weekly = window
         }
+    }
+}
+
+/// Claude: oturum başına son değer ve gösterilecek değerin seçimi (saf, testli; yalnızca bellekte).
+///
+/// Her Claude Code oturumu statusLine'da kendi SON gördüğü `rate_limits`'i taşır. Bir oturumun değeri yalnızca o oturum API çağrısı
+/// yapınca değişir; bu yüzden değeri EN SON DEĞİŞEN oturum en tazedir. Boşta oturum eski değeri tekrar tekrar yollasa da değeri
+/// değişmediği için kazanamaz (7↔11 zıplaması olmaz); limit sıfırlamasında (yüzde düşer, yenilenme anı aynı) aktif oturumun düşen
+/// değeri bir değişiklik olduğu için kazanır.
+///
+/// Pencere başına seçim: (1) en ileri yenilenme anı (±60 sn) grubu: yeni pencere her zaman kazanır; (2) grup içinde değeri en son
+/// değişen oturum; eşitlikte yüksek yüzde, sonra en son duyulan. Oturumsuz (eski sarmalayıcı) mesajlar ve kalıcı son değer en düşük
+/// önceliktir (`legacy`): o pencere için herhangi bir oturum değeri varsa kullanılmaz; kendi aralarında `LimitMerge.monotonic`.
+///
+/// Bir oturumun İLK mesajı (ör. Adalmon yeniden açılınca her oturum değerini yeniden yollar) gösterilen değerden düşükse değişiklik
+/// sayılmaz (`changedAt` = distantPast): yeniden başlatmada boşta oturumun eski değeri aktif oturumu geri saramaz. Düşük değilse
+/// değişiklik sayılır (yeni açılan oturumun ilk değeri tazedir).
+struct ClaudeSessionLimits: Equatable, Sendable {
+    struct Entry: Equatable, Sendable {
+        var limits: ProviderLimits
+        /// Bu oturumun değerinin son DEĞİŞTİĞİ an (ilk mesajı düşükse distantPast).
+        var changedAt: Date
+        /// Bu oturumdan son mesaj ya da (değer değişmeden) son hook etkinliği: gösterilen değerin tazeliği.
+        var heardAt: Date
+        /// Sarmalayıcıdan gelen son MESAJ. Unutma (24 sa) buna göredir: hook etkinliği oturumu tek başına canlı tutamaz
+        /// (sarmalayıcı kaldırılır/bozulursa değer süresiz "taze" görünmesin). 5 saatlik pencere en geç ~5 sa'te bir yenilendiği için
+        /// gerçekten aktif oturum bu süre içinde mutlaka yeni mesaj yollar.
+        var messageAt: Date
+    }
+
+    static let pruneAfter: TimeInterval = 24 * 3600
+    static let maxSessions = 16
+
+    private(set) var sessions: [String: Entry] = [:]
+    /// Oturumsuz mesajlar + uygulamanın kalıcı son değeri.
+    private(set) var legacy: ProviderLimits?
+
+    init(legacy: ProviderLimits? = nil) { self.legacy = legacy }
+
+    /// Gelen mesajı kaydeder. Dönen değer: gösterilecek birleşik değer (hiç veri yoksa nil).
+    @discardableResult
+    mutating func ingest(_ limits: ProviderLimits, sessionID: String?, now: Date) -> ProviderLimits? {
+        prune(now: now)
+        guard let sessionID else {
+            if let legacy {
+                if let merged = LimitMerge.monotonic(current: legacy, incoming: limits) { self.legacy = merged }
+            } else {
+                legacy = limits
+            }
+            return display()
+        }
+        if var entry = sessions[sessionID] {
+            if entry.limits.fiveHour != limits.fiveHour || entry.limits.weekly != limits.weekly { entry.changedAt = now }
+            entry.limits = limits
+            entry.heardAt = now
+            entry.messageAt = now
+            sessions[sessionID] = entry
+        } else {
+            let shown = display(sessions: sessions)
+            let lower = shown.map { Self.isLower(limits, than: $0) } ?? false
+            sessions[sessionID] = Entry(limits: limits, changedAt: lower ? .distantPast : now, heardAt: now, messageAt: now)
+        }
+        if sessions.count > Self.maxSessions,
+           let oldest = sessions.min(by: { $0.value.messageAt < $1.value.messageAt })?.key, oldest != sessionID {
+            sessions[oldest] = nil
+        }
+        return display()
+    }
+
+    /// Hook etkinliği: oturum canlı ve API çağrısı yapıyor; değeri değişseydi sarmalayıcı yollardı, yani bildiği değer hâlâ güncel.
+    /// Yalnızca sarmalayıcıdan zaten duyulmuş oturumlar için; gösterilen değerin tazeliğini (`observedAt`) ilerletir. Bilinmeyen oturumda nil.
+    mutating func noteActivity(sessionID: String, now: Date) -> ProviderLimits? {
+        prune(now: now)
+        guard var entry = sessions[sessionID], now > entry.heardAt else { return nil }
+        entry.heardAt = now
+        sessions[sessionID] = entry
+        return display()
+    }
+
+    func display() -> ProviderLimits? { display(sessions: sessions) ?? legacy }
+
+    /// Pencere başına oturumlardan seçilen değer; o pencerede oturum değeri yoksa `legacy` penceresi. Oturum değeri hiç yoksa nil.
+    private func display(sessions: [String: Entry]) -> ProviderLimits? {
+        guard !sessions.isEmpty else { return nil }
+        var result = ProviderLimits(source: .claude, observedAt: .distantPast)
+        var observed: Date?
+        for kind in LimitWindowKind.allCases {
+            let candidates = sessions.values.compactMap { entry in entry.limits.window(kind).map { (entry, $0) } }
+            guard !candidates.isEmpty else {
+                if let window = legacy?.window(kind) { LimitMerge.set(&result, kind, window) }
+                continue
+            }
+            let latestReset = candidates.compactMap(\.1.resetsAt).max()
+            let group = candidates.filter { _, window in
+                guard let latestReset else { return true }
+                guard let reset = window.resetsAt else { return false }
+                return latestReset.timeIntervalSince(reset) <= LimitMerge.resetTolerance
+            }
+            let winner = group.max { a, b in
+                if a.0.changedAt != b.0.changedAt { return a.0.changedAt < b.0.changedAt }
+                if a.1.usedPercent != b.1.usedPercent { return a.1.usedPercent < b.1.usedPercent }
+                return a.0.heardAt < b.0.heardAt
+            }
+            guard let winner else { continue }
+            LimitMerge.set(&result, kind, winner.1)
+            observed = max(observed ?? winner.0.heardAt, winner.0.heardAt)
+        }
+        guard result.fiveHour != nil || result.weekly != nil else { return nil }
+        result.observedAt = observed ?? legacy?.observedAt ?? .distantPast
+        return result
+    }
+
+    /// Aynı pencerede (yenilenme anı ±60 sn ya da ikisi de bilinmiyor) gösterilenden düşük ya da daha eski pencereye ait mi?
+    private static func isLower(_ incoming: ProviderLimits, than shown: ProviderLimits) -> Bool {
+        LimitWindowKind.allCases.contains { kind in
+            guard let new = incoming.window(kind), let old = shown.window(kind) else { return false }
+            switch (old.resetsAt, new.resetsAt) {
+            case let (oldReset?, newReset?):
+                if oldReset.timeIntervalSince(newReset) > LimitMerge.resetTolerance { return true }
+                if newReset.timeIntervalSince(oldReset) > LimitMerge.resetTolerance { return false }
+                return new.usedPercent < old.usedPercent
+            case (nil, nil): return new.usedPercent < old.usedPercent
+            default: return false
+            }
+        }
+    }
+
+    /// 24 saattir duyulmayan oturumlar unutulur. Hepsi unutulursa son gösterilen değer `legacy` olur (eski bir değere geri dönülmez).
+    private mutating func prune(now: Date) {
+        let kept = sessions.filter { now.timeIntervalSince($0.value.messageAt) < Self.pruneAfter }
+        guard kept.count != sessions.count else { return }
+        if kept.isEmpty, let shown = display(sessions: sessions) { legacy = shown }
+        sessions = kept
     }
 }
 

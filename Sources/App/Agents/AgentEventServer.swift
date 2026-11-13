@@ -26,7 +26,7 @@ final class AgentEventServer: @unchecked Sendable {
     private let keepAliveInterval: TimeInterval
     private let onEvent: @Sendable (AgentEvent) -> Void
     private let onState: @Sendable (State) -> Void
-    private let onLimits: @Sendable (ProviderLimits) -> Void
+    private let onLimits: @Sendable (ClaudeLimitsMessage) -> Void
     private let onDecision: @Sendable (DecisionRequest, UUID) -> Void
     private let onHeldClosed: @Sendable (UUID) -> Void
     // Aşağıdakilere yalnızca `queue` üzerinden erişilir.
@@ -50,7 +50,7 @@ final class AgentEventServer: @unchecked Sendable {
 
     init(token: String, web: AgentWebStore? = nil, keepAliveInterval: TimeInterval = 15,
          onEvent: @escaping @Sendable (AgentEvent) -> Void, onState: @escaping @Sendable (State) -> Void,
-         onLimits: @escaping @Sendable (ProviderLimits) -> Void = { _ in },
+         onLimits: @escaping @Sendable (ClaudeLimitsMessage) -> Void = { _ in },
          onDecision: @escaping @Sendable (DecisionRequest, UUID) -> Void = { _, _ in },
          onHeldClosed: @escaping @Sendable (UUID) -> Void = { _ in }) {
         self.token = token

@@ -305,11 +305,12 @@ final class SubscriptionLimitsTests: XCTestCase {
         final class Box: @unchecked Sendable {
             var port: UInt16 = 0
             var got: ProviderLimits?
+            var session: String?
         }
         let box = Box()
         let server = AgentEventServer(token: token, onEvent: { _ in }, onState: { state in
             if case .running(let p) = state { box.port = p; ready.fulfill() }
-        }, onLimits: { limits in box.got = limits; received.fulfill() })
+        }, onLimits: { message in box.got = message.limits; box.session = message.sessionID; received.fulfill() })
         server.start(preferredPort: nil)
         defer { server.stop() }
         wait(for: [ready], timeout: 5)
@@ -325,6 +326,7 @@ final class SubscriptionLimitsTests: XCTestCase {
         XCTAssertEqual(got?.fiveHour?.resetsAt, Date(timeIntervalSince1970: 1_794_438_488))
         XCTAssertEqual(got?.weekly?.usedPercent, 7)
         XCTAssertEqual(got?.weekly?.resetsAt, Date(timeIntervalSince1970: 1_794_858_786))
+        XCTAssertEqual(box.session, "s", "oturum kimliği de gelir")
     }
 
     // MARK: Sarmalayıcı: süreç sayısı
@@ -336,7 +338,7 @@ final class SubscriptionLimitsTests: XCTestCase {
         let curlLog = temp.appending(path: "curl.log"), forbiddenLog = temp.appending(path: "forbidden.log")
         let curl = "#!/bin/sh\ncat >> '\(temp.path)/curl-stdin.log'\necho curl >> '\(curlLog.path)'\n"
         try Data(curl.utf8).write(to: bin.appending(path: "curl"))
-        for name in ["plutil", "sed", "awk", "grep", "jq", "python3"] {
+        for name in ["plutil", "sed", "awk", "grep", "jq", "python3", "date", "stat", "ls", "rm", "tr", "cut", "head"] {
             try Data("#!/bin/sh\necho \(name) >> '\(forbiddenLog.path)'\n".utf8).write(to: bin.appending(path: name))
         }
         for item in try FileManager.default.contentsOfDirectory(atPath: bin.path) {
@@ -374,9 +376,9 @@ final class SubscriptionLimitsTests: XCTestCase {
         let firstConfig = try String(contentsOf: temp.appending(path: "curl-stdin.log"), encoding: .utf8)
         XCTAssertTrue(firstConfig.contains(#"url = "http://127.0.0.1:4321/v1/limits""#))
         XCTAssertTrue(firstConfig.contains("X-Adalmon-Token: abc123XYZ"))
-        XCTAssertTrue(firstConfig.contains(#"data-binary = "@\#(temp.path)/last-sent""#))
-        let sent = try String(contentsOf: temp.appending(path: "last-sent"), encoding: .utf8)
-        XCTAssertEqual(sent, #"{"five_hour":{"used_percentage":42.5,"resets_at":1794438488},"seven_day":{"used_percentage":7,"resets_at":1794858786}}"#)
+        XCTAssertTrue(firstConfig.contains(#"data-binary = "@\#(temp.path)/last-sent-s""#))
+        let sent = try String(contentsOf: temp.appending(path: "last-sent-s"), encoding: .utf8)
+        XCTAssertEqual(sent, #"{"session_id":"s","rate_limits":{"five_hour":{"used_percentage":42.5,"resets_at":1794438488},"seven_day":{"used_percentage":7,"resets_at":1794858786}}}"#)
 
         let second = try runOnce(sampleInput)
         Thread.sleep(forTimeInterval: 0.3)
@@ -392,6 +394,49 @@ final class SubscriptionLimitsTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.3)
         XCTAssertEqual(lines(bin.curlLog).count, 2)
         XCTAssertTrue(lines(bin.forbiddenLog).isEmpty, "plutil/sed/awk/grep/jq çağrılmadı: \(lines(bin.forbiddenLog))")
+    }
+
+    /// Oturum başına tekilleştirme: iki oturum dönüşümlü yenilense de her biri yalnızca değeri değişince gönderir; geçersiz/eksik
+    /// session_id eski (oturumsuz) gövdeye düşer. Hiçbir durumda date/stat/rm vb. ek süreç yok.
+    func testWrapperDedupsPerSessionAndValidatesSessionID() throws {
+        let config = temp.appending(path: "config.json")
+        try Data(#"{"port":4321,"token":"abc123XYZ"}"#.utf8).write(to: config)
+        let bin = try fakeBin()
+        let script = temp.appending(path: "statusline-wrapper.sh")
+        try Data(ClaudeStatusLineWrapper.script(originalCommand: nil, configPath: config.path)
+            .replacingOccurrences(of: "/usr/bin/curl", with: temp.path + "/fakebin/curl").utf8).write(to: script)
+        let env = ["PATH": bin.path, "HOME": temp.path]
+        var expected = 0
+        func send(_ input: String, expectCurl: Bool) throws {
+            if expectCurl { expected += 1 }
+            _ = try run("/bin/sh", [script.path], input: input, environment: env)
+            let deadline = Date().addingTimeInterval(expectCurl ? 3 : 0.3)
+            while Date() < deadline, lines(bin.curlLog).count < expected { Thread.sleep(forTimeInterval: 0.02) }
+            if !expectCurl { Thread.sleep(forTimeInterval: 0.2) }
+            XCTAssertEqual(lines(bin.curlLog).count, expected, input)
+        }
+        let a = sampleInput.replacingOccurrences(of: #""session_id":"s""#, with: #""session_id":"aaaa-1111""#)
+        let b = sampleInput.replacingOccurrences(of: #""session_id":"s""#, with: #""session_id" : "BBBB-2222""#)
+        try send(a, expectCurl: true)
+        try send(b, expectCurl: true)
+        try send(a, expectCurl: false)
+        try send(b, expectCurl: false)
+        try send(a.replacingOccurrences(of: "42.5", with: "44"), expectCurl: true)
+        try send(b, expectCurl: false)
+        XCTAssertEqual(try String(contentsOf: temp.appending(path: "last-sent-BBBB-2222"), encoding: .utf8),
+                       #"{"session_id":"BBBB-2222","rate_limits":{"five_hour":{"used_percentage":42.5,"resets_at":1794438488},"seven_day":{"used_percentage":7,"resets_at":1794858786}}}"#)
+
+        // Geçersiz karakter, fazla uzun ya da eksik session_id: oturumsuz gövde, `last-sent` dosyası.
+        let bad = sampleInput.replacingOccurrences(of: #""session_id":"s""#, with: #""session_id":"../x y""#)
+        try send(bad, expectCurl: true)
+        let raw = #"{"five_hour":{"used_percentage":42.5,"resets_at":1794438488},"seven_day":{"used_percentage":7,"resets_at":1794858786}}"#
+        XCTAssertEqual(try String(contentsOf: temp.appending(path: "last-sent"), encoding: .utf8), raw)
+        let long = sampleInput.replacingOccurrences(of: #""session_id":"s""#, with: #""session_id":""# + String(repeating: "a", count: 65) + #"""#)
+        try send(long, expectCurl: false) // aynı oturumsuz gövde: gönderilmez
+        try send(sampleInput.replacingOccurrences(of: #""session_id":"s","#, with: ""), expectCurl: false)
+        let names = try FileManager.default.contentsOfDirectory(atPath: temp.path).filter { $0.hasPrefix("last-sent") }.sorted()
+        XCTAssertEqual(names, ["last-sent", "last-sent-BBBB-2222", "last-sent-aaaa-1111"])
+        XCTAssertTrue(lines(bin.forbiddenLog).isEmpty, "ek süreç çağrılmadı: \(lines(bin.forbiddenLog))")
     }
 
     func testWrapperExtractsNestedRateLimitsFromPrettyPrintedInput() throws {
@@ -416,9 +461,23 @@ final class SubscriptionLimitsTests: XCTestCase {
         _ = try binder.connect()
         try Data("#!/bin/sh\n# old\n".utf8).write(to: binder.wrapperURL)
         let settingsBefore = try Data(contentsOf: binder.settingsURL)
+        try Data("x".utf8).write(to: binder.lastSentURL)
+        try Data("y".utf8).write(to: binder.lastSentURL(session: "abc-1"))
         binder.repairWrapperIfNeeded()
-        XCTAssertEqual(try String(contentsOf: binder.wrapperURL, encoding: .utf8).contains("last-sent"), true)
-        XCTAssertEqual(try Data(contentsOf: binder.settingsURL), settingsBefore)
+        let original = ClaudeStatusLineBinder.originalCommand(fromRaw: binder.readState()?.originalRaw)
+        XCTAssertNotNil(original)
+        XCTAssertEqual(try String(contentsOf: binder.wrapperURL, encoding: .utf8),
+                       ClaudeStatusLineWrapper.script(originalCommand: original, configPath: binder.configURL.path), "güncel üretimle birebir")
+        let permissions = try FileManager.default.attributesOfItem(atPath: binder.wrapperURL.path)[.posixPermissions] as? Int
+        XCTAssertEqual(permissions, 0o700)
+        XCTAssertEqual(try Data(contentsOf: binder.settingsURL), settingsBefore, "settings.json'a dokunulmaz")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: binder.lastSentURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: binder.lastSentURL(session: "abc-1").path), "oturum başına kayıtlar da temizlenir")
+        // Güncelse yeniden yazılmaz (değişiklik zamanı korunur).
+        let stamp = Date(timeIntervalSince1970: 1_700_000_000)
+        try FileManager.default.setAttributes([.modificationDate: stamp], ofItemAtPath: binder.wrapperURL.path)
+        binder.repairWrapperIfNeeded()
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: binder.wrapperURL.path)[.modificationDate] as? Date, stamp)
     }
 
     // MARK: /v1/limits ayrıştırıcı (kimlik doğrulama)
@@ -436,8 +495,8 @@ final class SubscriptionLimitsTests: XCTestCase {
     func testLimitsEndpointAuth() {
         let now = Date(timeIntervalSince1970: 1_794_400_000)
         let ok = AgentHTTPParser.parse(limitsRequest(), token: "tok", port: 5000, now: now)
-        XCTAssertEqual(ok, .limits(ProviderLimits(source: .claude, fiveHour: LimitWindow(usedPercent: 81, resetsAt: Date(timeIntervalSince1970: 1_794_438_488)),
-                                                  weekly: nil, observedAt: now)))
+        XCTAssertEqual(ok, .limits(ClaudeLimitsMessage(limits: ProviderLimits(source: .claude, fiveHour: LimitWindow(usedPercent: 81, resetsAt: Date(timeIntervalSince1970: 1_794_438_488)),
+                                                                              weekly: nil, observedAt: now), sessionID: nil)))
         XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(host: "localhost:5000"), token: "tok", port: 5000, now: now).isLimits, true)
         XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(token: nil), token: "tok", port: 5000), .reject(401))
         XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(token: "bad"), token: "tok", port: 5000), .reject(401))
@@ -455,8 +514,27 @@ final class SubscriptionLimitsTests: XCTestCase {
         // Fazladan alanlar yok sayılır; yalnızca dört sayı saklanır.
         let extra = #"{"five_hour":{"used_percentage":10,"resets_at":1794438488,"x":"y"},"seven_day":{"used_percentage":20},"plan":"max"}"#
         let parsed = AgentHTTPParser.parse(limitsRequest(body: extra), token: "tok", port: 5000, now: now)
-        XCTAssertEqual(parsed, .limits(ProviderLimits(source: .claude, fiveHour: LimitWindow(usedPercent: 10, resetsAt: Date(timeIntervalSince1970: 1_794_438_488)),
-                                                      weekly: LimitWindow(usedPercent: 20, resetsAt: nil), observedAt: now)))
+        XCTAssertEqual(parsed, .limits(ClaudeLimitsMessage(limits: ProviderLimits(source: .claude, fiveHour: LimitWindow(usedPercent: 10, resetsAt: Date(timeIntervalSince1970: 1_794_438_488)),
+                                                                                  weekly: LimitWindow(usedPercent: 20, resetsAt: nil), observedAt: now), sessionID: nil)))
+        // Yeni zarf: session_id + rate_limits. Geçersiz kimlik limitleri reddettirmez, yalnızca oturumsuz sayılır.
+        let fiveOnly = ProviderLimits(source: .claude, fiveHour: LimitWindow(usedPercent: 81, resetsAt: Date(timeIntervalSince1970: 1_794_438_488)), observedAt: now)
+        let envelope = #"{"session_id":"0f3c-AB12","rate_limits":{"five_hour":{"used_percentage":81,"resets_at":1794438488}}}"#
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: envelope), token: "tok", port: 5000, now: now),
+                       .limits(ClaudeLimitsMessage(limits: fiveOnly, sessionID: "0f3c-AB12")))
+        for badID in ["../etc", "a b", "", String(repeating: "a", count: 65), "ü"] {
+            let body = #"{"session_id":"\#(badID)","rate_limits":{"five_hour":{"used_percentage":81,"resets_at":1794438488}}}"#
+            XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: body), token: "tok", port: 5000, now: now),
+                           .limits(ClaudeLimitsMessage(limits: fiveOnly, sessionID: nil)), badID)
+        }
+        let numericID = #"{"session_id":5,"rate_limits":{"five_hour":{"used_percentage":81,"resets_at":1794438488}}}"#
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: numericID), token: "tok", port: 5000, now: now),
+                       .limits(ClaudeLimitsMessage(limits: fiveOnly, sessionID: nil)))
+        XCTAssertEqual(ClaudeLimitsPayload.validSessionID(String(repeating: "a", count: 64))?.count, 64)
+        // Zarfta pencereler yalnızca rate_limits içinden okunur.
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: #"{"session_id":"s","rate_limits":{},"five_hour":{"used_percentage":5}}"#), token: "tok", port: 5000), .reject(400))
+        // Oturumsuz eski gövdede kök düzeydeki session_id yok sayılır.
+        XCTAssertEqual(AgentHTTPParser.parse(limitsRequest(body: #"{"session_id":"s","five_hour":{"used_percentage":81,"resets_at":1794438488}}"#), token: "tok", port: 5000, now: now),
+                       .limits(ClaudeLimitsMessage(limits: fiveOnly, sessionID: nil)))
         let response = String(decoding: AgentHTTPParser.response(for: ok), as: UTF8.self)
         XCTAssertTrue(response.hasPrefix("HTTP/1.1 204 No Content\r\n"))
     }

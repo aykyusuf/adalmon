@@ -233,7 +233,7 @@ Hook'lar orada çalışır (`CLAUDE_CODE_REMOTE=true`) ama yerel kullanıcı aya
 
 7. **Alan adı:** `api-adalmon.adaltek.com` (kullanıcı: "olabilir, değişebiliriz sonra").
 8. **Sunucu kurulumu:** ana oturum SSH ile yapar, adım adım, her değişiklikten (nginx reload dahil) önce kullanıcı onayı; ayrı pm2 süreci + boş port + yeni nginx bloğu; mevcut servislere dokunulmaz.
-9. **Faz 0 Windows denemesi:** kullanıcı Windows PC'de bir Claude oturumu açar; ana oturum o oturuma verilecek talimatı (test komutları + beklenen çıktı) yazar, kullanıcı iletir ve sonucu getirir.
+9. **Faz 0 Windows denemesi:** kullanıcı Windows PC'de bir Claude oturumu (Remote Control) açar ve adını ana oturuma söyler; ana oturum o oturumla **SendMessage ile doğrudan** haberleşip koordine eder (talimat, test komutları, sonuç raporu). Kullanıcı aracılık etmez. Kullanıcı onayları (sunucu değişikliği, commit) yine ana oturumda kullanıcıdan alınır.
 10. **Uzak kapsam:** görüntüleme (Faz 1) + Mac oturumları da sunucuya gönderilsin (Faz 2 için) + **uzaktan izin/soru cevaplama** (kullanıcı istedi; ayrı faz, güvenlik tasarımı şart: sunucu üzerinden onay yolu, cihaz başına token, onay yalnızca Mac Adalmon içindeki tıklamayla, sunucu yalnız iletir). Uzak limitler gerekmez: abonelik hesap genelinde aynı, Mac zaten aynı yüzdeyi gösteriyor (farklı hesap kullanılırsa yeniden bakılır).
 
 ## 9. Doğrulanmayanlar (uygulamadan önce denenmeli)

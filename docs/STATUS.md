@@ -22,8 +22,10 @@
 - "filtre aktif değilse mobilde uyar ıversin olm ciddi bi şekilde" — filtre bağlı/aktif değilken mobilde ciddi uyarı.
 - "firefox uyumluluğu da olmasın amk" — Temizlik'te Firefox desteği hiç olmayacak.
 
+- "win oturumu ile sen haberleşçen session arası mesajlaşma ile ben açınca sana söylicem sen kordine edecen onu zaten" — Windows Faz 0: kullanıcı Windows Claude oturumunu açıp adını söyler; ana oturum SendMessage ile koordine eder (alındı + bitiş raporu iste).
 - "sakın kullanma he resetleri sakın !! sadece göstermek istiom" / "sen eklerken de kullanma sakın testte falan" — Codex/Claude limit sıfırlama haklarını (rateLimitResetCredit/consume vb.) ASLA kullanma: ne kodda, ne testte, ne elle denemede; yalnızca göster. Gerçek codex app-server'a yalnızca initialize/initialized/account/rateLimits/read gönderilir.
 ## Dersler (doğrulanmış nedenler)
+- (2026-11-14) Limit sıfırlama hakkı kullanılınca yüzde DÜŞER ama resets_at aynı kalır (Claude haftalık 79→27, aynı 1795060800). "Aynı pencerede yüzde yalnız artar" (LimitMerge.monotonic) bu yüzden yanlış; Adalmon 3+ saat %79'da takıldı. Çok oturum zıplaması oturum kimliğiyle (en son değeri değişen oturum kazanır) çözülmeli, yüzdeyle değil.
 - Test host'u Adalmon.app'in kendisidir: `AppModel.start()` testte gerçek ajan dinleyicisini kurarsa kullanıcının `~/Library/Application Support/Adalmon/ClaudePlugin/config.json` dosyasını ve `agentsPort` tercihini ezer; çalışan uygulamanın hook'ları ölü porta gider, ajanlar ofiste görünmez. Önlem: `AppModel.start` testte `agents.apply()` çağırmaz; dinleyici testleri kendi geçici dizinini kullanır (`AgentPluginGenerator(root:)`). Tam suite sonrası config md5 ve `/v1/state` kontrol edilir.
 - Mac pildeyken macOS Düşük Güç Modu'nu açar; `BatteryLiquidGlyphTests` içindeki 7 animasyon testi bu yüzden düşer (fişteyken geçer).
 

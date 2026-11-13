@@ -138,6 +138,8 @@ final class SubscriptionLimitsModel {
     @ObservationIgnored private var planStamp: ClaudePlanReader.Stamp?
     @ObservationIgnored private var planReading = false
     @ObservationIgnored private var tracker: LimitAlertTracker
+    /// Oturum başına son Claude değeri (yalnızca bellekte; kalıcı olan yalnızca gösterilen değer `claude`).
+    @ObservationIgnored private var claudeSessions: ClaudeSessionLimits
     @ObservationIgnored private var lastCodexCheck: Date?
     @ObservationIgnored private var codexReading = false
     @ObservationIgnored private var viewers = 0
@@ -157,7 +159,9 @@ final class SubscriptionLimitsModel {
         self.live = live
         thresholds = Self.load(LimitAlertThresholds.self, Key.thresholds, defaults) ?? LimitAlertThresholds()
         tracker = Self.load(LimitAlertTracker.self, Key.tracker, defaults) ?? LimitAlertTracker()
-        claude = Self.load(ProviderLimits.self, Key.claude, defaults)
+        let storedClaude = Self.load(ProviderLimits.self, Key.claude, defaults)
+        claude = storedClaude
+        claudeSessions = ClaudeSessionLimits(legacy: storedClaude)
         forecastSensitivity = defaults.string(forKey: Key.forecastSensitivity).flatMap(LimitForecastSensitivity.init(rawValue:)) ?? .medium
         codexEnabled = defaults.object(forKey: Key.codexEnabled) as? Bool ?? true
         forecaster.warnings = Self.load(LimitForecastWarnings.self, Key.forecastWarnings, defaults) ?? LimitForecastWarnings()
@@ -176,25 +180,32 @@ final class SubscriptionLimitsModel {
 
     // MARK: Claude
 
-    /// Dinleyiciden gelen değer (yalnızca dört sayı). Değişmediyse yalnızca zaman damgası yenilenir.
-    func ingestClaude(_ limits: ProviderLimits, now: Date = .now) {
+    /// Dinleyiciden gelen değer (yalnızca dört sayı) ve gönderen oturum (eski sarmalayıcıda nil). Gösterilecek değer
+    /// `ClaudeSessionLimits` ile seçilir (değeri en son değişen oturum kazanır; boşta oturumun eski değeri geri saramaz, limit sıfırlamasındaki
+    /// düşüş kabul edilir). Gösterilen sayılar aynıysa yalnızca zaman damgası (en çok dakikada bir) yenilenir.
+    func ingestClaude(_ limits: ProviderLimits, sessionID: String? = nil, now: Date = .now) {
         var limits = limits
         limits.observedAt = now
-        // Birden çok oturum eski değeri yollayabilir: daha düşük/eski değer yok sayılır (observedAt da güncellenmez).
-        if let current = claude {
-            guard let merged = LimitMerge.monotonic(current: current, incoming: limits) else { return }
-            limits = merged
+        guard let shown = claudeSessions.ingest(limits, sessionID: sessionID, now: now) else { return }
+        publishClaude(shown, now: now)
+    }
+
+    /// Claude hook olayı geldi (AgentService). Oturum sarmalayıcıdan zaten duyulmuşsa ve değeri gösteriliyorsa veri taze sayılır:
+    /// değer değişseydi sarmalayıcı yollardı. Bilinmeyen oturumda hiçbir şey yapmaz (sözlük araması; yazma/yeniden çizim yok).
+    func noteClaudeActivity(sessionID: String, now: Date = .now) {
+        guard claude != nil, let shown = claudeSessions.noteActivity(sessionID: sessionID, now: now) else { return }
+        publishClaude(shown, now: now)
+    }
+
+    private func publishClaude(_ shown: ProviderLimits, now: Date) {
+        // Sayılar aynıysa yeniden atama/yazma yok (kart yeniden çizilmesin); zaman damgası en çok dakikada bir ve yalnızca ileri tazelenir.
+        if let current = claude, current.fiveHour == shown.fiveHour, current.weekly == shown.weekly {
+            guard shown.observedAt > current.observedAt, now.timeIntervalSince(current.observedAt) >= Self.unchangedRefresh else { return }
         }
-        // Sayılar aynıysa yeniden atama/yazma yok (kart yeniden çizilmesin); zaman damgası en çok dakikada bir tazelenir.
-        if let current = claude, current.fiveHour == limits.fiveHour, current.weekly == limits.weekly,
-           now.timeIntervalSince(current.observedAt) < Self.unchangedRefresh {
-            evaluate(limits, now: now)
-            return
-        }
-        claude = limits
-        store(limits, Key.claude)
-        evaluate(limits, now: now)
-        evaluateForecast(limits, now: now)
+        claude = shown
+        store(shown, Key.claude)
+        evaluate(shown, now: now)
+        evaluateForecast(shown, now: now)
     }
 
     func connectClaude() {
@@ -226,6 +237,8 @@ final class SubscriptionLimitsModel {
             lastMessage = "Kaldırılamadı: \(error.localizedDescription)"
         }
         claudeConnected = binder.isConnected
+        // Sarmalayıcı artık göndermiyor: oturum kayıtları unutulur, hook etkinliği eski değeri "taze" gösteremez.
+        if !claudeConnected { claudeSessions = ClaudeSessionLimits(legacy: claude) }
     }
 
     var backupDirectory: URL { binder.backupDirectory }

@@ -212,9 +212,10 @@ enum ClaudeStatusLineWrapper {
         return #"""
         #!/bin/sh
         # Adalmon statusLine sarmalayıcısı (Ayarlar › Claude ajanları › Abonelik limitleri ile kuruldu; elle düzenlemeyin).
-        # 1) stdin'i sh yerleşikleriyle bir kez okur. 2) `rate_limits` nesnesinin ham metnini yine yerleşiklerle ayıklar ve son gönderilenle
-        #    (last-sent, bu betiğin yanında) karşılaştırır: aynıysa HİÇBİR ek süreç başlatmaz; farklıysa durum dosyasını yazar ve
-        #    127.0.0.1'deki Adalmon dinleyicisine tek bir arka plan curl'ü ile yollar (ayrıştırma/doğrulama dinleyicide).
+        # 1) stdin'i sh yerleşikleriyle bir kez okur. 2) `rate_limits` nesnesinin ham metnini ve `session_id`'yi yine yerleşiklerle ayıklar,
+        #    gövdeyi ({"session_id":…,"rate_limits":…}) bu oturumun son gönderdiğiyle (last-sent-<oturum>, bu betiğin yanında) karşılaştırır:
+        #    aynıysa HİÇBİR ek süreç başlatmaz; farklıysa durum dosyasını yazar ve 127.0.0.1'deki Adalmon dinleyicisine tek bir arka plan
+        #    curl'ü ile yollar (ayrıştırma/doğrulama dinleyicide).
         # 3) Özgün statusLine komutunu aynı stdin ile çalıştırır; çıktısı ve çıkış kodu değiştirilmeden geçer.
         ADALMON_SL_DEFAULT_CONFIG=\#(shellQuote(configPath))
         ADALMON_SL_CONFIG="${ADALMON_AGENTS_CONFIG:-$ADALMON_SL_DEFAULT_CONFIG}"
@@ -273,19 +274,50 @@ enum ClaudeStatusLineWrapper {
             ;;
         esac
 
+        # session_id: yalnızca [A-Za-z0-9-], en çok 64 karakter; değilse boş (eski, oturumsuz gövde gönderilir).
+        ADALMON_SL_SID=""
         if [ -n "$ADALMON_SL_OBJ" ]; then
-          ADALMON_SL_STATE="${0%/*}/last-sent"
-          case $0 in */*) ;; *) ADALMON_SL_STATE="./last-sent" ;; esac
+          case $ADALMON_SL_INPUT in
+            *'"session_id"'*)
+              ADALMON_SL_V=${ADALMON_SL_INPUT#*'"session_id"'}
+              ltrim
+              case $ADALMON_SL_V in
+                :*)
+                  ADALMON_SL_V=${ADALMON_SL_V#:}
+                  ltrim
+                  case $ADALMON_SL_V in
+                    '"'*) ADALMON_SL_V=${ADALMON_SL_V#?}; ADALMON_SL_SID=${ADALMON_SL_V%%\"*} ;;
+                  esac
+                  ;;
+              esac
+              ;;
+          esac
+          # Aralık yerine açık liste: yerel ayara göre aralıklar başka karakterleri de kapsayabilir (dosya adında kullanılıyor).
+          case $ADALMON_SL_SID in *[!0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-]*) ADALMON_SL_SID="" ;; esac
+          if [ "${#ADALMON_SL_SID}" -gt 64 ]; then ADALMON_SL_SID=""; fi
+        fi
+
+        if [ -n "$ADALMON_SL_OBJ" ]; then
+          # Oturum başına son gönderim: boşta oturum (değeri değişmez) hiç göndermez; oturumlar dönüşümlü yenilense de gereksiz gönderim olmaz.
+          if [ -n "$ADALMON_SL_SID" ]; then
+            ADALMON_SL_BODY="{\"session_id\":\"$ADALMON_SL_SID\",\"rate_limits\":$ADALMON_SL_OBJ}"
+            ADALMON_SL_NAME="last-sent-$ADALMON_SL_SID"
+          else
+            ADALMON_SL_BODY=$ADALMON_SL_OBJ
+            ADALMON_SL_NAME="last-sent"
+          fi
+          ADALMON_SL_STATE="${0%/*}/$ADALMON_SL_NAME"
+          case $0 in */*) ;; *) ADALMON_SL_STATE="./$ADALMON_SL_NAME" ;; esac
           ADALMON_SL_LAST=""
           if [ -r "$ADALMON_SL_STATE" ]; then
             slurp < "$ADALMON_SL_STATE"
             ADALMON_SL_LAST=$ADALMON_SL_TEXT
           fi
-          if [ "$ADALMON_SL_OBJ" != "$ADALMON_SL_LAST" ]; then
+          if [ "$ADALMON_SL_BODY" != "$ADALMON_SL_LAST" ]; then
             umask 077
             # Gövde, curl'e dosyadan okutulur (kaçış gerekmez); yol curl yapılandırmasında tırnak/ters eğik çizgi içeremez.
             case $ADALMON_SL_STATE in *'"'*|*'\'*) ADALMON_SL_STATE="" ;; esac
-            if [ -n "$ADALMON_SL_STATE" ] && printf '%s' "$ADALMON_SL_OBJ" > "$ADALMON_SL_STATE" 2>/dev/null; then
+            if [ -n "$ADALMON_SL_STATE" ] && printf '%s' "$ADALMON_SL_BODY" > "$ADALMON_SL_STATE" 2>/dev/null; then
               ADALMON_SL_PORT=""
               ADALMON_SL_TOKEN=""
               if [ -r "$ADALMON_SL_CONFIG" ]; then
@@ -384,8 +416,17 @@ struct ClaudeStatusLineBinder: Sendable {
     var directory: URL { supportDirectory.appending(path: "ClaudeStatusLine", directoryHint: .isDirectory) }
     var wrapperURL: URL { directory.appending(path: ClaudeStatusLineTransform.marker) }
     var stateURL: URL { directory.appending(path: "state.json") }
-    /// Sarmalayıcının son gönderdiği `rate_limits` metni (betik kendi yanına yazar).
+    /// Sarmalayıcının son gönderdiği gövde (betik kendi yanına yazar): oturumsuz `last-sent`, oturum başına `last-sent-<session_id>`.
     var lastSentURL: URL { directory.appending(path: "last-sent") }
+    func lastSentURL(session: String) -> URL { directory.appending(path: "last-sent-\(session)") }
+
+    /// Yalnızca bu klasördeki `last-sent` / `last-sent-*` dosyaları.
+    func removeLastSentFiles() {
+        let manager = FileManager.default
+        for name in (try? manager.contentsOfDirectory(atPath: directory.path)) ?? [] where name == "last-sent" || name.hasPrefix("last-sent-") {
+            try? manager.removeItem(at: directory.appending(path: name))
+        }
+    }
     var backupDirectory: URL { supportDirectory.appending(path: "Backups", directoryHint: .isDirectory) }
     var wrapperCommand: String { ClaudeStatusLineWrapper.command(scriptPath: wrapperURL.path) }
 
@@ -462,7 +503,7 @@ struct ClaudeStatusLineBinder: Sendable {
         }
         try? FileManager.default.removeItem(at: stateURL)
         try? FileManager.default.removeItem(at: wrapperURL)
-        try? FileManager.default.removeItem(at: lastSentURL)
+        removeLastSentFiles()
         return .disconnected
     }
 
@@ -470,8 +511,9 @@ struct ClaudeStatusLineBinder: Sendable {
     /// Yalnızca betik dosyası yazılır; settings.json'a dokunulmaz.
     func repairWrapperIfNeeded() {
         guard let state = readState(), isConnected else { return }
-        // Açılışta son gönderim kaydını sil: Adalmon kapalıyken "gönderildi" sayılan değer ilk yenilemede yeniden gelsin.
-        try? FileManager.default.removeItem(at: lastSentURL)
+        // Açılışta son gönderim kayıtlarını sil: Adalmon kapalıyken "gönderildi" sayılan değerler ilk yenilemede yeniden gelsin
+        // (oturum başına dosyalar da burada temizlenir; aksi halde uygulama açık kaldıkça yalnızca birikirlerdi).
+        removeLastSentFiles()
         let expected = ClaudeStatusLineWrapper.script(originalCommand: Self.originalCommand(fromRaw: state.originalRaw), configPath: configURL.path)
         if let current = try? Data(contentsOf: wrapperURL), current == Data(expected.utf8) { return }
         try? writeWrapper(originalRaw: state.originalRaw)
